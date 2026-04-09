@@ -9,7 +9,7 @@
  * on disk) without spawning ffmpeg per-capture.
  */
 
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -24,9 +24,15 @@ export class RtspCamera {
   private restarting = false;
   private stopped = false;
 
+  /**
+   * @param rtspUrl     RTSP stream URL
+   * @param sessionDir  Directory for screenshots
+   * @param crop        Optional ffmpeg crop filter (e.g. "700:750:0:0" for w:h:x:y)
+   */
   constructor(
     private rtspUrl: string,
-    private sessionDir: string
+    private sessionDir: string,
+    private crop?: string
   ) {
     this.latestFramePath = join(sessionDir, '.latest-frame.jpg');
   }
@@ -44,7 +50,7 @@ export class RtspCamera {
       '-i',
       this.rtspUrl,
       '-vf',
-      'fps=2', // 2 fps — keeps frame fresh, low CPU
+      'fps=2',
       '-f',
       'image2',
       '-update',
@@ -190,7 +196,20 @@ export class RtspCamera {
       const filename = `screenshot-${this.captureCount.toString().padStart(4, '0')}.jpg`;
       const destPath = join(this.sessionDir, filename);
 
-      copyFileSync(this.latestFramePath, destPath);
+      if (this.crop) {
+        // Apply crop via ffmpeg (the persistent process can't filter with -update 1)
+        const result = spawnSync(
+          'ffmpeg',
+          ['-i', this.latestFramePath, '-vf', `crop=${this.crop}`, '-q:v', '2', '-y', destPath],
+          { stdio: ['ignore', 'ignore', 'ignore'], timeout: 3000 }
+        );
+        if (result.status !== 0) {
+          this.captureCount--;
+          return null;
+        }
+      } else {
+        copyFileSync(this.latestFramePath, destPath);
+      }
 
       const stat = statSync(destPath);
       return JSON.stringify({ filename, sizeBytes: stat.size });

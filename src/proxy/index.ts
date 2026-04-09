@@ -16,6 +16,9 @@
  *   bun run proxy -- --com 10 --host coulomb --rtsp rtsp://...
  */
 
+import { spawnSync } from 'node:child_process';
+import { statSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Socket } from 'bun';
 import { decodeRxFrame, decodeTxFrame, parseFrame, scanForFrames, toHex } from '../protocol/codec.ts';
 import { RxPacketLength, TxPacketLength } from '../protocol/constants.ts';
@@ -34,6 +37,7 @@ interface ProxyConfig {
   port: number;
   logDir: string;
   rtspUrl: string | null;
+  rtspCrop: string | undefined;
   testMode: boolean;
 }
 
@@ -45,6 +49,7 @@ function parseArgs(): ProxyConfig {
     port: BridgeTcpPort,
     logDir: 'recordings',
     rtspUrl: process.env.RTSP_URL ?? null,
+    rtspCrop: process.env.RTSP_CROP,
     testMode: false,
   };
 
@@ -187,7 +192,7 @@ async function main(): Promise<void> {
   // Start RTSP camera if configured
   let camera: RtspCamera | null = null;
   if (config.rtspUrl) {
-    camera = new RtspCamera(config.rtspUrl, recorder.getDir());
+    camera = new RtspCamera(config.rtspUrl, recorder.getDir(), config.rtspCrop);
     camera.start();
   }
 
@@ -203,7 +208,8 @@ async function main(): Promise<void> {
 
   const hasAnyCaptureSource = (): boolean => camera !== null || gui !== null;
 
-  // Screenshot capture helper — fires both RTSP and GUI captures
+  // Screenshot capture helper — captures RTSP + GUI, stitches into one image
+  let captureCount = 0;
   function doCapture(label: string): void {
     // Try to detect GUI if we haven't found it yet
     if (!gui) {
@@ -214,24 +220,65 @@ async function main(): Promise<void> {
       }
     }
 
-    if (camera) {
-      const result = camera.capture();
-      if (result) {
-        const { filename, sizeBytes } = JSON.parse(result);
-        recorder.screenshot(filename, sizeBytes);
-        const sizeKb = (sizeBytes / 1024).toFixed(0);
-        console.log(`\x1b[35m[${formatTime()}] \u{1F4F7} ${label}: ${filename} (${sizeKb} KB)\x1b[0m`);
+    const dir = recorder.getDir();
+    captureCount++;
+    const tag = captureCount.toString().padStart(4, '0');
+
+    // Capture both sources to temp files
+    const cameraFile = camera?.capture();
+    const guiFile = gui?.capture();
+
+    const cameraMeta = cameraFile ? JSON.parse(cameraFile) : null;
+    const guiMeta = guiFile ? JSON.parse(guiFile) : null;
+
+    // If we have both, stitch side by side with ffmpeg (GUI left, RTSP right)
+    if (cameraMeta && guiMeta) {
+      const stitchedName = `snap-${tag}.jpg`;
+      const stitchedPath = join(dir, stitchedName);
+      const result = spawnSync(
+        'ffmpeg',
+        [
+          '-i',
+          join(dir, guiMeta.filename),
+          '-i',
+          join(dir, cameraMeta.filename),
+          '-filter_complex',
+          '[0]scale=-1:720[gui];[1]scale=-1:720[cam];[gui][cam]hstack=inputs=2',
+          '-q:v',
+          '2',
+          '-y',
+          stitchedPath,
+        ],
+        { stdio: ['ignore', 'ignore', 'ignore'], timeout: 5000 }
+      );
+
+      if (result.status === 0) {
+        // Clean up individual files, record the stitched one
+        try {
+          unlinkSync(join(dir, cameraMeta.filename));
+        } catch {}
+        try {
+          unlinkSync(join(dir, guiMeta.filename));
+        } catch {}
+        const stat = statSync(stitchedPath);
+        recorder.screenshot(stitchedName, stat.size);
+        const sizeKb = (stat.size / 1024).toFixed(0);
+        console.log(`\x1b[35m[${formatTime()}] \u{1F4F7} ${label}: ${stitchedName} (${sizeKb} KB)\x1b[0m`);
+        return;
       }
+      // ffmpeg failed — fall through to record individually
     }
 
-    if (gui) {
-      const result = gui.capture();
-      if (result) {
-        const { filename, sizeBytes } = JSON.parse(result);
-        recorder.screenshot(filename, sizeBytes);
-        const sizeKb = (sizeBytes / 1024).toFixed(0);
-        console.log(`\x1b[35m[${formatTime()}] \u{1F5BC}\u{FE0F}  ${label}: ${filename} (${sizeKb} KB)\x1b[0m`);
-      }
+    // Record whatever we got individually
+    if (cameraMeta) {
+      recorder.screenshot(cameraMeta.filename, cameraMeta.sizeBytes);
+      const sizeKb = (cameraMeta.sizeBytes / 1024).toFixed(0);
+      console.log(`\x1b[35m[${formatTime()}] \u{1F4F7} ${label}: ${cameraMeta.filename} (${sizeKb} KB)\x1b[0m`);
+    }
+    if (guiMeta) {
+      recorder.screenshot(guiMeta.filename, guiMeta.sizeBytes);
+      const sizeKb = (guiMeta.sizeBytes / 1024).toFixed(0);
+      console.log(`\x1b[35m[${formatTime()}] \u{1F5BC}\u{FE0F}  ${label}: ${guiMeta.filename} (${sizeKb} KB)\x1b[0m`);
     }
   }
 
