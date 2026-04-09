@@ -235,15 +235,21 @@ async function main(): Promise<void> {
     }
   }
 
-  // Debounced screenshot trigger: fires 2s after the last TX frame
-  let screenshotTimer: ReturnType<typeof setTimeout> | null = null;
-  function scheduleTxScreenshot(): void {
+  // TX screenshot trigger: capture immediately on first TX frame,
+  // then again 1 second later (after device responds and GUI updates).
+  let followupTimer: ReturnType<typeof setTimeout> | null = null;
+  function onTxFrame(): void {
     if (!hasAnyCaptureSource()) return;
-    if (screenshotTimer) clearTimeout(screenshotTimer);
-    screenshotTimer = setTimeout(() => {
-      screenshotTimer = null;
-      doCapture('SNAP (auto)');
-    }, 2000);
+
+    // Immediate capture — what the GUI showed when it sent the command
+    doCapture('TX');
+
+    // Schedule followup 1s later — GUI after device response
+    if (followupTimer) clearTimeout(followupTimer);
+    followupTimer = setTimeout(() => {
+      followupTimer = null;
+      doCapture('TX +1s');
+    }, 1000);
   }
 
   // Frame reassembly buffers for live decode
@@ -362,7 +368,7 @@ async function main(): Promise<void> {
         const frame = parseFrame(raw, 'tx');
         if (frame) {
           displayFrame(frame);
-          scheduleTxScreenshot(); // auto-screenshot 2s after last TX
+          onTxFrame(); // capture GUI + RTSP now and again in 1s
         }
       }
     });
@@ -410,7 +416,7 @@ async function main(): Promise<void> {
   // Graceful shutdown
   function shutdown(): void {
     console.log('\nShutting down...');
-    if (screenshotTimer) clearTimeout(screenshotTimer);
+    if (followupTimer) clearTimeout(followupTimer);
     camera?.stop();
     gui?.stop();
     console.log(`Recorded ${recorder.getRecordCount()} events to ${recorder.getPath()}`);
