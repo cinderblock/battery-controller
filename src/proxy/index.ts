@@ -37,7 +37,7 @@ interface ProxyConfig {
   port: number;
   logDir: string;
   rtspUrl: string | null;
-  rtspCrop: string | undefined;
+  rtspFilter: string | undefined;
   testMode: boolean;
 }
 
@@ -45,11 +45,11 @@ function parseArgs(): ProxyConfig {
   const argv = process.argv.slice(2);
   const config: ProxyConfig = {
     comPortNumber: undefined,
-    host: DeployHost,
+    host: process.env.BRIDGE_HOST || DeployHost,
     port: BridgeTcpPort,
     logDir: 'recordings',
     rtspUrl: process.env.RTSP_URL ?? null,
-    rtspCrop: process.env.RTSP_CROP,
+    rtspFilter: process.env.RTSP_FILTER,
     testMode: false,
   };
 
@@ -89,7 +89,7 @@ Usage: bun run proxy [--com <N>] [--host <HOST>] [--port <PORT>] [--log <DIR>]
 
 Options:
   --com <N>       COM port number to create (e.g. 10 for COM10) [auto-assigned if omitted]
-  --host <HOST>   Pi hostname or IP                             [env: DEPLOY_HOST, default: ${DeployHost}]
+  --host <HOST>   Pi hostname or IP                             [env: BRIDGE_HOST, default: ${DeployHost}]
   --port <PORT>   Pi TCP bridge port                            [default: ${BridgeTcpPort}]
   --log <DIR>     Recording output directory                    [default: recordings/]
   --rtsp <URL>    RTSP camera URL for LCD screenshots           [env: RTSP_URL]
@@ -192,7 +192,7 @@ async function main(): Promise<void> {
   // Start RTSP camera if configured
   let camera: RtspCamera | null = null;
   if (config.rtspUrl) {
-    camera = new RtspCamera(config.rtspUrl, recorder.getDir(), config.rtspCrop);
+    camera = new RtspCamera(config.rtspUrl, recorder.getDir(), config.rtspFilter);
     camera.start();
   }
 

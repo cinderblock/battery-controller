@@ -18,6 +18,7 @@ const MAX_RESTART_ATTEMPTS = 3;
 
 export class RtspCamera {
   private process: ChildProcess | null = null;
+  private rawFramePath: string;
   private latestFramePath: string;
   private captureCount = 0;
   private restartAttempts = 0;
@@ -27,13 +28,14 @@ export class RtspCamera {
   /**
    * @param rtspUrl     RTSP stream URL
    * @param sessionDir  Directory for screenshots
-   * @param crop        Optional ffmpeg crop filter (e.g. "700:750:0:0" for w:h:x:y)
+   * @param filter      Optional ffmpeg -vf filter string (e.g. "crop=700:750:0:0,rotate=PI/2")
    */
   constructor(
     private rtspUrl: string,
     private sessionDir: string,
-    private crop?: string
+    private filter?: string
   ) {
+    this.rawFramePath = join(sessionDir, '.latest-frame-raw.jpg');
     this.latestFramePath = join(sessionDir, '.latest-frame.jpg');
   }
 
@@ -44,6 +46,9 @@ export class RtspCamera {
   start(): void {
     if (this.stopped) return;
 
+    // Persistent ffmpeg writes unfiltered frames to the raw file.
+    // Filters (crop/rotate) are applied at capture time because
+    // ffmpeg's -update 1 mode bypasses -vf on Windows.
     const args = [
       '-rtsp_transport',
       'tcp',
@@ -56,9 +61,9 @@ export class RtspCamera {
       '-update',
       '1',
       '-q:v',
-      '2', // high quality JPEG
+      '2',
       '-y',
-      this.latestFramePath,
+      this.rawFramePath,
     ];
 
     try {
@@ -176,14 +181,13 @@ export class RtspCamera {
   }
 
   private isFrameAvailable(): boolean {
-    if (!existsSync(this.latestFramePath)) return false;
+    if (!existsSync(this.rawFramePath)) return false;
 
     try {
-      const stat = statSync(this.latestFramePath);
-      if (stat.size < 100) return false; // Too small to be a valid JPEG
+      const stat = statSync(this.rawFramePath);
+      if (stat.size < 100) return false;
 
-      // Validate JPEG SOI marker
-      const header = readFileSync(this.latestFramePath).slice(0, 2);
+      const header = readFileSync(this.rawFramePath).slice(0, 2);
       return header[0] === 0xff && header[1] === 0xd8;
     } catch {
       return false;
@@ -196,20 +200,22 @@ export class RtspCamera {
       const filename = `screenshot-${this.captureCount.toString().padStart(4, '0')}.jpg`;
       const destPath = join(this.sessionDir, filename);
 
-      if (this.crop) {
-        // Apply crop via ffmpeg (the persistent process can't filter with -update 1)
-        const result = spawnSync(
-          'ffmpeg',
-          ['-i', this.latestFramePath, '-vf', `crop=${this.crop}`, '-q:v', '2', '-y', destPath],
-          { stdio: ['ignore', 'ignore', 'ignore'], timeout: 3000 }
-        );
+      if (this.filter) {
+        // Apply crop/rotate filter when copying
+        const result = spawnSync('ffmpeg', ['-i', this.rawFramePath, '-vf', this.filter, '-q:v', '2', '-y', destPath], {
+          stdio: ['ignore', 'ignore', 'ignore'],
+          timeout: 3000,
+        });
         if (result.status !== 0) {
-          this.captureCount--;
-          return null;
+          // Filter failed — fall back to raw copy
+          copyFileSync(this.rawFramePath, destPath);
         }
       } else {
-        copyFileSync(this.latestFramePath, destPath);
+        copyFileSync(this.rawFramePath, destPath);
       }
+
+      // Update .latest-frame.jpg to the filtered version
+      copyFileSync(destPath, this.latestFramePath);
 
       const stat = statSync(destPath);
       return JSON.stringify({ filename, sizeBytes: stat.size });
@@ -256,13 +262,13 @@ export class RtspCamera {
       this.process = null;
     }
 
-    // Clean up temp file
-    try {
-      if (existsSync(this.latestFramePath)) {
-        unlinkSync(this.latestFramePath);
+    // Clean up temp files
+    for (const f of [this.rawFramePath, this.latestFramePath]) {
+      try {
+        if (existsSync(f)) unlinkSync(f);
+      } catch {
+        // Ignore cleanup errors
       }
-    } catch {
-      // Ignore cleanup errors
     }
   }
 }
