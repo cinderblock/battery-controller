@@ -28,6 +28,9 @@ Thumbs.db
 !.vscode/settings.json
 !.vscode/extensions.json
 
+# Recordings (proxy traffic captures)
+recordings/
+
 # Testing
 coverage/
 .nyc_output/

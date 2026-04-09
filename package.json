@@ -7,6 +7,8 @@
     "start": "bun --watch src/run/deploy.ts",
     "build": "bun run src/run/build.ts",
     "status": "bun run src/run/status.ts",
+    "proxy": "bun run src/proxy/index.ts",
+    "analyze": "bun run src/analyzer/index.ts",
     "lint": "biome check --write .",
     "format": "biome format --write . && prettier --write \"**/*.md\""
   },
@@ -15,6 +17,7 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-use-websocket": "^4.13.0",
+    "node-null": "link:node-null",
     "ssh2": "^1.16.0",
     "winston": "^3.19.0"
   },

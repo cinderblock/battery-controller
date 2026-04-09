@@ -5,6 +5,7 @@
       "name": "battery-charge-discharge-controller",
       "dependencies": {
         "@tanstack/react-query": "^5.90.5",
+        "node-null": "link:node-null",
         "react": "^19.2.0",
         "react-dom": "^19.2.0",
         "react-use-websocket": "^4.13.0",
@@ -103,6 +104,8 @@
     "ms": ["ms@2.1.3", "", {}, "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="],
 
     "nan": ["nan@2.23.0", "", {}, "sha512-1UxuyYGdoQHcGg87Lkqm3FzefucTa0NAiOcuRsDmysep3c1LVCRK2krrUDafMWtjSG04htvAmvg96+SDknOmgQ=="],
+
+    "node-null": ["node-null@link:node-null", {}],
 
     "one-time": ["one-time@1.0.0", "", { "dependencies": { "fn.name": "1.x.x" } }, "sha512-5DXOiRKwuSEcQ/l0kGCF6Q3jcADFv5tSmRaJck/OqkVFcOzutB134KRSfF0xDrL39MNnqxbHBbUUcjZIhTgb2g=="],
 

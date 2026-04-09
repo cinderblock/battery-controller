@@ -11,6 +11,7 @@ import { logger } from '../utils/logger.ts';
 import { shutdown } from '../utils/shutdown.ts';
 import { SerialManager } from './serial.ts';
 import { StateManager } from './state.ts';
+import { startTcpBridge } from './tcp-bridge.ts';
 
 const Port = Number(process.env.PORT) || 80;
 
@@ -18,6 +19,12 @@ const Port = Number(process.env.PORT) || 80;
 const wsClients = new Set<ServerWebSocket>();
 
 async function main() {
+  // Bridge mode: transparent TCP-serial byte pipe (no WebSocket server)
+  if (process.argv.includes('--bridge') || process.env.MODE === 'bridge') {
+    await startTcpBridge();
+    return;
+  }
+
   logger.info('🚀 Starting Battery Charge & Discharge Controller Server...');
 
   // Heartbeat watchdog timer

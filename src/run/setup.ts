@@ -20,7 +20,13 @@ import { spawn, spawnSync } from 'node:child_process';
 import { readFile, writeFile as writeFileFS } from 'node:fs/promises';
 import { logger } from '../utils/logger.ts';
 import { shutdown } from '../utils/shutdown.ts';
-import { DeployAppDir, DeployBunBin, DeployDevServiceName, DeployServiceName } from './config.ts';
+import {
+  DeployAppDir,
+  DeployBridgeServiceName,
+  DeployBunBin,
+  DeployDevServiceName,
+  DeployServiceName,
+} from './config.ts';
 
 export const SystemdServiceDir = '/etc/systemd/system';
 
@@ -54,7 +60,7 @@ async function sudoExec(command: string, args: string[] = [], stream = false): P
 
 async function sudoExecCapture(
   command: string,
-  args: string[] = [],
+  args: string[] = []
 ): Promise<{ success: boolean; stdout: string; stderr: string }> {
   return execCaptureAsync('sudo', [command, ...args]);
 }
@@ -78,7 +84,7 @@ async function execCapture(command: string, args: string[] = []): Promise<string
  */
 async function execCaptureAsync(
   command: string,
-  args: string[] = [],
+  args: string[] = []
 ): Promise<{ success: boolean; stdout: string; stderr: string }> {
   const cp = spawn(command, args, {
     stdio: 'pipe',
@@ -259,26 +265,62 @@ async function createDirectories() {
 
   log('Directories created', '✅');
 }
-function serviceName(dev = false) {
-  return `${dev ? DeployDevServiceName : DeployServiceName}.service`;
+type ServiceMode = 'prod' | 'dev' | 'bridge';
+
+function serviceName(mode: ServiceMode = 'prod') {
+  const nameMap: Record<ServiceMode, string> = {
+    prod: DeployServiceName,
+    dev: DeployDevServiceName,
+    bridge: DeployBridgeServiceName,
+  };
+  return `${nameMap[mode]}.service`;
 }
 
-function serviceFileName(dev = false) {
-  return `${SystemdServiceDir}/${serviceName(dev)}`;
+function serviceFileName(mode: ServiceMode = 'prod') {
+  return `${SystemdServiceDir}/${serviceName(mode)}`;
 }
 
-function serviceContent(dev = false) {
+function allConflicts(mode: ServiceMode): string {
+  const allModes: ServiceMode[] = ['prod', 'dev', 'bridge'];
+  return allModes
+    .filter(m => m !== mode)
+    .map(m => serviceName(m))
+    .join(' ');
+}
+
+function serviceContent(mode: ServiceMode = 'prod') {
+  const labels: Record<ServiceMode, string> = {
+    prod: '',
+    dev: ' (Development)',
+    bridge: ' (TCP Bridge)',
+  };
+  const execArgs: Record<ServiceMode, string> = {
+    prod: `${DeployBunBin} ${DeployAppDir}`,
+    dev: `${DeployBunBin} --watch ${DeployAppDir}`,
+    bridge: `${DeployBunBin} ${DeployAppDir} --bridge`,
+  };
+  const env: Record<ServiceMode, string> = {
+    prod: 'production',
+    dev: 'development',
+    bridge: 'production',
+  };
+  const restartSec: Record<ServiceMode, string> = {
+    prod: '10',
+    dev: '2',
+    bridge: '5',
+  };
+
   return `[Unit]
-Description=Battery Charge & Discharge Controller Service${dev ? ' (Development)' : ''}
+Description=Battery Charge & Discharge Controller Service${labels[mode]}
 After=network.target
-Conflicts=${serviceName(!dev)}
+Conflicts=${allConflicts(mode)}
 
 [Service]
 WorkingDirectory=${DeployAppDir}
-ExecStart=${DeployBunBin}${dev ? ' --watch' : ''} ${DeployAppDir}
-Environment="NODE_ENV=${dev ? 'development' : 'production'}"
+ExecStart=${execArgs[mode]}
+Environment="NODE_ENV=${env[mode]}"
 Restart=always
-RestartSec=${dev ? '2' : '10'}
+RestartSec=${restartSec[mode]}
 
 [Install]
 WantedBy=multi-user.target
@@ -319,10 +361,11 @@ async function writeFile(path: string, content: string, sudo = false) {
 async function setupSystemdServices() {
   log('Creating systemd services...', '⚙️');
 
-  const prod = ensureFileIs(serviceFileName(false), serviceContent(false), true);
-  const dev = ensureFileIs(serviceFileName(true), serviceContent(true), true);
+  const prod = ensureFileIs(serviceFileName('prod'), serviceContent('prod'), true);
+  const dev = ensureFileIs(serviceFileName('dev'), serviceContent('dev'), true);
+  const bridge = ensureFileIs(serviceFileName('bridge'), serviceContent('bridge'), true);
 
-  const changes = await Promise.all([prod, dev]);
+  const changes = await Promise.all([prod, dev, bridge]);
 
   log('Systemd services created', '✅');
 
@@ -334,7 +377,7 @@ async function setupSystemdServices() {
   log('Enabling production service...', '🔧');
 
   // Enable service to start on boot
-  await sudoExec('systemctl', ['enable', serviceName(false)]);
+  await sudoExec('systemctl', ['enable', serviceName('prod')]);
 
   log('Service enabled', '✅');
 }
@@ -344,8 +387,9 @@ function displaySummary() {
   logger.debug(`  📁 Application directory: ${DeployAppDir}`);
   logger.debug(`  🏃 Bun runtime: ${DeployBunBin}`);
   logger.debug(`  📦 Main entry: ${DeployAppDir}`);
-  logger.debug(`  ⚙️  Production service: ${serviceFileName(false)}`);
-  logger.debug(`  ⚙️  Dev service: ${serviceFileName(true)}`);
+  logger.debug(`  ⚙️  Production service: ${serviceFileName('prod')}`);
+  logger.debug(`  ⚙️  Dev service: ${serviceFileName('dev')}`);
+  logger.debug(`  ⚙️  Bridge service: ${serviceFileName('bridge')}`);
 }
 
 async function main() {

@@ -26,10 +26,27 @@ Battery Charge & Discharge Controller is a real-time device monitoring applicati
 ```
 battery-controller/
 ├── src/
-│   ├── server/          # Backend server
-│   │   ├── index.ts     # Main entry point (HTTP + WebSocket)
+│   ├── protocol/        # Shared protocol library (constants, codec, types)
+│   │   ├── constants.ts # Frame markers, packet lengths, base-240 divisors
+│   │   ├── codec.ts     # Checksum, base-240, frame building/parsing/scanning
+│   │   ├── types.ts     # ParsedFrame, DecodedRxFrame, DecodedTxFrame, etc.
+│   │   └── index.ts     # Barrel export
+│   │
+│   ├── server/          # Backend server (runs on Raspberry Pi)
+│   │   ├── index.ts     # Main entry point (HTTP + WebSocket + bridge mode)
 │   │   ├── serial.ts    # Serial port handler
+│   │   ├── tcp-bridge.ts # TCP-serial byte pipe for dev proxy
 │   │   └── state.ts     # State management
+│   │
+│   ├── proxy/           # Windows-side dev proxy
+│   │   ├── index.ts     # Main entry, wires COM <-> TCP <-> recorder
+│   │   ├── recorder.ts  # JSONL traffic recorder
+│   │   └── serial-port.ts # Windows COM port wrapper (serialport)
+│   │
+│   ├── analyzer/        # Offline traffic analyzer
+│   │   ├── index.ts     # CLI entry point
+│   │   ├── parser.ts    # JSONL reader + frame reconstructor
+│   │   └── formatter.ts # Colored table output
 │   │
 │   ├── frontend/        # React Web GUI
 │   │   ├── index.html   # HTML shell
@@ -49,8 +66,10 @@ battery-controller/
 │       ├── str.ts       # Safe string interpolation
 │       └── JobGroup.ts  # Promise/job management
 │
+├── recordings/          # Proxy traffic captures (gitignored)
 ├── README.md            # User documentation
 ├── Developer.md         # This file
+├── protocol.md          # Protocol reverse-engineering notes
 ├── package.json
 └── tsconfig.json
 ```
@@ -605,6 +624,96 @@ Add UI elements for new state fields:
   <span className="label">Voltage:</span>
   <span className="value">{state.voltage?.toFixed(2)} V</span>
 </div>
+```
+
+## Dev Proxy: Serial Traffic Capture
+
+The dev proxy intercepts serial traffic between the EB Tester VB6 app and a ZKETech charger/discharger to map the protocol for EBC-\* models. See `PLAN-dev-proxy.md` for the full architecture.
+
+### Architecture
+
+```
+EB Tester VB6 App
+    │ opens COMxx (virtual port)
+[com0com null-modem pair: COMxx ↔ COMxx+1]
+    │ proxy opens COMxx+1
+Windows Proxy (src/proxy/)
+    │ TCP to coulomb:49600
+Pi TCP-Serial Bridge (src/server/tcp-bridge.ts)
+    │ 9600 8E1
+ZKETech Device
+```
+
+### Virtual COM Port (node-null)
+
+The proxy uses [node-null](../node-null/) to create a virtual COM port on the fly. No pre-installed drivers like com0com are needed — node-null includes its own kernel driver.
+
+**Prerequisites:**
+
+1. node-null driver installed (see node-null README for build/install instructions)
+2. Test signing enabled: `bcdedit /set testsigning on` (reboot required)
+3. Package linked: `cd ../node-null && bun link && cd ../battery-controller && bun link node-null`
+
+The proxy creates a COM port on startup and destroys it on shutdown. EB Tester opens that same port directly.
+
+### Running the Proxy
+
+```bash
+# Start the TCP-serial bridge on the Pi
+sudo systemctl start battery-controller-bridge
+
+# Start the proxy on Windows (auto-assigns a COM port)
+bun run proxy
+
+# Request a specific COM port number
+bun run proxy -- --com 10
+
+# Options:
+#   --com <N>       COM port number (e.g. 10 for COM10) [auto-assigned if omitted]
+#   --host <HOST>   Pi hostname [env: DEPLOY_HOST]
+#   --port <PORT>   Pi TCP bridge port [default: 49600]
+#   --log <DIR>     Recording output directory [default: recordings/]
+#   --rtsp <URL>    RTSP camera URL [env: RTSP_URL]
+```
+
+The proxy prints live-decoded traffic to the console and records all raw bytes to a JSONL file in `recordings/`.
+
+**Interactive commands while the proxy runs:**
+
+- Type any text + Enter → timestamped note in the JSONL
+- Type `snap` or `s` + Enter → manual camera screenshot (if `--rtsp` is set)
+- Ctrl+C → graceful shutdown
+
+**RTSP camera:** When `--rtsp` is provided, ffmpeg (must be installed) continuously decodes the stream at 2fps. Screenshots are captured automatically ~2 seconds after each TX command (debounced), or manually via the `snap` command. Screenshots are saved as `screenshot-NNNN.jpg` alongside the JSONL file. Requires ffmpeg: `winget install ffmpeg` or `scoop install ffmpeg`.
+
+### Analyzing Recordings
+
+```bash
+# Decode all frames
+bun run analyze recordings/<file>.jsonl
+
+# Only host->device commands
+bun run analyze --filter tx recordings/<file>.jsonl
+
+# Highlight unknown/model-dependent fields
+bun run analyze --unknown recordings/<file>.jsonl
+
+# Summary statistics only
+bun run analyze --summary recordings/<file>.jsonl
+
+# Raw hex only
+bun run analyze --raw recordings/<file>.jsonl
+```
+
+### Bridge Service Management (Pi)
+
+```bash
+# Start bridge mode (conflicts with normal server and dev service)
+sudo systemctl start battery-controller-bridge
+
+# Stop bridge, return to normal server
+sudo systemctl stop battery-controller-bridge
+sudo systemctl start battery-controller
 ```
 
 ## Future Enhancements

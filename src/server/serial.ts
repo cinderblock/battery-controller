@@ -40,14 +40,9 @@
 import { spawn } from 'node:child_process';
 import type { FileHandle } from 'node:fs/promises';
 import { open } from 'node:fs/promises';
+import { checksum } from '../protocol/codec.ts';
+import { EndToken, RxPacketLength, StartToken, TxPacketLength } from '../protocol/constants.ts';
 import { logger } from '../utils/logger.ts';
-
-// Protocol constants
-const StartToken = 0xfa;
-const EndToken = 0xf8;
-// Lengths of the packets including checksum and start/end tokens
-const RxPacketLength = 19;
-const TxPacketLength = 10;
 
 const SkipPacketWithFailedChecksum = true;
 
@@ -319,9 +314,7 @@ export class SerialManager {
   // Variants with command codes 21/28, 31/38, 41/48, 51/58, 61/68, 71/78	Start
 }
 
-function checksum(data: Buffer): number {
-  return data.reduce((acc, byte) => acc ^ byte, 0);
-}
+// checksum() is now imported from ../protocol/codec.ts
 
 type D_CC_Params = unknown;
 type D_CP_Params = unknown;
