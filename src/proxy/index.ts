@@ -363,20 +363,23 @@ async function main(): Promise<void> {
           data(_socket, data) {
             // Pi -> proxy -> COM port (rx direction: device -> host)
             const bytes = new Uint8Array(data);
-            recorder.write('rx', bytes);
 
-            // Forward to COM port
+            // Forward to COM port immediately
             comPort?.write(bytes).catch(err => {
               console.error(`COM port write error: ${err.message}`);
             });
 
-            // Live frame decode
+            // Scan for complete frames, decode and record
             rxBuffer = appendBuffer(rxBuffer, bytes);
             const result = scanForFrames(rxBuffer, RxPacketLength);
             rxBuffer = result.remainder;
             for (const raw of result.frames) {
               const frame = parseFrame(raw, 'rx');
-              if (frame) displayFrame(frame);
+              if (frame) {
+                const decoded = decodeRxFrame(frame);
+                recorder.rx(decoded);
+                displayFrame(frame);
+              }
             }
           },
 
@@ -400,20 +403,21 @@ async function main(): Promise<void> {
     // COM port -> proxy -> TCP (tx direction: host -> device)
     comPort.onData((data: Buffer) => {
       const bytes = new Uint8Array(data);
-      recorder.write('tx', bytes);
 
-      // Forward to Pi
+      // Forward to Pi immediately
       if (tcpSocket) {
         tcpSocket.write(bytes);
       }
 
-      // Live frame decode
+      // Scan for complete frames, decode and record
       txBuffer = appendBuffer(txBuffer, bytes);
       const result = scanForFrames(txBuffer, TxPacketLength);
       txBuffer = result.remainder;
       for (const raw of result.frames) {
         const frame = parseFrame(raw, 'tx');
         if (frame) {
+          const decoded = decodeTxFrame(frame);
+          recorder.tx(decoded);
           displayFrame(frame);
           onTxFrame(); // capture GUI + RTSP now and again in 1s
         }

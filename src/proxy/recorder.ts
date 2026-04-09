@@ -1,26 +1,68 @@
 /**
  * Traffic Recorder
  *
- * Records all serial traffic to a JSONL file with timestamps
- * for offline analysis. Each line is a self-contained record.
+ * Records decoded serial packets to a JSONL file with timestamps.
+ * Each line is a self-contained record — either a decoded packet,
+ * a user annotation, or a screenshot reference.
  */
 
 import { appendFileSync, closeSync, mkdirSync, openSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { FrameDirection } from '../protocol/types.ts';
+import { toHex } from '../protocol/codec.ts';
+import type { DecodedRxFrame, DecodedTxFrame, FrameDirection } from '../protocol/types.ts';
 
-export interface TrafficRecord {
-  /** ISO 8601 wall clock timestamp */
+/** A decoded TX (host -> device) packet record */
+export interface TxPacketRecord {
   t: string;
-  /** High-resolution monotonic timestamp in ms (from performance.now()) */
   mono: number;
-  /** Direction: tx = host->device, rx = device->host, note = annotation, screenshot = camera capture */
-  dir: FrameDirection | 'note' | 'screenshot';
-  /** Hex string of raw bytes (traffic) or annotation text (note) */
+  dir: 'tx';
+  /** Full frame as hex string */
   raw: string;
-  /** Byte count (traffic) or 0 (note) */
+  len: number;
+  /** Command byte */
+  cmd: number;
+  /** Human-readable command name */
+  cmdName: string;
+  /** Decoded fields (base-240) */
+  currentSetpoint?: number;
+  cutoffVoltage?: number;
+  checksumValid: boolean;
+}
+
+/** A decoded RX (device -> host) packet record */
+export interface RxPacketRecord {
+  t: string;
+  mono: number;
+  dir: 'rx';
+  /** Full frame as hex string */
+  raw: string;
+  len: number;
+  /** State byte */
+  state: number;
+  /** Decoded fields (base-240) */
+  current: number;
+  voltage: number;
+  /** Model-dependent fields (raw base-240 decoded values) */
+  field6: number;
+  field7: number;
+  field8: number;
+  field9: number;
+  field10: number;
+  field11: number;
+  field12: number;
+  checksumValid: boolean;
+}
+
+/** Annotation, screenshot, or other metadata record */
+export interface MetaRecord {
+  t: string;
+  mono: number;
+  dir: 'note' | 'screenshot';
+  raw: string;
   len: number;
 }
+
+export type TrafficRecord = TxPacketRecord | RxPacketRecord | MetaRecord;
 
 export class Recorder {
   private fd: number;
@@ -28,10 +70,8 @@ export class Recorder {
   private recordCount = 0;
 
   constructor(outputDir: string) {
-    // Ensure output directory exists
     mkdirSync(outputDir, { recursive: true });
 
-    // Generate filename from current timestamp
     const now = new Date();
     const timestamp = now
       .toISOString()
@@ -40,79 +80,86 @@ export class Recorder {
     const filename = `${timestamp}.jsonl`;
     this.filePath = join(outputDir, filename);
 
-    // Open file for append (create if not exists)
     this.fd = openSync(this.filePath, 'a');
   }
 
-  /**
-   * Record a traffic event. Writes immediately (synchronous) to avoid
-   * data loss if the process crashes.
-   */
-  write(dir: FrameDirection, bytes: Uint8Array): void {
-    const record: TrafficRecord = {
-      t: new Date().toISOString(),
-      mono: performance.now(),
-      dir,
-      raw: Array.from(bytes)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join(''),
-      len: bytes.length,
-    };
-
+  private append(record: TrafficRecord): void {
     appendFileSync(this.fd, `${JSON.stringify(record)}\n`);
     this.recordCount++;
   }
 
-  /** Get the path to the recording file */
-  getPath(): string {
-    return this.filePath;
+  /** Record a decoded TX packet */
+  tx(frame: DecodedTxFrame): void {
+    this.append({
+      t: new Date().toISOString(),
+      mono: performance.now(),
+      dir: 'tx',
+      raw: toHex(frame.raw).replace(/ /g, ''),
+      len: frame.raw.length,
+      cmd: frame.command,
+      cmdName: frame.commandName,
+      currentSetpoint: frame.currentSetpoint,
+      cutoffVoltage: frame.cutoffVoltage,
+      checksumValid: frame.checksumValid,
+    });
   }
 
-  /** Get the number of records written */
-  getRecordCount(): number {
-    return this.recordCount;
+  /** Record a decoded RX packet */
+  rx(frame: DecodedRxFrame): void {
+    this.append({
+      t: new Date().toISOString(),
+      mono: performance.now(),
+      dir: 'rx',
+      raw: toHex(frame.raw).replace(/ /g, ''),
+      len: frame.raw.length,
+      state: frame.state,
+      current: frame.current,
+      voltage: frame.voltage,
+      field6: frame.field6,
+      field7: frame.field7,
+      field8: frame.field8,
+      field9: frame.field9,
+      field10: frame.field10,
+      field11: frame.field11,
+      field12: frame.field12,
+      checksumValid: frame.checksumValid,
+    });
   }
 
-  /**
-   * Record a user annotation / note. Timestamped alongside traffic so
-   * the analyzer can correlate user actions with protocol events.
-   */
+  /** Record a user annotation */
   note(text: string): void {
-    const record: TrafficRecord = {
+    this.append({
       t: new Date().toISOString(),
       mono: performance.now(),
       dir: 'note',
       raw: text,
       len: 0,
-    };
-
-    appendFileSync(this.fd, `${JSON.stringify(record)}\n`);
-    this.recordCount++;
+    });
   }
 
-  /**
-   * Record a screenshot capture. The filename is relative to the
-   * recording directory (screenshots are co-located with the JSONL).
-   */
+  /** Record a screenshot capture */
   screenshot(filename: string, sizeBytes: number): void {
-    const record: TrafficRecord = {
+    this.append({
       t: new Date().toISOString(),
       mono: performance.now(),
       dir: 'screenshot',
       raw: filename,
       len: sizeBytes,
-    };
-
-    appendFileSync(this.fd, `${JSON.stringify(record)}\n`);
-    this.recordCount++;
+    });
   }
 
-  /** Get the directory containing the recording file */
+  getPath(): string {
+    return this.filePath;
+  }
+
+  getRecordCount(): number {
+    return this.recordCount;
+  }
+
   getDir(): string {
     return dirname(this.filePath);
   }
 
-  /** Close the recording file */
   close(): void {
     closeSync(this.fd);
   }

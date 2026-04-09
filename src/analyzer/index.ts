@@ -117,7 +117,7 @@ async function main(): Promise<void> {
   // Apply direction filter (notes always pass through)
   let filteredTimeline = timeline;
   if (config.filter) {
-    filteredTimeline = timeline.filter(e => e.type === 'note' || e.data.direction === config.filter);
+    filteredTimeline = timeline.filter(e => e.type !== 'packet' || e.data.direction === config.filter);
   }
 
   if (filteredTimeline.length === 0) {

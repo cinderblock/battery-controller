@@ -2,23 +2,20 @@
  * Analyzer Output Formatter
  *
  * Produces colored, tabular console output from parsed recording data.
- * Supports multiple output modes: full decode, raw hex, unknown field
- * highlighting, and summary statistics.
  */
 
-import { toHex } from '../protocol/codec.ts';
-import type { DecodedRxFrame, DecodedTxFrame } from '../protocol/types.ts';
+import type { RxPacketRecord, TxPacketRecord } from '../proxy/recorder.ts';
 import type {
   RecordingSummary,
   TimelineEvent,
-  TimestampedFrame,
   TimestampedNote,
+  TimestampedPacket,
   TimestampedScreenshot,
 } from './parser.ts';
 
 // ── ANSI Colors ───────────────────────────────────────────────────────
 
-const colors = {
+const c = {
   reset: '\x1b[0m',
   cyan: '\x1b[36m',
   green: '\x1b[32m',
@@ -27,25 +24,20 @@ const colors = {
   magenta: '\x1b[35m',
   dim: '\x1b[90m',
   bold: '\x1b[1m',
-  white: '\x1b[37m',
 };
 
 // ── Time Formatting ───────────────────────────────────────────────────
 
-function formatTimestamp(iso: string): string {
+function fmtTime(iso: string): string {
   const d = new Date(iso);
   return (
-    [
-      d.getHours().toString().padStart(2, '0'),
-      d.getMinutes().toString().padStart(2, '0'),
-      d.getSeconds().toString().padStart(2, '0'),
-    ].join(':') +
+    [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => n.toString().padStart(2, '0')).join(':') +
     '.' +
     d.getMilliseconds().toString().padStart(3, '0')
   );
 }
 
-function formatDuration(ms: number): string {
+function fmtDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   const minutes = Math.floor(ms / 60_000);
@@ -53,157 +45,117 @@ function formatDuration(ms: number): string {
   return `${minutes}m ${seconds}s`;
 }
 
-// ── Frame Formatting ──────────────────────────────────────────────────
+// ── Packet Formatting ─────────────────────────────────────────────────
 
-function formatTxFrame(frame: TimestampedFrame): string {
-  const decoded = frame.decoded as DecodedTxFrame;
-  const time = formatTimestamp(frame.startTime);
-  const hex = toHex(decoded.raw);
-  const cmd = `CMD=0x${decoded.command.toString(16).padStart(2, '0')}`;
+function fmtTx(pkt: TimestampedPacket, mode: OutputMode): string {
+  const tx = pkt.record as TxPacketRecord;
+  const time = fmtTime(pkt.time);
 
-  let detail = `${cmd} (${decoded.commandName})`;
-  if (decoded.currentSetpoint !== undefined && decoded.currentSetpoint > 0) {
-    detail += `  I=${decoded.currentSetpoint.toFixed(4)}A`;
-  }
-  if (decoded.cutoffVoltage !== undefined && decoded.cutoffVoltage > 0) {
-    detail += `  cutoff=${decoded.cutoffVoltage.toFixed(2)}V`;
+  if (mode === 'raw') {
+    return `${c.cyan}[${time}] TX  ${tx.raw}${c.reset}`;
   }
 
-  const checksumMark = decoded.checksumValid ? '' : ` ${colors.red}[BAD CHECKSUM]${colors.cyan}`;
+  let detail = `CMD=0x${tx.cmd.toString(16).padStart(2, '0')} (${tx.cmdName})`;
+  if (tx.currentSetpoint !== undefined && tx.currentSetpoint > 0) {
+    detail += `  I=${tx.currentSetpoint.toFixed(4)}A`;
+  }
+  if (tx.cutoffVoltage !== undefined && tx.cutoffVoltage > 0) {
+    detail += `  cutoff=${tx.cutoffVoltage.toFixed(2)}V`;
+  }
+  const warn = tx.checksumValid ? '' : ` ${c.red}[BAD CHECKSUM]${c.cyan}`;
 
   return (
-    `${colors.cyan}[${time}] TX  ${decoded.raw.length.toString().padStart(2)} bytes  ${detail}${checksumMark}${colors.reset}\n` +
-    `${colors.dim}         ${hex}${colors.reset}`
+    `${c.cyan}[${time}] TX  ${tx.len} bytes  ${detail}${warn}${c.reset}\n` +
+    `${c.dim}         ${formatHexSpaced(tx.raw)}${c.reset}`
   );
 }
 
-function formatRxFrame(frame: TimestampedFrame): string {
-  const decoded = frame.decoded as DecodedRxFrame;
-  const time = formatTimestamp(frame.startTime);
-  const hex = toHex(decoded.raw);
-  const stateHex = `0x${decoded.state.toString(16).padStart(2, '0')}`;
+function fmtRx(pkt: TimestampedPacket, mode: OutputMode): string {
+  const rx = pkt.record as RxPacketRecord;
+  const time = fmtTime(pkt.time);
 
-  const checksumMark = decoded.checksumValid ? '' : ` ${colors.red}[BAD CHECKSUM]${colors.green}`;
+  if (mode === 'raw') {
+    return `${c.green}[${time}] RX  ${rx.raw}${c.reset}`;
+  }
+
+  const stateHex = `0x${rx.state.toString(16).padStart(2, '0')}`;
+  const warn = rx.checksumValid ? '' : ` ${c.red}[BAD CHECKSUM]${c.green}`;
+
+  if (mode === 'unknown') {
+    const unknowns = [
+      `f6=${c.yellow}${rx.field6.toFixed(3)}${c.green}`,
+      `f7=${c.yellow}${rx.field7.toFixed(3)}${c.green}`,
+      `f10=${c.yellow}${rx.field10}${c.green}`,
+      `f11=${c.yellow}${rx.field11}${c.green}`,
+      `f12=${c.yellow}${rx.field12}${c.green}`,
+    ].join('  ');
+    return (
+      `${c.green}[${time}] RX  STATE=${stateHex}  V=${rx.voltage.toFixed(3)}  I=${rx.current.toFixed(4)}A  ${unknowns}${warn}${c.reset}\n` +
+      `${c.dim}         ${formatHexSpaced(rx.raw)}${c.reset}`
+    );
+  }
 
   return (
-    `${colors.green}[${time}] RX  ${decoded.raw.length.toString().padStart(2)} bytes  STATE=${stateHex}  V=${decoded.voltage.toFixed(3)}  I=${decoded.current.toFixed(4)}A  f6=${decoded.field6.toFixed(3)}  f7=${decoded.field7.toFixed(3)}${checksumMark}${colors.reset}\n` +
-    `${colors.dim}         ${hex}${colors.reset}`
+    `${c.green}[${time}] RX  ${rx.len} bytes  STATE=${stateHex}  V=${rx.voltage.toFixed(3)}  I=${rx.current.toFixed(4)}A  f6=${rx.field6.toFixed(3)}  f7=${rx.field7.toFixed(3)}${warn}${c.reset}\n` +
+    `${c.dim}         ${formatHexSpaced(rx.raw)}${c.reset}`
   );
 }
 
-// ── Raw Hex Formatting ────────────────────────────────────────────────
-
-function formatRawFrame(frame: TimestampedFrame): string {
-  const time = formatTimestamp(frame.startTime);
-  const dir = frame.direction.toUpperCase();
-  const hex = toHex(frame.decoded.raw);
-  const color = frame.direction === 'tx' ? colors.cyan : colors.green;
-  return `${color}[${time}] ${dir}  ${hex}${colors.reset}`;
+function formatHexSpaced(hex: string): string {
+  return hex.replace(/(.{2})/g, '$1 ').trim();
 }
 
-// ── Unknown Field Highlighting ────────────────────────────────────────
+// ── Note / Screenshot Formatting ──────────────────────────────────────
 
-function formatUnknownFields(frame: TimestampedFrame): string {
-  if (frame.direction !== 'rx') return formatRxFrame(frame);
-
-  const decoded = frame.decoded as DecodedRxFrame;
-  const time = formatTimestamp(frame.startTime);
-  const stateHex = `0x${decoded.state.toString(16).padStart(2, '0')}`;
-
-  // Fields 6-12 are model-dependent / unknown for EBC chargers
-  const unknowns = [
-    `f6=${colors.yellow}${decoded.field6.toFixed(3)}${colors.green}`,
-    `f7=${colors.yellow}${decoded.field7.toFixed(3)}${colors.green}`,
-    `f10=${colors.yellow}${decoded.field10}${colors.green}`,
-    `f11=${colors.yellow}${decoded.field11}${colors.green}`,
-    `f12=${colors.yellow}${decoded.field12}${colors.green}`,
-  ].join('  ');
-
-  return (
-    `${colors.green}[${time}] RX  STATE=${stateHex}  V=${decoded.voltage.toFixed(3)}  I=${decoded.current.toFixed(4)}A  ${unknowns}${colors.reset}\n` +
-    `${colors.dim}         ${toHex(decoded.raw)}${colors.reset}`
-  );
+function fmtNote(note: TimestampedNote): string {
+  return `${c.yellow}[${fmtTime(note.time)}] \u{1F4DD} NOTE: "${note.text}"${c.reset}`;
 }
 
-// ── Note Formatting ───────────────────────────────────────────────────
-
-function formatNote(note: TimestampedNote): string {
-  const time = formatTimestamp(note.time);
-  return `${colors.yellow}[${time}] \u{1F4DD} NOTE: "${note.text}"${colors.reset}`;
+function fmtScreenshot(s: TimestampedScreenshot): string {
+  const sizeKb = (s.sizeBytes / 1024).toFixed(0);
+  return `${c.magenta}[${fmtTime(s.time)}] \u{1F4F7} SCREENSHOT: ${s.filename} (${sizeKb} KB)${c.reset}`;
 }
 
-function formatScreenshot(screenshot: TimestampedScreenshot): string {
-  const time = formatTimestamp(screenshot.time);
-  const sizeKb = (screenshot.sizeBytes / 1024).toFixed(0);
-  return `${colors.magenta}[${time}] \u{1F4F7} SCREENSHOT: ${screenshot.filename} (${sizeKb} KB)${colors.reset}`;
-}
-
-// ── Summary Formatting ────────────────────────────────────────────────
+// ── Summary ───────────────────────────────────────────────────────────
 
 export function formatSummary(summary: RecordingSummary): string {
   const lines = [
-    `${colors.bold}Recording Summary${colors.reset}`,
-    `  Duration:         ${formatDuration(summary.durationMs)}`,
+    `${c.bold}Recording Summary${c.reset}`,
+    `  Duration:         ${fmtDuration(summary.durationMs)}`,
     `  Total records:    ${summary.totalRecords}`,
-    `  Total bytes:      ${summary.totalBytes}`,
-    `  TX frames:        ${summary.txFrames}`,
-    `  RX frames:        ${summary.rxFrames}`,
+    `  TX packets:       ${summary.txPackets}`,
+    `  RX packets:       ${summary.rxPackets}`,
     `  Notes:            ${summary.notes}`,
     `  Screenshots:      ${summary.screenshots}`,
-    `  Checksum errors:  ${summary.checksumErrors > 0 ? colors.red + summary.checksumErrors + colors.reset : '0'}`,
+    `  Checksum errors:  ${summary.checksumErrors > 0 ? c.red + summary.checksumErrors + c.reset : '0'}`,
     `  First timestamp:  ${summary.firstTimestamp}`,
     `  Last timestamp:   ${summary.lastTimestamp}`,
   ];
   return lines.join('\n');
 }
 
-// ── Main Formatting Entry Point ───────────────────────────────────────
+// ── Main Entry Point ──────────────────────────────────────────────────
 
 export type OutputMode = 'decode' | 'raw' | 'unknown' | 'summary';
 
-/**
- * Format a timeline of events (frames + notes) in chronological order.
- */
 export function formatTimeline(events: TimelineEvent[], mode: OutputMode = 'decode'): string[] {
   const lines: string[] = [];
   for (const event of events) {
-    if (event.type === 'note') {
-      lines.push(formatNote(event.data));
-    } else if (event.type === 'screenshot') {
-      lines.push(formatScreenshot(event.data));
-    } else {
-      lines.push(...formatFrames([event.data], mode));
-    }
-  }
-  return lines;
-}
-
-export function formatFrames(frames: TimestampedFrame[], mode: OutputMode = 'decode'): string[] {
-  const lines: string[] = [];
-
-  for (const frame of frames) {
-    switch (mode) {
-      case 'raw':
-        lines.push(formatRawFrame(frame));
+    switch (event.type) {
+      case 'note':
+        lines.push(fmtNote(event.data));
         break;
-
-      case 'unknown':
-        if (frame.direction === 'rx') {
-          lines.push(formatUnknownFields(frame));
-        } else {
-          lines.push(formatTxFrame(frame));
-        }
+      case 'screenshot':
+        lines.push(fmtScreenshot(event.data));
         break;
-
-      default:
-        if (frame.direction === 'tx') {
-          lines.push(formatTxFrame(frame));
+      case 'packet':
+        if (event.data.direction === 'tx') {
+          lines.push(fmtTx(event.data, mode));
         } else {
-          lines.push(formatRxFrame(frame));
+          lines.push(fmtRx(event.data, mode));
         }
         break;
     }
   }
-
   return lines;
 }
