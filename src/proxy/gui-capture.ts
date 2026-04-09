@@ -113,40 +113,35 @@ function buildCaptureScript(windowTitle: string, destPath: string): string {
   // Escape for PowerShell string literal
   const escapedTitle = windowTitle.replace(/'/g, "''");
   const escapedPath = destPath.replace(/'/g, "''");
-  // VB6 apps don't respond to PrintWindow, so we briefly set the
-  // window topmost, CopyFromScreen its rect, then remove topmost.
-  // Total visual disruption: ~200ms. SWP_NOMOVE|SWP_NOSIZE = 0x0003
+  // PrintWindow captures the window's own rendering regardless of
+  // z-order — no need to bring it to the foreground. Zero visual disruption.
   return `
 Add-Type -AssemblyName System.Drawing
 Add-Type @'
 using System;
+using System.Drawing;
 using System.Runtime.InteropServices;
 public class WinApi {
   [DllImport("user32.dll")] public static extern IntPtr FindWindow(string c, string t);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
-  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int w, int ht, uint f);
-  public static readonly IntPtr TOPMOST = new IntPtr(-1);
-  public static readonly IntPtr NOTOPMOST = new IntPtr(-2);
+  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint f);
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L,T,R,B; }
 }
 '@
 $hwnd = [WinApi]::FindWindow([NullString]::Value, '${escapedTitle}')
 if ($hwnd -eq [IntPtr]::Zero) { exit 1 }
-[WinApi]::ShowWindow($hwnd, 9) | Out-Null
-[WinApi]::SetWindowPos($hwnd, [WinApi]::TOPMOST, 0, 0, 0, 0, 0x0003) | Out-Null
-Start-Sleep -Milliseconds 200
 $rc = New-Object WinApi+RECT
 [WinApi]::GetWindowRect($hwnd, [ref]$rc) | Out-Null
 $ww = $rc.R - $rc.L; $hh = $rc.B - $rc.T
 if ($ww -le 0 -or $hh -le 0) { exit 1 }
-$bmp = New-Object System.Drawing.Bitmap($ww, $hh)
-$g = [System.Drawing.Graphics]::FromImage($bmp)
-$g.CopyFromScreen($rc.L, $rc.T, 0, 0, (New-Object System.Drawing.Size($ww, $hh)))
+$bmp = New-Object Drawing.Bitmap($ww, $hh)
+$g = [Drawing.Graphics]::FromImage($bmp)
+$hdc = $g.GetHdc()
+[WinApi]::PrintWindow($hwnd, $hdc, 0) | Out-Null
+$g.ReleaseHdc($hdc)
 $g.Dispose()
-$bmp.Save('${escapedPath}', [System.Drawing.Imaging.ImageFormat]::Png)
+$bmp.Save('${escapedPath}', [Drawing.Imaging.ImageFormat]::Png)
 $bmp.Dispose()
-[WinApi]::SetWindowPos($hwnd, [WinApi]::NOTOPMOST, 0, 0, 0, 0, 0x0003) | Out-Null
 `.trim();
 }
 
