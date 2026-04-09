@@ -258,7 +258,11 @@ async function checkStatus(
   }
 }
 
-async function performInitialDeploy(config: DeployConfig, buildResult: BuildResult, signal?: AbortSignal): Promise<void> {
+async function performInitialDeploy(
+  config: DeployConfig,
+  buildResult: BuildResult,
+  signal?: AbortSignal
+): Promise<void> {
   log('Starting initial deployment...', '🚀');
 
   // Check SSH connection
@@ -398,7 +402,8 @@ function createIncrementalDeployHandler(config: DeployConfig) {
   }, 100);
 
   return (result: BuildResult, options: BuildOptions, changedFiles: Set<string>) => {
-    const builtFileCount = (options.setup && result.setup ? 1 : 0) + (options.server && result.server ? result.server.length : 0);
+    const builtFileCount =
+      (options.setup && result.setup ? 1 : 0) + (options.server && result.server ? result.server.length : 0);
     logger.debug(`Build complete: ${builtFileCount} file${builtFileCount !== 1 ? 's' : ''}`);
     debouncedDeploy(result, options, changedFiles);
   };
