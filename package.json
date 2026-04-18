@@ -9,6 +9,7 @@
     "status": "bun run src/run/status.ts",
     "proxy": "bun run src/proxy/index.ts",
     "analyze": "bun run src/analyzer/index.ts",
+    "correlate": "bun run src/correlator/index.ts",
     "lint": "biome check --write .",
     "format": "biome format --write . && prettier --write \"**/*.md\""
   },
