@@ -3,11 +3,11 @@
 /**
  * Windows Serial Proxy with Traffic Recording
  *
- * Creates a virtual COM port using node-null, bridges it to the Pi
+ * Creates a virtual COM port using ghostcom, bridges it to the Pi
  * TCP bridge, and records all traffic with timestamps for offline analysis.
  *
  * Architecture:
- *   EB Tester VB6 App -> COM10 (virtual, created by node-null)
+ *   EB Tester VB6 App -> COM10 (virtual, created by ghostcom)
  *     -> this proxy -> TCP -> Pi TCP bridge -> /dev/serial0 -> ZKETech device
  *
  * Usage:
@@ -22,7 +22,11 @@ import { join } from 'node:path';
 import type { Socket } from 'bun';
 import { decodeRxFrame, decodeTxFrame, parseFrame, scanForFrames, toHex } from '../protocol/codec.ts';
 import { RxPacketLength, TxPacketLength } from '../protocol/constants.ts';
-import type { ParsedFrame } from '../protocol/types.ts';
+import type { DeviceFamily, ParsedFrame } from '../protocol/types.ts';
+
+// Device family for decoding — determines divisors and field interpretation.
+// TODO: auto-detect from init/info packets (device type byte 14)
+const DEVICE_FAMILY: DeviceFamily = 'ebc';
 import { BridgeTcpPort, DeployHost } from '../run/config.ts';
 import { RtspCamera } from './camera.ts';
 import { findEbTesterWindow, GuiCapture } from './gui-capture.ts';
@@ -44,7 +48,7 @@ interface ProxyConfig {
 function parseArgs(): ProxyConfig {
   const argv = process.argv.slice(2);
   const config: ProxyConfig = {
-    comPortNumber: undefined,
+    comPortNumber: 2,
     host: process.env.BRIDGE_HOST || DeployHost,
     port: BridgeTcpPort,
     logDir: 'recordings',
@@ -101,7 +105,7 @@ Camera:
   stream at 2fps. Screenshots are captured automatically ~2s after each TX
   command, or manually by typing "snap" or "s" in the console.
 
-The proxy creates a virtual COM port via node-null. Open that COM port in
+The proxy creates a virtual COM port via ghostcom. Open that COM port in
 EB Tester to begin capturing traffic.
 `);
 }
@@ -127,7 +131,7 @@ function displayFrame(frame: ParsedFrame): void {
   const len = frame.raw.length;
 
   if (frame.direction === 'tx') {
-    const decoded = decodeTxFrame(frame);
+    const decoded = decodeTxFrame(frame, DEVICE_FAMILY);
     let detail = `CMD=0x${frame.command.toString(16).padStart(2, '0')} (${decoded.commandName})`;
     if (decoded.currentSetpoint !== undefined && decoded.currentSetpoint > 0) {
       detail += ` I=${decoded.currentSetpoint.toFixed(4)}A`;
@@ -135,14 +139,19 @@ function displayFrame(frame: ParsedFrame): void {
     if (decoded.cutoffVoltage !== undefined && decoded.cutoffVoltage > 0) {
       detail += ` cutoff=${decoded.cutoffVoltage.toFixed(2)}V`;
     }
+    if (decoded.cutoffCurrent !== undefined && decoded.cutoffCurrent > 0) {
+      detail += ` cutoffI=${decoded.cutoffCurrent.toFixed(2)}A`;
+    }
     console.log(`\x1b[36m[${time}] TX  ${len} bytes  ${detail}\x1b[0m`);
     console.log(`\x1b[90m         ${hex}\x1b[0m`);
   } else {
-    const decoded = decodeRxFrame(frame);
+    const decoded = decodeRxFrame(frame, DEVICE_FAMILY);
     const stateHex = `0x${decoded.state.toString(16).padStart(2, '0')}`;
-    console.log(
-      `\x1b[32m[${time}] RX  ${len} bytes  STATE=${stateHex}  V=${decoded.voltage.toFixed(3)}  I=${decoded.current.toFixed(4)}A\x1b[0m`
-    );
+    let rxDetail = `STATE=${stateHex}  V=${decoded.voltage.toFixed(3)}  I=${decoded.current.toFixed(2)}A`;
+    if (DEVICE_FAMILY === 'ebc' && decoded.field6 > 0) {
+      rxDetail += `  ${decoded.field6.toFixed(0)}mAh`;
+    }
+    console.log(`\x1b[32m[${time}] RX  ${len} bytes  ${rxDetail}\x1b[0m`);
     console.log(`\x1b[90m         ${hex}\x1b[0m`);
   }
 
@@ -196,15 +205,33 @@ async function main(): Promise<void> {
     camera.start();
   }
 
-  // Auto-detect EB Tester GUI window for screenshots
+  // Auto-detect EB Tester GUI window for screenshots.
+  // The window may not exist yet — EB Tester can be started after the proxy.
+  // We poll every 10 seconds until found, and also check on any traffic.
   let gui: GuiCapture | null = null;
-  const guiWindowTitle = findEbTesterWindow();
-  if (guiWindowTitle) {
-    gui = new GuiCapture(guiWindowTitle, recorder.getDir());
-    console.log(`GUI window: "${guiWindowTitle}"`);
-  } else {
-    console.log('GUI window: EB Tester not detected (will re-check on first TX)');
+
+  function tryFindGui(): boolean {
+    if (gui) return true;
+    const title = findEbTesterWindow();
+    if (title) {
+      gui = new GuiCapture(title, recorder.getDir());
+      console.log(`\x1b[90m[${formatTime()}] GUI window found: "${title}"\x1b[0m`);
+      return true;
+    }
+    return false;
   }
+
+  // Try once at startup
+  if (!tryFindGui()) {
+    console.log('GUI window: EB Tester not detected — will keep looking');
+  }
+
+  // Poll for the window every 10 seconds until found
+  const guiPollTimer = setInterval(() => {
+    if (tryFindGui()) {
+      clearInterval(guiPollTimer);
+    }
+  }, 10_000);
 
   const hasAnyCaptureSource = (): boolean => camera !== null || gui !== null;
 
@@ -212,13 +239,7 @@ async function main(): Promise<void> {
   let captureCount = 0;
   function doCapture(label: string): void {
     // Try to detect GUI if we haven't found it yet
-    if (!gui) {
-      const title = findEbTesterWindow();
-      if (title) {
-        gui = new GuiCapture(title, recorder.getDir());
-        console.log(`\x1b[90m[${formatTime()}] GUI window detected: "${title}"\x1b[0m`);
-      }
-    }
+    tryFindGui();
 
     const dir = recorder.getDir();
     captureCount++;
@@ -231,7 +252,7 @@ async function main(): Promise<void> {
     const cameraMeta = cameraFile ? JSON.parse(cameraFile) : null;
     const guiMeta = guiFile ? JSON.parse(guiFile) : null;
 
-    // If we have both, stitch side by side with ffmpeg (GUI left, RTSP right)
+    // If we have both, stitch vertically with ffmpeg (GUI on top, LCD below)
     if (cameraMeta && guiMeta) {
       const stitchedName = `snap-${tag}.jpg`;
       const stitchedPath = join(dir, stitchedName);
@@ -243,7 +264,7 @@ async function main(): Promise<void> {
           '-i',
           join(dir, cameraMeta.filename),
           '-filter_complex',
-          '[0]scale=-1:720[gui];[1]scale=-1:720[cam];[gui][cam]hstack=inputs=2',
+          '[0]scale=1280:-1[gui];[1]scale=1280:-1[cam];[gui][cam]vstack=inputs=2',
           '-q:v',
           '2',
           '-y',
@@ -364,6 +385,9 @@ async function main(): Promise<void> {
             // Pi -> proxy -> COM port (rx direction: device -> host)
             const bytes = new Uint8Array(data);
 
+            // If we see traffic, EB Tester must be running
+            tryFindGui();
+
             // Forward to COM port immediately
             comPort?.write(bytes).catch(err => {
               console.error(`COM port write error: ${err.message}`);
@@ -376,7 +400,7 @@ async function main(): Promise<void> {
             for (const raw of result.frames) {
               const frame = parseFrame(raw, 'rx');
               if (frame) {
-                const decoded = decodeRxFrame(frame);
+                const decoded = decodeRxFrame(frame, DEVICE_FAMILY);
                 recorder.rx(decoded);
                 displayFrame(frame);
               }
@@ -416,7 +440,7 @@ async function main(): Promise<void> {
       for (const raw of result.frames) {
         const frame = parseFrame(raw, 'tx');
         if (frame) {
-          const decoded = decodeTxFrame(frame);
+          const decoded = decodeTxFrame(frame, DEVICE_FAMILY);
           recorder.tx(decoded);
           displayFrame(frame);
           onTxFrame(); // capture GUI + RTSP now and again in 1s
@@ -468,6 +492,7 @@ async function main(): Promise<void> {
   function shutdown(): void {
     console.log('\nShutting down...');
     if (followupTimer) clearTimeout(followupTimer);
+    clearInterval(guiPollTimer);
     camera?.stop();
     gui?.stop();
     console.log(`Recorded ${recorder.getRecordCount()} events to ${recorder.getPath()}`);

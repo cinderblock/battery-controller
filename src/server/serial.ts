@@ -153,10 +153,10 @@ export class SerialManager {
 
     logger.info('📥 Received block:', packet.toString('hex'));
 
-    // If the checksum is not 0, the packet is invalid. Return true to discard the data.
-    if (checksum(packet.slice(1, EndIndex))) return SkipPacketWithFailedChecksum;
-
+    // Validate checksum: XOR of data bytes, reduced mod 240 (base-240 safe),
+    // must match the checksum byte on the wire.
     const data = Buffer.from(packet.slice(1, ChecksumIndex));
+    if (checksum(data) !== packet[ChecksumIndex]) return SkipPacketWithFailedChecksum;
 
     logger.info('📥 Received valid packet:', data.toString('hex'));
 
