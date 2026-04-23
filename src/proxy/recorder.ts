@@ -26,6 +26,8 @@ export interface TxPacketRecord {
   /** Decoded fields (base-240) */
   currentSetpoint?: number;
   cutoffVoltage?: number;
+  /** Cutoff current for charge modes (charging stops when I drops below this) */
+  cutoffCurrent?: number;
   checksumValid: boolean;
 }
 
@@ -100,6 +102,7 @@ export class Recorder {
       cmdName: frame.commandName,
       currentSetpoint: frame.currentSetpoint,
       cutoffVoltage: frame.cutoffVoltage,
+      cutoffCurrent: frame.cutoffCurrent,
       checksumValid: frame.checksumValid,
     });
   }

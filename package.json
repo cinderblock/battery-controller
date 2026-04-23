@@ -8,18 +8,26 @@
     "build": "bun run src/run/build.ts",
     "status": "bun run src/run/status.ts",
     "proxy": "bun run src/proxy/index.ts",
+    "fake-device": "bun run scripts/fake-device/index.ts",
+    "probe-devices": "bun run scripts/probe-devices.ts",
+    "com:check": "bun run node_modules/ghostcom/scripts/check-zombies.ts",
+    "com:clean": "bun run node_modules/ghostcom/scripts/check-zombies.ts --clean",
     "analyze": "bun run src/analyzer/index.ts",
     "correlate": "bun run src/correlator/index.ts",
+    "crop-tool": "bun run src/tools/crop-selector.ts",
     "lint": "biome check --write .",
     "format": "biome format --write . && prettier --write \"**/*.md\""
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.90.0",
     "@tanstack/react-query": "^5.90.5",
+    "ghostcom": "link:ghostcom",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-use-websocket": "^4.13.0",
-    "node-null": "link:node-null",
+    "sharp": "^0.34.5",
     "ssh2": "^1.16.0",
+    "tesseract.js": "^7.0.0",
     "winston": "^3.19.0"
   },
   "devDependencies": {

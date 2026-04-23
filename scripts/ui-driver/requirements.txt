@@ -1,0 +1,7 @@
+# UI driver dependencies — install with `uv pip install -r requirements.txt`
+# or the global `pywinauto` install recommended in README.md.
+
+pywinauto>=0.6.8
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pillow>=10.0

@@ -12,6 +12,7 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import sharp from 'sharp';
 
 const FFMPEG_RESTART_DELAY_MS = 2000;
 const MAX_RESTART_ATTEMPTS = 3;
@@ -237,6 +238,47 @@ export class RtspCamera {
     }
   }
 
+  /**
+   * Read the current raw (unfiltered) frame into memory.
+   *
+   * Returns the JPEG buffer before any crop/rotate filter has been
+   * applied, or null if no valid frame is available. Use this to feed
+   * the OCR pipeline which applies its own sharp-based preprocessing.
+   */
+  getRawFrame(): Buffer | null {
+    try {
+      if (!existsSync(this.rawFramePath)) return null;
+      const buf = readFileSync(this.rawFramePath);
+      // Validate JPEG magic bytes and minimum plausible size
+      if (buf.length < 100 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+      return buf;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get the current frame with crop/rotate filter applied, as an in-memory
+   * buffer. Uses sharp instead of ffmpeg for zero-latency filter application.
+   *
+   * This is the preferred input for OCR — it returns just the LCD region
+   * without any disk I/O or subprocess spawning.
+   *
+   * @returns Filtered JPEG buffer, or null if no valid frame is available
+   */
+  async getFilteredFrame(): Promise<Buffer | null> {
+    const raw = this.getRawFrame();
+    if (!raw) return null;
+    if (!this.filter) return raw;
+
+    try {
+      return await applyFilterWithSharp(raw, this.filter);
+    } catch {
+      // Filter application failed — return raw frame as fallback
+      return raw;
+    }
+  }
+
   /** Whether the ffmpeg process is running */
   isRunning(): boolean {
     return this.process !== null && !this.stopped;
@@ -271,4 +313,123 @@ export class RtspCamera {
       }
     }
   }
+}
+
+// ── Filter Application via Sharp ─────────────────────────────────────
+
+/**
+ * Parse an ffmpeg -vf filter string and apply it using sharp.
+ *
+ * Supports the filter chains produced by the crop-selector tool:
+ *
+ * - `crop=W:H:X:Y`         → sharp.extract({ left: X, top: Y, width: W, height: H })
+ * - `crop=W:H:(iw-W)/2:…`  → center-crop (expressions evaluated against current dimensions)
+ * - `rotate=ANGLE:…`       → sharp.rotate(degrees)  (ANGLE in radians, extra params ignored)
+ * - `scale=iw*N:ih*N`      → sharp.resize(w*N, h*N, { kernel: 'nearest' })
+ *
+ * Filters are applied sequentially. Between each step, the pipeline is
+ * flushed to a buffer so the next step's dimension expressions (iw, ih)
+ * resolve against the current image size.
+ */
+async function applyFilterWithSharp(image: Buffer, filterString: string): Promise<Buffer> {
+  const filters = filterString.split(',').map(f => f.trim());
+  let buf = image;
+
+  for (const filter of filters) {
+    const meta = await sharp(buf).metadata();
+    const iw = meta.width ?? 0;
+    const ih = meta.height ?? 0;
+    if (iw === 0 || ih === 0) break;
+
+    if (filter.startsWith('crop=')) {
+      // crop=W:H:X:Y — values may be expressions like (iw-817)/2
+      const parts = filter.slice(5).split(':');
+      if (parts.length >= 4) {
+        const w = evalDimExpr(parts[0], iw, ih);
+        const h = evalDimExpr(parts[1], iw, ih);
+        const x = evalDimExpr(parts[2], iw, ih);
+        const y = evalDimExpr(parts[3], iw, ih);
+
+        // Clamp to valid range
+        const cx = Math.max(0, Math.min(x, iw - 1));
+        const cy = Math.max(0, Math.min(y, ih - 1));
+        const cw = Math.max(1, Math.min(w, iw - cx));
+        const ch = Math.max(1, Math.min(h, ih - cy));
+
+        buf = await sharp(buf).extract({ left: cx, top: cy, width: cw, height: ch }).toBuffer();
+      }
+    } else if (filter.startsWith('rotate=')) {
+      // rotate=ANGLE:ow=...:oh=... — extract just the angle, ignore ow/oh
+      const anglePart = filter.slice(7).split(':')[0];
+      const radians = evalAngle(anglePart);
+      const degrees = (radians * 180) / Math.PI;
+      buf = await sharp(buf).rotate(degrees, { background: '#000' }).toBuffer();
+    } else if (filter.startsWith('scale=')) {
+      // scale=iw*N:ih*N
+      const parts = filter.slice(6).split(':');
+      if (parts.length >= 2) {
+        const newW = Math.round(evalDimExpr(parts[0], iw, ih));
+        const newH = Math.round(evalDimExpr(parts[1], iw, ih));
+        if (newW > 0 && newH > 0) {
+          buf = await sharp(buf).resize(newW, newH, { kernel: 'nearest' }).toBuffer();
+        }
+      }
+    }
+    // Unknown filters (transpose, etc.) are silently skipped
+  }
+
+  return buf;
+}
+
+/**
+ * Evaluate an ffmpeg dimension expression against current width/height.
+ *
+ * Handles: plain numbers, `iw`, `ih`, `iw*3`, `(iw-817)/2`, etc.
+ * Also handles ffmpeg rotation functions `rotw(angle)` and `roth(angle)`.
+ */
+function evalDimExpr(expr: string, iw: number, ih: number): number {
+  const cleaned = expr.trim();
+
+  // Plain number
+  const plain = Number(cleaned);
+  if (!Number.isNaN(plain) && !cleaned.includes('i')) return plain;
+
+  // Substitute iw, ih, and PI
+  let sub = cleaned
+    .replace(/\biw\b/g, String(iw))
+    .replace(/\bih\b/g, String(ih))
+    .replace(/\bPI\b/gi, String(Math.PI));
+
+  // Handle rotw(angle) and roth(angle) — ffmpeg functions for rotation output size
+  sub = sub.replace(/rotw\(([^)]+)\)/g, (_m, angleExpr) => {
+    const angle = evalAngle(angleExpr);
+    // Rotation output width: |w*cos(a)| + |h*sin(a)|
+    return String(Math.abs(iw * Math.cos(angle)) + Math.abs(ih * Math.sin(angle)));
+  });
+  sub = sub.replace(/roth\(([^)]+)\)/g, (_m, angleExpr) => {
+    const angle = evalAngle(angleExpr);
+    return String(Math.abs(iw * Math.sin(angle)) + Math.abs(ih * Math.cos(angle)));
+  });
+
+  // Evaluate the arithmetic expression
+  try {
+    const result = Function(`"use strict"; return (${sub})`)();
+    if (typeof result === 'number' && !Number.isNaN(result)) return Math.round(result);
+  } catch {
+    // Fall through
+  }
+
+  return parseFloat(cleaned) || 0;
+}
+
+/** Parse an angle expression that may contain PI (e.g. "PI/2", "9.5*PI/180") */
+function evalAngle(expr: string): number {
+  const cleaned = expr.trim().replace(/\bPI\b/gi, String(Math.PI));
+  try {
+    const result = Function(`"use strict"; return (${cleaned})`)();
+    if (typeof result === 'number' && !Number.isNaN(result)) return result;
+  } catch {
+    // Fall through
+  }
+  return parseFloat(expr) || 0;
 }

@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RTSP Crop Selector</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #111;
+    color: #eee;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* ── Toolbar ────────────────────────────────────────────────── */
+
+  #toolbar {
+    background: #1e1e1e;
+    border-bottom: 1px solid #333;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  #toolbar button {
+    background: #3a3a3a;
+    color: #eee;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    white-space: nowrap;
+    transition: background 0.15s;
+  }
+  #toolbar button:hover { background: #505050; }
+  #toolbar button:active { background: #666; }
+
+  .btn-primary   { background: #2563eb !important; border-color: #3b82f6 !important; }
+  .btn-primary:hover { background: #1d4ed8 !important; }
+
+  .btn-success   { background: #16a34a !important; border-color: #22c55e !important; }
+  .btn-success:hover { background: #15803d !important; }
+
+  .btn-small {
+    padding: 4px 8px !important;
+    font-size: 11px !important;
+    min-width: 0 !important;
+  }
+
+  .toolbar-label {
+    font-size: 11px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  #filter-display {
+    font-family: Consolas, Monaco, "Courier New", monospace;
+    background: #1a1a2e;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 13px;
+    color: #93c5fd;
+    min-width: 180px;
+    max-width: 500px;
+    flex: 1;
+    cursor: pointer;
+  }
+  #filter-display:hover { border-color: #555; }
+
+  .sep {
+    width: 1px;
+    height: 24px;
+    background: #333;
+    flex-shrink: 0;
+  }
+
+  /* ── Rotation controls ──────────────────────────────────────── */
+
+  #rotation-slider {
+    width: 140px;
+    accent-color: #3b82f6;
+    cursor: pointer;
+  }
+
+  #rotation-input {
+    background: #2a2a2a;
+    color: #eee;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 13px;
+    font-family: Consolas, Monaco, monospace;
+    width: 64px;
+    text-align: right;
+  }
+  #rotation-input:focus { border-color: #3b82f6; outline: none; }
+
+  .rotation-unit {
+    font-size: 13px;
+    color: #888;
+    margin-left: -2px;
+  }
+
+  /* ── Canvas area ────────────────────────────────────────────── */
+
+  #canvas-area {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  #canvas { cursor: crosshair; }
+
+  /* ── Status bar ─────────────────────────────────────────────── */
+
+  #status {
+    position: fixed;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.85);
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-size: 13px;
+    color: #aaa;
+    pointer-events: none;
+    transition: color 0.3s;
+    white-space: nowrap;
+  }
+
+  /* ── Loading overlay ────────────────────────────────────────── */
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    font-size: 18px;
+    color: #ccc;
+  }
+
+  /* ── Preview panel ──────────────────────────────────────────── */
+
+  #preview-panel {
+    position: fixed;
+    top: 60px;
+    right: 16px;
+    background: #1e1e1e;
+    border: 1px solid #444;
+    border-radius: 8px;
+    padding: 12px;
+    z-index: 50;
+    max-width: 420px;
+    max-height: calc(100vh - 80px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  #preview-panel img {
+    max-width: 100%;
+    border-radius: 4px;
+    display: block;
+  }
+  #preview-panel .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .close-btn {
+    background: none;
+    border: none;
+    color: #666;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+  }
+  .close-btn:hover { color: #eee; }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- ── Toolbar ──────────────────────────────────────────────────── -->
+
+<div id="toolbar">
+  <button onclick="refreshFrame()" title="Grab a fresh frame from the camera">&#x27f3; Refresh</button>
+
+  <div class="sep"></div>
+
+  <div class="toolbar-group">
+    <span class="toolbar-label">Filter</span>
+    <span id="filter-display" onclick="copyFilter()" title="Click to copy">&mdash;</span>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="toolbar-group">
+    <span class="toolbar-label">Rotate</span>
+    <input type="range" id="rotation-slider" min="-180" max="180" step="0.5" value="0"
+           oninput="onSlider()" title="Drag to rotate (arrow keys for fine adjust)">
+    <input type="number" id="rotation-input" min="-360" max="360" step="0.1" value="0"
+           oninput="onRotInput()" onkeydown="onRotKey(event)">
+    <span class="rotation-unit">&deg;</span>
+    <button class="btn-small" onclick="setRotation(0)" title="Reset rotation">0&deg;</button>
+    <button class="btn-small" onclick="setRotation(90)">90</button>
+    <button class="btn-small" onclick="setRotation(-90)">&minus;90</button>
+    <button class="btn-small" onclick="setRotation(180)">180</button>
+  </div>
+
+  <div class="sep"></div>
+
+  <button class="btn-primary" onclick="previewFilter()">&#x25b6; Preview</button>
+  <button class="btn-success" onclick="saveFilter()">&#x1f4be; Save</button>
+  <button onclick="clearSelection()">&#x2715; Clear</button>
+</div>
+
+<!-- ── Canvas ───────────────────────────────────────────────────── -->
+
+<div id="canvas-area">
+  <canvas id="canvas"></canvas>
+</div>
+
+<!-- ── Overlays ─────────────────────────────────────────────────── -->
+
+<div id="status">Loading&hellip;</div>
+<div id="loading" class="overlay">Loading frame from camera&hellip;</div>
+
+<div id="preview-panel" class="hidden">
+  <div class="panel-header">
+    <span>Preview</span>
+    <button class="close-btn" onclick="closePreview()">&#x2715;</button>
+  </div>
+  <img id="preview-img">
+</div>
+
+<!-- ── Script ───────────────────────────────────────────────────── -->
+
+<script>
+// ---------------------------------------------------------------------------
+// DOM refs
+// ---------------------------------------------------------------------------
+
+const canvas        = document.getElementById('canvas');
+const ctx           = canvas.getContext('2d');
+const filterDisplay = document.getElementById('filter-display');
+const statusEl      = document.getElementById('status');
+const loadingEl     = document.getElementById('loading');
+const rotSlider     = document.getElementById('rotation-slider');
+const rotInput      = document.getElementById('rotation-input');
+const previewPanel  = document.getElementById('preview-panel');
+const previewImg    = document.getElementById('preview-img');
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+let img   = null;           // HTMLImageElement of raw frame
+let imgW  = 0, imgH = 0;   // natural pixel dimensions
+let dispScale = 1;          // image → canvas display ratio
+
+// Selection: center-based so rotation is natural
+let sel = null;             // { cx, cy, w, h } in IMAGE coords, or null
+
+let rotationDeg = 0;        // rotation angle in degrees
+
+let drag = null;            // active drag operation
+
+const HANDLE  = 7;          // resize handle half-size (px)
+const ROT_R   = 10;         // rotation handle radius (px)
+const ROT_STEM = 30;        // gap between selection top edge and rotation handle
+
+// ---------------------------------------------------------------------------
+// Geometry helpers
+// ---------------------------------------------------------------------------
+
+function canvasXY(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+function toImage(cx, cy) {
+  return { x: cx / dispScale, y: cy / dispScale };
+}
+
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function lerp(a, b, t) {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+/** Normalise selection (ensure positive w/h). */
+function normSel() {
+  if (!sel) return null;
+  let { cx, cy, w, h } = sel;
+  if (w < 0) w = -w;
+  if (h < 0) h = -h;
+  return { cx, cy, w, h };
+}
+
+/** Selection in canvas coords (scaled). */
+function canvasSel() {
+  const n = normSel();
+  if (!n) return null;
+  return { cx: n.cx * dispScale, cy: n.cy * dispScale,
+           w: n.w * dispScale, h: n.h * dispScale };
+}
+
+// ---------------------------------------------------------------------------
+// Rotated rectangle geometry
+// ---------------------------------------------------------------------------
+
+/** Rotate point (lx, ly) around origin by rad, then translate to (ox, oy). */
+function rotPt(ox, oy, lx, ly, cos, sin) {
+  return { x: ox + lx * cos - ly * sin, y: oy + lx * sin + ly * cos };
+}
+
+/** Get the 4 corners of the selection in canvas coords (NW, NE, SE, SW). */
+function selCorners() {
+  const s = canvasSel();
+  if (!s) return null;
+  const rad = rotationDeg * Math.PI / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const hw = s.w / 2, hh = s.h / 2;
+  return [
+    rotPt(s.cx, s.cy, -hw, -hh, cos, sin),  // NW
+    rotPt(s.cx, s.cy,  hw, -hh, cos, sin),  // NE
+    rotPt(s.cx, s.cy,  hw,  hh, cos, sin),  // SE
+    rotPt(s.cx, s.cy, -hw,  hh, cos, sin),  // SW
+  ];
+}
+
+/** The 8 resize-handle positions in canvas coords (corners + edge midpoints). */
+function handlePositions() {
+  const s = canvasSel();
+  if (!s) return [];
+  const rad = rotationDeg * Math.PI / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const hw = s.w / 2, hh = s.h / 2;
+  const r = (lx, ly) => rotPt(s.cx, s.cy, lx, ly, cos, sin);
+  return [
+    { id: 'nw', ...r(-hw, -hh) },
+    { id: 'n',  ...r(  0, -hh) },
+    { id: 'ne', ...r( hw, -hh) },
+    { id: 'e',  ...r( hw,   0) },
+    { id: 'se', ...r( hw,  hh) },
+    { id: 's',  ...r(  0,  hh) },
+    { id: 'sw', ...r(-hw,  hh) },
+    { id: 'w',  ...r(-hw,   0) },
+  ];
+}
+
+/** Rotation handle position (above the rotated top edge). */
+function rotHandleXY() {
+  const s = canvasSel();
+  if (!s) return null;
+  const dist = s.h / 2 + ROT_STEM;
+  const rad  = rotationDeg * Math.PI / 180;
+  return { x: s.cx + dist * Math.sin(rad), y: s.cy - dist * Math.cos(rad) };
+}
+
+/** Top-center of the rotated selection (where the rotation stem starts). */
+function rotStemBase() {
+  const s = canvasSel();
+  if (!s) return null;
+  const rad = rotationDeg * Math.PI / 180;
+  return rotPt(s.cx, s.cy, 0, -s.h / 2, Math.cos(rad), Math.sin(rad));
+}
+
+/** Is (mx, my) inside the rotated selection? (canvas coords) */
+function isInsideSel(mx, my) {
+  const s = canvasSel();
+  if (!s) return false;
+  const rad = rotationDeg * Math.PI / 180;
+  const cos = Math.cos(-rad), sin = Math.sin(-rad);
+  const dx = mx - s.cx, dy = my - s.cy;
+  const lx = dx * cos - dy * sin;
+  const ly = dx * sin + dy * cos;
+  return Math.abs(lx) <= s.w / 2 && Math.abs(ly) <= s.h / 2;
+}
+
+// ---------------------------------------------------------------------------
+// Rotation → ffmpeg filter
+// ---------------------------------------------------------------------------
+
+// (rotation logic is inlined in getFilterString below)
+
+// ---------------------------------------------------------------------------
+// Drawing
+// ---------------------------------------------------------------------------
+
+function draw() {
+  if (!img) return;
+
+  canvas.width  = Math.round(imgW * dispScale);
+  canvas.height = Math.round(imgH * dispScale);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  if (!sel) return;
+
+  const corners = selCorners();
+  if (!corners) return;
+  const s = canvasSel();
+
+  // ── Dim everything outside the rotated selection ──
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.beginPath();
+  ctx.rect(0, 0, canvas.width, canvas.height);          // outer (CW)
+  ctx.moveTo(corners[0].x, corners[0].y);                // inner (CCW cutout)
+  ctx.lineTo(corners[3].x, corners[3].y);
+  ctx.lineTo(corners[2].x, corners[2].y);
+  ctx.lineTo(corners[1].x, corners[1].y);
+  ctx.closePath();
+  ctx.fill('evenodd');
+
+  // ── Selection border ──
+
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth   = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  ctx.moveTo(corners[0].x, corners[0].y);
+  ctx.lineTo(corners[1].x, corners[1].y);
+  ctx.lineTo(corners[2].x, corners[2].y);
+  ctx.lineTo(corners[3].x, corners[3].y);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // ── Rule-of-thirds grid ──
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 2; i++) {
+    const t = i / 3;
+    // "Vertical" grid line (along local Y)
+    const top = lerp(corners[0], corners[1], t);
+    const bot = lerp(corners[3], corners[2], t);
+    ctx.beginPath(); ctx.moveTo(top.x, top.y); ctx.lineTo(bot.x, bot.y); ctx.stroke();
+    // "Horizontal" grid line (along local X)
+    const lft = lerp(corners[0], corners[3], t);
+    const rgt = lerp(corners[1], corners[2], t);
+    ctx.beginPath(); ctx.moveTo(lft.x, lft.y); ctx.lineTo(rgt.x, rgt.y); ctx.stroke();
+  }
+
+  // ── Size label at center ──
+
+  const ns  = normSel();
+  const lbl = Math.round(ns.w) + '\u00d7' + Math.round(ns.h);
+  ctx.font = '13px Consolas, Monaco, monospace';
+  const tm = ctx.measureText(lbl);
+  const lx = s.cx - tm.width / 2 - 6;
+  const ly = s.cy - 11;
+  ctx.fillStyle = 'rgba(0,0,0,0.75)';
+  roundRect(ctx, lx, ly, tm.width + 12, 22, 4);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.fillText(lbl, lx + 6, ly + 16);
+
+  // ── Resize handles (squares at rotated positions) ──
+
+  ctx.fillStyle   = '#fff';
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth   = 1;
+  for (const h of handlePositions()) {
+    ctx.fillRect(h.x - HANDLE, h.y - HANDLE, HANDLE * 2, HANDLE * 2);
+    ctx.strokeRect(h.x - HANDLE, h.y - HANDLE, HANDLE * 2, HANDLE * 2);
+  }
+
+  // ── Rotation handle (circle above the rotated top edge) ──
+
+  const rh   = rotHandleXY();
+  const base = rotStemBase();
+  if (rh && base) {
+    // Stem
+    ctx.beginPath();
+    ctx.moveTo(base.x, base.y);
+    ctx.lineTo(rh.x, rh.y);
+    ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Circle
+    ctx.beginPath();
+    ctx.arc(rh.x, rh.y, ROT_R, 0, Math.PI * 2);
+    ctx.fillStyle = '#3b82f6';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Icon
+    ctx.fillStyle = '#fff';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('\u21bb', rh.x, rh.y + 0.5);
+    ctx.textAlign = 'start';
+    ctx.textBaseline = 'alphabetic';
+  }
+}
+
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.lineTo(x + w - r, y);   c.quadraticCurveTo(x + w, y, x + w, y + r);
+  c.lineTo(x + w, y + h - r); c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  c.lineTo(x + r, y + h);   c.quadraticCurveTo(x, y + h, x, y + h - r);
+  c.lineTo(x, y + r);       c.quadraticCurveTo(x, y, x + r, y);
+  c.closePath();
+}
+
+// ---------------------------------------------------------------------------
+// Hit testing
+// ---------------------------------------------------------------------------
+
+function hitTest(mx, my) {
+  if (!sel) return null;
+
+  // Rotation handle (check first — floats above)
+  const rh = rotHandleXY();
+  if (rh) {
+    const dx = mx - rh.x, dy = my - rh.y;
+    if (dx * dx + dy * dy <= (ROT_R + 4) ** 2) return 'rotate';
+  }
+
+  // Resize handles
+  for (const h of handlePositions()) {
+    if (Math.abs(mx - h.x) <= HANDLE + 2 && Math.abs(my - h.y) <= HANDLE + 2) return h.id;
+  }
+
+  // Inside rotated rect → move
+  if (isInsideSel(mx, my)) return 'move';
+
+  return null;
+}
+
+const CURSOR_MAP = {
+  nw: 'nw-resize', n: 'n-resize', ne: 'ne-resize', e: 'e-resize',
+  se: 'se-resize', s: 's-resize', sw: 'sw-resize', w: 'w-resize',
+  move: 'move', rotate: 'grab',
+};
+
+// ---------------------------------------------------------------------------
+// Mouse interaction
+// ---------------------------------------------------------------------------
+
+canvas.addEventListener('mousedown', (e) => {
+  const { x: mx, y: my } = canvasXY(e);
+  const hit = hitTest(mx, my);
+
+  if (hit === 'rotate') {
+    const s = canvasSel();
+    const mouseAngle = Math.atan2(mx - s.cx, s.cy - my) * 180 / Math.PI;
+    drag = { type: 'rotate', startAngle: mouseAngle, startRotation: rotationDeg };
+    canvas.style.cursor = 'grabbing';
+
+  } else if (hit) {
+    drag = { type: hit, startMouse: { x: mx, y: my }, startSel: { ...normSel() } };
+
+  } else {
+    // Create new selection (axis-aligned in image space)
+    const ip = toImage(mx, my);
+    sel = { cx: ip.x, cy: ip.y, w: 0, h: 0 };
+    drag = { type: 'create', startMouse: { x: mx, y: my }, startImg: ip };
+  }
+
+  e.preventDefault();
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  const { x: mx, y: my } = canvasXY(e);
+
+  if (!drag) {
+    canvas.style.cursor = CURSOR_MAP[hitTest(mx, my)] || 'crosshair';
+    return;
+  }
+
+  // ── Rotation drag ──
+
+  if (drag.type === 'rotate') {
+    const s = canvasSel();
+    const mouseAngle = Math.atan2(mx - s.cx, s.cy - my) * 180 / Math.PI;
+    let deg = drag.startRotation + (mouseAngle - drag.startAngle);
+    // Snap to multiples of 90° when within 2°
+    for (const snap of [0, 90, -90, 180, -180, 270, -270]) {
+      if (Math.abs(deg - snap) < 2) { deg = snap; break; }
+    }
+    rotationDeg = Math.round(deg * 10) / 10;
+    syncRotControls();
+    updateFilter();
+    draw();
+    e.preventDefault();
+    return;
+  }
+
+  // ── Creation drag ──
+
+  if (drag.type === 'create') {
+    const ip = toImage(mx, my);
+    sel.w  = ip.x - drag.startImg.x;
+    sel.h  = ip.y - drag.startImg.y;
+    sel.cx = drag.startImg.x + sel.w / 2;
+    sel.cy = drag.startImg.y + sel.h / 2;
+    updateFilter();
+    draw();
+    e.preventDefault();
+    return;
+  }
+
+  // ── Move / Resize drags ──
+
+  const dxImg = (mx - drag.startMouse.x) / dispScale;
+  const dyImg = (my - drag.startMouse.y) / dispScale;
+  const ss = drag.startSel;
+
+  if (drag.type === 'move') {
+    sel.cx = ss.cx + dxImg;
+    sel.cy = ss.cy + dyImg;
+
+  } else {
+    // Project mouse delta onto the box's local axes
+    const rad  = rotationDeg * Math.PI / 180;
+    const cosR = Math.cos(rad), sinR = Math.sin(rad);
+    const ldx  = dxImg * cosR + dyImg * sinR;   // along local X (right)
+    const ldy  = -dxImg * sinR + dyImg * cosR;   // along local Y (down)
+
+    // Each handle: adjust w/h and shift center to keep the opposite edge fixed.
+    // dW = change in width along local X, cxShift = dW/2 along local X in image space
+    // dH = change in height along local Y, cyShift = dH/2 along local Y in image space
+    let dW = 0, dH = 0;
+
+    switch (drag.type) {
+      case 'e':  dW =  ldx; break;
+      case 'w':  dW = -ldx; break;
+      case 'n':  dH = -ldy; break;
+      case 's':  dH =  ldy; break;
+      case 'ne': dW =  ldx; dH = -ldy; break;
+      case 'nw': dW = -ldx; dH = -ldy; break;
+      case 'se': dW =  ldx; dH =  ldy; break;
+      case 'sw': dW = -ldx; dH =  ldy; break;
+    }
+
+    sel.w = Math.max(1, ss.w + dW);
+    sel.h = Math.max(1, ss.h + dH);
+
+    // Actual deltas (clamped)
+    const actualDW = sel.w - ss.w;
+    const actualDH = sel.h - ss.h;
+
+    // Shift center so the opposite edge stays fixed.
+    // For east resize: center moves +dW/2 along local X.
+    // The sign depends on which side moved:
+    //   e/ne/se → +dW/2 along X    w/nw/sw → −dW/2 along X (but dW is negated above)
+    // Since dW already encodes direction, center always shifts by actualDW/2
+    // along local X and actualDH/2 along local Y, in the direction of the
+    // handle that moved. The sign is baked into actualDW/actualDH via the
+    // sign flip in the switch above — except we need to track which side
+    // "owns" each axis so we know the sign of the center shift.
+
+    let shiftLocalX = 0, shiftLocalY = 0;
+
+    // East-side handles: center shifts right (+local X) when width grows
+    if (drag.type === 'e' || drag.type === 'ne' || drag.type === 'se') {
+      shiftLocalX = actualDW / 2;
+    }
+    // West-side handles: center shifts left (-local X) when width grows
+    if (drag.type === 'w' || drag.type === 'nw' || drag.type === 'sw') {
+      shiftLocalX = -actualDW / 2;
+    }
+    // South-side handles: center shifts down (+local Y) when height grows
+    if (drag.type === 's' || drag.type === 'se' || drag.type === 'sw') {
+      shiftLocalY = actualDH / 2;
+    }
+    // North-side handles: center shifts up (-local Y) when height grows
+    if (drag.type === 'n' || drag.type === 'ne' || drag.type === 'nw') {
+      shiftLocalY = -actualDH / 2;
+    }
+
+    // Convert local shift to image coords
+    sel.cx = ss.cx + shiftLocalX * cosR + shiftLocalY * (-sinR);
+    sel.cy = ss.cy + shiftLocalX * sinR + shiftLocalY * cosR;
+  }
+
+  updateFilter();
+  draw();
+  e.preventDefault();
+});
+
+window.addEventListener('mouseup', () => {
+  if (!drag) return;
+  drag = null;
+
+  if (sel) {
+    sel = normSel();
+    if (sel.w < 5 && sel.h < 5) sel = null;
+  }
+
+  updateFilter();
+  draw();
+});
+
+// ---------------------------------------------------------------------------
+// Rotation controls (slider / input / presets)
+// ---------------------------------------------------------------------------
+
+function setRotation(deg) {
+  rotationDeg = deg;
+  syncRotControls();
+  updateFilter();
+  draw();
+}
+
+function onSlider() {
+  rotationDeg = parseFloat(rotSlider.value) || 0;
+  rotInput.value = rotationDeg;
+  updateFilter();
+  draw();
+}
+
+function onRotInput() {
+  const v = parseFloat(rotInput.value);
+  if (Number.isFinite(v)) {
+    rotationDeg = v;
+    rotSlider.value = clamp(v, -180, 180);
+    updateFilter();
+    draw();
+  }
+}
+
+function onRotKey(e) {
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+  e.preventDefault();
+  const step = e.shiftKey ? 1 : 0.1;
+  const dir  = e.key === 'ArrowUp' ? 1 : -1;
+  rotationDeg = Math.round((rotationDeg + step * dir) * 10) / 10;
+  syncRotControls();
+  updateFilter();
+  draw();
+}
+
+function syncRotControls() {
+  rotSlider.value = clamp(rotationDeg, -180, 180);
+  rotInput.value  = rotationDeg;
+}
+
+// ---------------------------------------------------------------------------
+// Filter string
+// ---------------------------------------------------------------------------
+
+function getFilterString() {
+  const n = normSel();
+  if (!n || n.w < 1 || n.h < 1) return '';
+
+  const w = Math.round(n.w);
+  const h = Math.round(n.h);
+  const x = Math.round(n.cx - w / 2);
+  const y = Math.round(n.cy - h / 2);
+  const crop = 'crop=' + w + ':' + h + ':' + x + ':' + y;
+
+  const upscale = ',scale=iw*3:ih*3';
+
+  if (rotationDeg === 0) return crop + upscale;
+
+  // 90° multiples: simple crop + transpose (lossless, correct dimensions)
+  const norm = ((rotationDeg % 360) + 360) % 360;
+  if (norm === 90)  return crop + ',transpose=1' + upscale;
+  if (norm === 180) return crop + ',hflip,vflip' + upscale;
+  if (norm === 270) return crop + ',transpose=2' + upscale;
+
+  // Arbitrary angle: 3-stage pipeline — no black bars.
+  //   1. Crop the axis-aligned bounding box of the rotated selection
+  //   2. Rotate by -angle to straighten the content
+  //   3. Center-crop to the final w×h
+  //   4. Upscale 3× for readability
+  const rad  = rotationDeg * Math.PI / 180;
+  const absC = Math.abs(Math.cos(rad)), absS = Math.abs(Math.sin(rad));
+  const bbW  = Math.ceil(w * absC + h * absS) + 4;
+  const bbH  = Math.ceil(w * absS + h * absC) + 4;
+  const bbX  = Math.round(n.cx - bbW / 2);
+  const bbY  = Math.round(n.cy - bbH / 2);
+  const sDeg = Math.round(-rotationDeg * 1000) / 1000;
+  const a    = sDeg + '*PI/180';
+
+  return 'crop=' + bbW + ':' + bbH + ':' + bbX + ':' + bbY +
+         ',rotate=' + a + ':ow=rotw(' + a + '):oh=roth(' + a + ')' +
+         ',crop=' + w + ':' + h + ':(iw-' + w + ')/2:(ih-' + h + ')/2' +
+         upscale;
+}
+
+function updateFilter() {
+  const f = getFilterString();
+  filterDisplay.textContent = f || '\u2014';
+
+  if (sel) {
+    const n = normSel();
+    const x = Math.round(n.cx - n.w / 2);
+    const y = Math.round(n.cy - n.h / 2);
+    let txt = Math.round(n.w) + '\u00d7' + Math.round(n.h) +
+      '  at (' + x + ', ' + y + ')';
+    if (rotationDeg !== 0) txt += '  rot ' + rotationDeg + '\u00b0';
+    txt += '  \u2014  image ' + imgW + '\u00d7' + imgH;
+    statusEl.textContent = txt;
+  } else {
+    statusEl.textContent = 'Click and drag to select crop region  \u2014  image ' + imgW + '\u00d7' + imgH;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Parse existing filter from config
+// ---------------------------------------------------------------------------
+
+function parseFilter(filter) {
+  if (!filter) return { crop: null, degrees: 0 };
+  const parts = filter.split(',');
+  let crop = null;
+  let degrees = 0;
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i].trim();
+
+    const cm = part.match(/^crop=(\d+):(\d+):(\d+):(\d+)$/);
+    if (cm) { crop = { w: +cm[1], h: +cm[2], x: +cm[3], y: +cm[4] }; continue; }
+
+    if (part === 'transpose=1') { degrees += 90; continue; }
+    if (part === 'transpose=2') { degrees -= 90; continue; }
+    if (part === 'hflip' && parts[i+1]?.trim() === 'vflip') { degrees += 180; i++; continue; }
+    if (part === 'vflip' && parts[i+1]?.trim() === 'hflip') { degrees += 180; i++; continue; }
+
+    const rm1 = part.match(/^rotate=([+-]?[\d.]+)\*PI\/180/);
+    if (rm1) { degrees = parseFloat(rm1[1]); continue; }
+
+    const rm2 = part.match(/^rotate=([+-]?[\d.]+)/);
+    if (rm2 && !rm2[1].includes('PI')) { degrees = parseFloat(rm2[1]) * 180 / Math.PI; continue; }
+  }
+
+  return { crop, degrees };
+}
+
+function applyParsedFilter(parsed) {
+  if (parsed.crop) {
+    const c = parsed.crop;
+    sel = { cx: c.x + c.w / 2, cy: c.y + c.h / 2, w: c.w, h: c.h };
+  }
+  if (parsed.degrees !== 0) {
+    rotationDeg = Math.round(parsed.degrees * 10) / 10;
+    syncRotControls();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------------
+
+async function refreshFrame() {
+  loadingEl.classList.remove('hidden');
+  try {
+    const resp = await fetch('/frame?t=' + Date.now());
+    if (!resp.ok) throw new Error('Camera returned ' + resp.status);
+
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+
+    const newImg = new Image();
+    await new Promise((resolve, reject) => {
+      newImg.onload  = resolve;
+      newImg.onerror = reject;
+      newImg.src     = url;
+    });
+
+    img  = newImg;
+    imgW = img.naturalWidth;
+    imgH = img.naturalHeight;
+
+    fitCanvas();
+    updateFilter();
+    draw();
+  } catch (err) {
+    statusEl.textContent = 'Error: ' + err.message;
+  } finally {
+    loadingEl.classList.add('hidden');
+  }
+}
+
+function fitCanvas() {
+  const area = document.getElementById('canvas-area');
+  const maxW = area.clientWidth  - 32;
+  const maxH = area.clientHeight - 32;
+  dispScale = Math.min(maxW / imgW, maxH / imgH, 1);
+}
+
+async function previewFilter() {
+  const n = normSel();
+  if (!n || n.w < 1 || n.h < 1) return alert('Draw a crop region first.');
+
+  // Call the sharp-based preview endpoint with structured parameters
+  const params = new URLSearchParams({
+    cx: String(Math.round(n.cx)),
+    cy: String(Math.round(n.cy)),
+    w:  String(Math.round(n.w)),
+    h:  String(Math.round(n.h)),
+    angle: String(rotationDeg),
+    t:  String(Date.now()),
+  });
+  previewImg.src = '/preview?' + params;
+  previewPanel.classList.remove('hidden');
+}
+
+function closePreview() {
+  previewPanel.classList.add('hidden');
+}
+
+async function saveFilter() {
+  const filter = getFilterString();
+  if (!filter) return alert('Draw a crop region first.');
+  try {
+    const resp   = await fetch('/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filter }),
+    });
+    const result = await resp.json();
+    if (result.ok) {
+      statusEl.textContent = 'Saved: RTSP_FILTER=' + filter;
+      statusEl.style.color = '#4ade80';
+      setTimeout(() => { statusEl.style.color = ''; }, 3000);
+    } else {
+      alert('Failed to save.');
+    }
+  } catch (err) {
+    alert('Save failed: ' + err.message);
+  }
+}
+
+function clearSelection() {
+  sel = null;
+  rotationDeg = 0;
+  syncRotControls();
+  updateFilter();
+  draw();
+}
+
+function copyFilter() {
+  const f = getFilterString();
+  if (f) {
+    navigator.clipboard.writeText(f).then(
+      () => { statusEl.textContent = 'Copied!'; setTimeout(updateFilter, 1500); },
+      () => {}
+    );
+  }
+}
+
+// Keyboard shortcuts
+window.addEventListener('keydown', (e) => {
+  if (document.activeElement === rotInput) return;
+  if (e.key === 'Escape') clearSelection();
+  if (e.key === 'Enter')  previewFilter();
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    const step = e.shiftKey ? 1 : 0.1;
+    const dir  = e.key === 'ArrowRight' ? 1 : -1;
+    rotationDeg = Math.round((rotationDeg + step * dir) * 10) / 10;
+    syncRotControls();
+    updateFilter();
+    draw();
+  }
+});
+
+window.addEventListener('resize', () => {
+  if (!img) return;
+  fitCanvas();
+  draw();
+});
+
+// ---------------------------------------------------------------------------
+// Initialise
+// ---------------------------------------------------------------------------
+
+(async () => {
+  try {
+    const resp = await fetch('/config');
+    const cfg  = await resp.json();
+    if (cfg.filter) applyParsedFilter(parseFilter(cfg.filter));
+  } catch { /* ignore */ }
+  await refreshFrame();
+})();
+</script>
+</body>
+</html>

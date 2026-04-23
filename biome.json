@@ -50,6 +50,7 @@
       "**/src/**/*.js",
       "**/src/**/*.jsx",
       "**/src/**/*.css",
+      "**/scripts/**/*.ts",
       "**/*.json",
       "**/*.jsonc",
       "!**/node_modules",

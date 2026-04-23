@@ -1,26 +1,38 @@
 #!/usr/bin/env bun
 
 /**
- * Data–Screenshot Correlator
+ * Data–Screenshot Correlator v2 — structured dataset, no images required
  *
  * Connects to the TCP bridge on the Pi, listens for serial packets from
- * the ZKETech device, and captures an RTSP camera snapshot for every
- * received packet. Each snapshot is saved alongside the decoded packet
- * data in a JSONL log so that later OCR can correlate device readouts
- * with the protocol-level measurements.
+ * the ZKETech device, and produces a structured JSONL dataset correlating:
+ *
+ *   1. Decoded protocol data (exact: voltage, current, state, capacity)
+ *   2. LCD display text (fast Tesseract OCR, ~200ms)
+ *   3. LCD display synthesis (instant: derived from protocol decode)
+ *   4. GUI application text (UI Automation or Tesseract on screenshot)
+ *
+ * The dataset is pure structured data — no images needed. Screenshots
+ * can optionally be saved with --save-images for debugging.
  *
  * Usage:
  *   bun run correlate
  *   bun run correlate -- --host coulomb --rtsp rtsp://...
+ *   bun run correlate -- --save-images     # also save screenshot JPEGs
+ *   bun run correlate -- --no-gui          # skip GUI capture
  */
 
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { readGui } from '../ocr/gui-reader.ts';
+import { synthesizeFromProtocol } from '../ocr/lcd-parser.ts';
+import { TesseractReader } from '../ocr/tesseract-reader.ts';
+import type { CorrelatedRecord, GuiReading, OcrReading } from '../ocr/types.ts';
 import { buildTxFrame, decodeRxFrame, parseFrame, scanForFrames, toHex } from '../protocol/codec.ts';
 import { RxPacketLength } from '../protocol/constants.ts';
 import type { DecodedRxFrame } from '../protocol/types.ts';
-import { BridgeTcpPort } from '../run/config.ts';
 import { RtspCamera } from '../proxy/camera.ts';
+import { GuiCapture, findEbTesterWindow } from '../proxy/gui-capture.ts';
+import { BridgeTcpPort } from '../run/config.ts';
 
 // ── Config ───────────────────────────────────────────────────────────
 
@@ -30,6 +42,10 @@ interface Config {
   rtspUrl: string;
   rtspFilter: string | undefined;
   outDir: string;
+  /** Save screenshot images alongside structured data */
+  saveImages: boolean;
+  /** Enable GUI window capture + OCR */
+  enableGui: boolean;
 }
 
 function loadConfig(): Config {
@@ -40,6 +56,8 @@ function loadConfig(): Config {
     rtspUrl: process.env.RTSP_URL || '',
     rtspFilter: process.env.RTSP_FILTER,
     outDir: 'recordings',
+    saveImages: false,
+    enableGui: true,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -59,6 +77,12 @@ function loadConfig(): Config {
       case '--out':
         config.outDir = argv[++i];
         break;
+      case '--save-images':
+        config.saveImages = true;
+        break;
+      case '--no-gui':
+        config.enableGui = false;
+        break;
       case '--help':
       case '-h':
         console.log(`
@@ -70,6 +94,8 @@ Options:
   --rtsp <URL>          RTSP camera URL           [env: RTSP_URL]
   --rtsp-filter <VF>    ffmpeg -vf filter string  [env: RTSP_FILTER]
   --out <DIR>           Output directory          [default: recordings]
+  --save-images         Save screenshot JPEGs     [default: off]
+  --no-gui              Skip GUI window capture   [default: capture if found]
   -h, --help            Show this help
 `);
         process.exit(0);
@@ -85,33 +111,6 @@ Options:
 }
 
 // ── JSONL Logger ─────────────────────────────────────────────────────
-
-interface CorrelatedRecord {
-  /** ISO timestamp */
-  t: string;
-  /** Monotonic time (ms) */
-  mono: number;
-  /** Record type */
-  type: 'rx' | 'tx' | 'connect' | 'note';
-  /** Decoded packet data (for rx records) */
-  packet?: {
-    state: number;
-    current: number;
-    voltage: number;
-    field6: number;
-    field7: number;
-    field8: number;
-    field9: number;
-    field10: number;
-    field11: number;
-    field12: number;
-    raw: string;
-  };
-  /** Screenshot filename (relative to session dir) */
-  screenshot?: string | null;
-  /** Free-form note */
-  note?: string;
-}
 
 function createLogger(sessionDir: string) {
   const logPath = join(sessionDir, 'correlated.jsonl');
@@ -144,13 +143,31 @@ function formatTime(): string {
   );
 }
 
-function displayRx(decoded: DecodedRxFrame, screenshotFile: string | null): void {
+function displayRx(decoded: DecodedRxFrame, synthesis: OcrReading): void {
   const time = formatTime();
   const stateHex = `0x${decoded.state.toString(16).padStart(2, '0')}`;
-  const snap = screenshotFile ? ` \x1b[35m${screenshotFile}\x1b[0m` : '';
+  const p = synthesis.parsed;
+  const mode = p.mode ?? '??';
+  const status = p.status ?? '??';
   console.log(
-    `\x1b[32m[${time}] RX  STATE=${stateHex}  V=${decoded.voltage.toFixed(3)}  I=${decoded.current.toFixed(4)}A${snap}\x1b[0m`
+    `\x1b[32m[${time}] RX  ${mode} ${stateHex}  V=${decoded.voltage.toFixed(3)}  ` +
+      `I=${decoded.current.toFixed(4)}A  ${status}\x1b[0m`
   );
+}
+
+function displayOcr(reading: OcrReading): void {
+  const time = formatTime();
+  const conf = reading.confidence.toFixed(0);
+  const text = reading.rawLines.join(' | ');
+  const ms = reading.ocrMs;
+  console.log(`\x1b[36m[${time}] OCR [${conf}% ${ms}ms] ${text}\x1b[0m`);
+}
+
+function displayGui(reading: GuiReading): void {
+  const time = formatTime();
+  const count = Object.keys(reading.fields).length;
+  const src = reading.source;
+  console.log(`\x1b[35m[${time}] GUI [${src} ${reading.readMs}ms] ${count} fields\x1b[0m`);
 }
 
 // ── Main ─────────────────────────────────────────────────────────────
@@ -167,11 +184,13 @@ async function main(): Promise<void> {
   const sessionDir = join(config.outDir, sessionName);
   mkdirSync(sessionDir, { recursive: true });
 
-  console.log('=== Battery Controller Data–Screenshot Correlator ===');
-  console.log(`Bridge:    ${config.host}:${config.port}`);
-  console.log(`RTSP cam:  ${config.rtspUrl}`);
-  if (config.rtspFilter) console.log(`RTSP filt: ${config.rtspFilter}`);
-  console.log(`Output:    ${sessionDir}`);
+  console.log('=== Battery Controller Correlator v2 (structured dataset) ===');
+  console.log(`Bridge:     ${config.host}:${config.port}`);
+  console.log(`RTSP cam:   ${config.rtspUrl}`);
+  if (config.rtspFilter) console.log(`RTSP filt:  ${config.rtspFilter}`);
+  console.log(`Output:     ${sessionDir}`);
+  console.log(`Images:     ${config.saveImages ? 'saving' : 'off (structured data only)'}`);
+  console.log(`GUI:        ${config.enableGui ? 'enabled' : 'disabled'}`);
   console.log();
 
   // Start JSONL logger
@@ -180,12 +199,114 @@ async function main(): Promise<void> {
     t: now.toISOString(),
     mono: performance.now(),
     type: 'note',
-    note: `Session started. Bridge=${config.host}:${config.port} RTSP=${config.rtspUrl}`,
+    note: `Session started. Bridge=${config.host}:${config.port} RTSP=${config.rtspUrl} images=${config.saveImages}`,
   });
 
-  // Start RTSP camera
+  // Start RTSP camera (always needed for LCD OCR; images saved only if --save-images)
   const camera = new RtspCamera(config.rtspUrl, sessionDir, config.rtspFilter);
   camera.start();
+
+  // Initialize Tesseract reader (replaces Claude CLI — ~200ms vs ~5000ms)
+  const tesseract = new TesseractReader();
+  console.log('Initializing Tesseract OCR...');
+  await tesseract.init();
+
+  // Find and set up GUI capture (optional)
+  let guiCapture: GuiCapture | null = null;
+  let guiWindowTitle: string | null = null;
+  if (config.enableGui) {
+    console.log('Looking for EB Tester window...');
+    guiWindowTitle = findEbTesterWindow();
+    if (guiWindowTitle) {
+      guiCapture = new GuiCapture(guiWindowTitle, sessionDir);
+      console.log(`[gui] Found: "${guiWindowTitle}"`);
+    } else {
+      console.log('[gui] EB Tester window not found — GUI capture disabled');
+    }
+  }
+
+  // ── OCR scheduling ──────────────────────────────────────────────
+  //
+  // Tesseract is fast enough (~200ms) to run much more frequently
+  // than the old Claude CLI approach (~5s, throttled to 10s).
+  // We run OCR every 2 seconds for real-time tracking.
+  //
+  let ocrChain: Promise<void> = Promise.resolve();
+  let lastOcrTime = 0;
+  const OCR_INTERVAL_MS = 2_000;
+
+  function scheduleOcr(): void {
+    const now = Date.now();
+    if (now - lastOcrTime < OCR_INTERVAL_MS) return;
+    lastOcrTime = now;
+
+    ocrChain = ocrChain
+      .then(async () => {
+        // Get filtered frame (cropped to LCD region via RTSP_FILTER)
+        // This feeds Tesseract just the LCD, not the full camera scene.
+        const filtered = await camera.getFilteredFrame();
+        if (!filtered) return;
+
+        // LCD OCR — try line-by-line first (better accuracy), fall back to block
+        const reading = (await tesseract.readLcdByLine(filtered)) ?? (await tesseract.readLcd(filtered));
+
+        if (reading && reading.confidence > 0) {
+          logger.append({
+            t: new Date().toISOString(),
+            mono: performance.now(),
+            type: 'lcd',
+            lcd: reading,
+          });
+          displayOcr(reading);
+        }
+      })
+      .catch(err => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`\x1b[31m[ocr] Error: ${msg}\x1b[0m`);
+      });
+  }
+
+  // GUI reading — less frequent (UI Automation or Tesseract)
+  let guiChain: Promise<void> = Promise.resolve();
+  let lastGuiTime = 0;
+  const GUI_INTERVAL_MS = 5_000;
+
+  function scheduleGuiRead(): void {
+    if (!guiWindowTitle) return;
+    const now = Date.now();
+    if (now - lastGuiTime < GUI_INTERVAL_MS) return;
+    lastGuiTime = now;
+
+    guiChain = guiChain
+      .then(async () => {
+        // Capture GUI screenshot (needed for Tesseract fallback)
+        let screenshotPath: string | null = null;
+        if (guiCapture) {
+          const result = guiCapture.capture();
+          if (result) {
+            try {
+              const meta = JSON.parse(result);
+              screenshotPath = join(sessionDir, meta.filename);
+            } catch {}
+          }
+        }
+
+        const reading = await readGui(guiWindowTitle!, screenshotPath, tesseract);
+        if (reading && Object.keys(reading.fields).length > 0) {
+          logger.append({
+            t: new Date().toISOString(),
+            mono: performance.now(),
+            type: 'gui',
+            gui: reading,
+          });
+          displayGui(reading);
+        }
+      })
+      .catch(err => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`\x1b[31m[gui] Error: ${msg}\x1b[0m`);
+      });
+  }
 
   // Wait a moment for ffmpeg to produce the first frame
   console.log('Waiting for RTSP camera to produce first frame...');
@@ -221,18 +342,39 @@ async function main(): Promise<void> {
 
       const decoded = decodeRxFrame(frame);
 
-      // Capture RTSP screenshot correlated with this packet
-      const screenshotResult = camera.capture();
+      // ── Protocol synthesis — instant LCD "reading" from decoded data ──
+      const synthesis: OcrReading = {
+        parsed: synthesizeFromProtocol(decoded),
+        rawLines: [], // no raw text for synthesis
+        confidence: 100,
+        ocrMs: 0,
+        source: 'protocol',
+      };
+
+      // ── Save screenshot only if --save-images ──
       let screenshotFile: string | null = null;
-      if (screenshotResult) {
-        try {
-          const meta = JSON.parse(screenshotResult);
-          screenshotFile = meta.filename;
-        } catch {}
+      if (config.saveImages) {
+        const screenshotResult = camera.capture();
+        if (screenshotResult) {
+          try {
+            const meta = JSON.parse(screenshotResult);
+            screenshotFile = meta.filename;
+          } catch {}
+        }
       }
 
-      // Log correlated record
-      logger.append({
+      // ── Schedule LCD OCR (Tesseract, async, non-blocking) ──
+      // Uses getFilteredFrame() which applies the RTSP crop/rotate filter
+      // via sharp — feeds Tesseract just the LCD region, not the full scene.
+      scheduleOcr();
+
+      // ── Schedule GUI read (async, non-blocking) ──
+      if (config.enableGui) {
+        scheduleGuiRead();
+      }
+
+      // ── Log correlated record ──
+      const record: CorrelatedRecord = {
         t: new Date().toISOString(),
         mono: performance.now(),
         type: 'rx',
@@ -249,10 +391,17 @@ async function main(): Promise<void> {
           field12: decoded.field12,
           raw: toHex(raw),
         },
-        screenshot: screenshotFile,
-      });
+        // Inline the protocol synthesis with every RX packet
+        lcd: synthesis,
+      };
 
-      displayRx(decoded, screenshotFile);
+      // Only include screenshot reference when saving images
+      if (config.saveImages) {
+        record.screenshot = screenshotFile;
+      }
+
+      logger.append(record);
+      displayRx(decoded, synthesis);
     }
   }
 
@@ -311,7 +460,7 @@ async function main(): Promise<void> {
     console.error('No response from device after 10 seconds. Device may be off or disconnected.');
     console.log('Will keep listening...');
   } else {
-    console.log('Device is responding. Correlating packets with screenshots.');
+    console.log('Device is responding. Correlating packets with structured data.');
   }
 
   console.log();
@@ -330,15 +479,17 @@ async function main(): Promise<void> {
     }
 
     camera.stop();
-    logger.close();
+    if (guiCapture) guiCapture.stop();
 
-    // Brief delay so the disconnect frame gets flushed before TCP close
-    setTimeout(() => {
+    // Wait for any in-flight OCR/GUI reads to finish, then clean up
+    Promise.all([ocrChain, guiChain]).finally(async () => {
+      await tesseract.terminate();
+      logger.close();
       socket.end();
       console.log(`Log: ${logger.path}`);
-      console.log(`Screenshots: ${sessionDir}`);
+      console.log(`Session: ${sessionDir}`);
       process.exit(0);
-    }, 500);
+    });
   }
 
   process.on('SIGINT', shutdown);

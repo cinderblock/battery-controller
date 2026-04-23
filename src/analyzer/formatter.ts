@@ -62,6 +62,9 @@ function fmtTx(pkt: TimestampedPacket, mode: OutputMode): string {
   if (tx.cutoffVoltage !== undefined && tx.cutoffVoltage > 0) {
     detail += `  cutoff=${tx.cutoffVoltage.toFixed(2)}V`;
   }
+  if (tx.cutoffCurrent !== undefined && tx.cutoffCurrent > 0) {
+    detail += `  cutoffI=${tx.cutoffCurrent.toFixed(2)}A`;
+  }
   const warn = tx.checksumValid ? '' : ` ${c.red}[BAD CHECKSUM]${c.cyan}`;
 
   return (

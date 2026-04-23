@@ -31,6 +31,26 @@ Thumbs.db
 # Recordings (proxy traffic captures)
 recordings/
 
+# Probe output — timestamped dirs + loose debug screenshots.
+# The scripts/probes/README.md stays tracked; everything else doesn't.
+scripts/probes/*
+!scripts/probes/README.md
+
+# Experiment artifacts
+tmp-ocr-test/
+test-*.png
+test-*.jpg
+build.tar.gz
+eng.traineddata
+tsconfig.tsbuildinfo
+
+# Python venvs
+.venv/
+scripts/ui-driver/.venv/
+
+# Claude internal
+.claude/scheduled_tasks.lock
+
 # Testing
 coverage/
 .nyc_output/
