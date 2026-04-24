@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Battery Controller — Chart-First</title>
+<style>
+  :root {
+    --bg: #0a0a0a; --surface: #141414; --surface2: #1e1e1e; --surface3: #282828;
+    --text: #e5e5e5; --text2: #777; --text3: #444;
+    --accent: #60a5fa; --accent2: #818cf8;
+    --orange: #fb923c; --green: #4ade80; --red: #f87171;
+    --yellow: #facc15; --cyan: #22d3ee; --pink: #f472b6;
+    --radius: 10px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: -apple-system, system-ui, 'SF Pro Text', sans-serif;
+    background: var(--bg); color: var(--text);
+    -webkit-tap-highlight-color: transparent;
+    display: flex; flex-direction: column;
+  }
+
+  /* ── Top bar: minimal ── */
+  .top-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px; background: var(--surface);
+    border-bottom: 1px solid #222; flex-shrink: 0;
+    z-index: 10;
+  }
+  .top-bar-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+  .top-bar-device { font-size: 12px; color: var(--text2); }
+  .top-bar-state { font-size: 12px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+  .top-bar-spacer { flex: 1; }
+  .top-bar-reading { font-size: 13px; font-variant-numeric: tabular-nums; font-weight: 500; }
+  .top-bar-reading .unit { color: var(--text2); font-weight: 400; font-size: 11px; }
+  .top-bar-sep { width: 1px; height: 16px; background: #333; }
+  .top-bar-btn {
+    padding: 4px 10px; border-radius: 6px; border: 1px solid #333;
+    background: var(--surface2); color: var(--text2); font-size: 11px;
+    cursor: pointer; white-space: nowrap;
+  }
+  .top-bar-btn:hover { border-color: #555; color: var(--text); }
+
+  /* ── Chart: the main event ── */
+  .chart-container {
+    flex: 1; position: relative; overflow: hidden;
+    min-height: 0; /* flexbox child shrink */
+  }
+  .chart-canvas { width: 100%; height: 100%; display: block; }
+
+  /* ── Legend / filter sidebar ── */
+  .legend-toggle {
+    position: absolute; top: 8px; left: 8px; z-index: 5;
+    padding: 5px 8px; border-radius: 6px;
+    background: var(--surface2)cc; border: 1px solid #333;
+    color: var(--text2); font-size: 11px; cursor: pointer;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+
+  .legend-panel {
+    position: absolute; top: 0; left: 0; bottom: 0; width: 260px;
+    background: var(--surface)f5; border-right: 1px solid #222;
+    z-index: 4; transform: translateX(-100%);
+    transition: transform 0.25s ease-out;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    display: flex; flex-direction: column;
+    overflow-y: auto;
+  }
+  .legend-panel.open { transform: translateX(0); }
+
+  .legend-header {
+    padding: 10px 12px; border-bottom: 1px solid #222;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 13px; font-weight: 600; flex-shrink: 0;
+  }
+  .legend-close { color: var(--text2); cursor: pointer; padding: 4px; font-size: 16px; }
+
+  .legend-section { padding: 8px 12px; border-bottom: 1px solid #1a1a1a; }
+  .legend-section-title { font-size: 10px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+
+  .legend-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 0; cursor: pointer; font-size: 12px;
+  }
+  .legend-item.dimmed { opacity: 0.35; }
+  .legend-swatch { width: 12px; height: 3px; border-radius: 1px; flex-shrink: 0; }
+  .legend-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .legend-value { font-variant-numeric: tabular-nums; color: var(--text2); font-size: 11px; }
+  .legend-eye { color: var(--text3); font-size: 14px; cursor: pointer; }
+  .legend-eye.hidden { color: var(--red); }
+
+  .series-toggles {
+    display: flex; gap: 4px; flex-wrap: wrap;
+  }
+  .series-chip {
+    padding: 3px 8px; border-radius: 4px; font-size: 11px;
+    border: 1px solid; cursor: pointer;
+  }
+  .series-chip.active { font-weight: 600; }
+  .series-chip.off { opacity: 0.3; }
+
+  /* ── Bottom bar ── */
+  .bottom-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px; background: var(--surface);
+    border-top: 1px solid #222; flex-shrink: 0;
+  }
+  .bottom-bar-group { display: flex; align-items: center; gap: 6px; }
+  .bottom-bar-label { font-size: 11px; color: var(--text2); }
+  .bottom-bar-select {
+    background: var(--surface2); border: 1px solid #333; border-radius: 4px;
+    color: var(--text); font-size: 12px; padding: 3px 6px; cursor: pointer;
+  }
+  .bottom-bar-spacer { flex: 1; }
+
+  .start-btn {
+    padding: 8px 20px; border-radius: 8px; border: none;
+    background: var(--green); color: #000; font-size: 13px;
+    font-weight: 600; cursor: pointer; white-space: nowrap;
+  }
+  .start-btn:active { transform: scale(0.97); }
+
+  .stop-btn {
+    padding: 8px 20px; border-radius: 8px; border: none;
+    background: var(--red); color: white; font-size: 13px;
+    font-weight: 600; cursor: pointer; white-space: nowrap;
+  }
+
+  .nav-btn {
+    padding: 6px 12px; border-radius: 6px; border: 1px solid #333;
+    background: var(--surface2); color: var(--text2); font-size: 11px;
+    cursor: pointer; text-decoration: none;
+  }
+
+  /* ── Start modal ── */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    z-index: 100; display: none; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid #333;
+    border-radius: 16px; width: 100%; max-width: 400px;
+    overflow: hidden;
+  }
+  .modal-header {
+    padding: 16px 20px; border-bottom: 1px solid #222;
+    font-size: 17px; font-weight: 600;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .modal-close { color: var(--text2); cursor: pointer; font-size: 20px; padding: 4px; }
+  .modal-body { padding: 20px; }
+  .modal-footer { padding: 12px 20px; border-top: 1px solid #222; display: flex; gap: 8px; justify-content: flex-end; }
+
+  .form-group { margin-bottom: 16px; }
+  .form-label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 6px; }
+  .form-input {
+    width: 100%; padding: 10px 12px; background: var(--surface2);
+    border: 1px solid #333; border-radius: 8px; color: var(--text);
+    font-size: 15px;
+  }
+  .form-input:focus { border-color: var(--accent); outline: none; }
+  .form-row { display: flex; gap: 10px; }
+  .form-row .form-group { flex: 1; }
+
+  .form-select {
+    width: 100%; padding: 10px 12px; background: var(--surface2);
+    border: 1px solid #333; border-radius: 8px; color: var(--text);
+    font-size: 15px; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23777' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 10px center;
+  }
+
+  .form-chip-group { display: flex; gap: 6px; }
+  .form-chip {
+    flex: 1; padding: 10px; border-radius: 8px; text-align: center;
+    background: var(--surface2); border: 1px solid #333;
+    color: var(--text2); font-size: 13px; cursor: pointer;
+    font-weight: 500;
+  }
+  .form-chip.active { border-color: var(--accent); color: var(--accent); background: #60a5fa11; }
+
+  .form-scan-btn {
+    width: 100%; padding: 10px; border-radius: 8px; border: 1px dashed #444;
+    background: transparent; color: var(--text2); font-size: 13px;
+    cursor: pointer; margin-top: 6px;
+  }
+
+  .modal-start-btn {
+    padding: 12px 32px; border-radius: 10px; border: none;
+    background: var(--green); color: #000; font-size: 15px;
+    font-weight: 600; cursor: pointer;
+  }
+  .modal-cancel-btn {
+    padding: 12px 20px; border-radius: 10px; border: 1px solid #333;
+    background: transparent; color: var(--text2); font-size: 14px;
+    cursor: pointer;
+  }
+
+  /* ── Live readings overlay ── */
+  .live-overlay {
+    position: absolute; top: 8px; right: 8px; z-index: 5;
+    background: var(--surface)dd; border: 1px solid #333;
+    border-radius: 10px; padding: 10px 14px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    display: none; /* only shown during active run */
+    min-width: 160px;
+  }
+  .live-overlay.active { display: block; }
+  .live-row {
+    display: flex; justify-content: space-between; gap: 16px;
+    padding: 2px 0; font-size: 13px; font-variant-numeric: tabular-nums;
+  }
+  .live-row-label { color: var(--text2); }
+  .live-row-value { font-weight: 600; }
+  .live-elapsed {
+    text-align: center; font-size: 11px; color: var(--text2);
+    margin-top: 6px; padding-top: 6px; border-top: 1px solid #222;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Crosshair tooltip ── */
+  .crosshair-tooltip {
+    position: absolute; z-index: 3; pointer-events: none;
+    background: var(--surface2)ee; border: 1px solid #333;
+    border-radius: 6px; padding: 6px 10px; font-size: 11px;
+    font-variant-numeric: tabular-nums; display: none;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<!-- Top bar: device status + condensed live readings -->
+<div class="top-bar">
+  <div class="top-bar-dot" id="conn-dot"></div>
+  <span class="top-bar-device">EBC-A40L</span>
+  <span class="top-bar-state" id="state-badge" style="background:#4ade8022;color:var(--text2)">Idle</span>
+  <div class="top-bar-spacer"></div>
+  <span class="top-bar-reading" id="tb-voltage">3.285 <span class="unit">V</span></span>
+  <div class="top-bar-sep"></div>
+  <span class="top-bar-reading" id="tb-current">0.00 <span class="unit">A</span></span>
+  <div class="top-bar-sep"></div>
+  <span class="top-bar-reading" id="tb-capacity">0.00 <span class="unit">Ah</span></span>
+</div>
+
+<!-- Chart area -->
+<div class="chart-container" id="chart-container">
+  <canvas class="chart-canvas" id="chart"></canvas>
+
+  <!-- Legend toggle -->
+  <div class="legend-toggle" onclick="toggleLegend()">Runs & Series</div>
+
+  <!-- Legend panel -->
+  <div class="legend-panel" id="legend-panel">
+    <div class="legend-header">
+      <span>Runs & Series</span>
+      <span class="legend-close" onclick="toggleLegend()">&times;</span>
+    </div>
+
+    <div class="legend-section">
+      <div class="legend-section-title">Series</div>
+      <div class="series-toggles">
+        <div class="series-chip active" style="border-color:var(--accent);color:var(--accent)" onclick="toggleSeries(this,'voltage')">Voltage</div>
+        <div class="series-chip active" style="border-color:var(--orange);color:var(--orange)" onclick="toggleSeries(this,'current')">Current</div>
+        <div class="series-chip active" style="border-color:var(--green);color:var(--green)" onclick="toggleSeries(this,'power')">Power</div>
+        <div class="series-chip off" style="border-color:var(--cyan);color:var(--cyan)" onclick="toggleSeries(this,'capacity')">Capacity</div>
+      </div>
+    </div>
+
+    <div class="legend-section">
+      <div class="legend-section-title">Cell Group: TS-LFP200AHA</div>
+      <div id="legend-runs"></div>
+    </div>
+  </div>
+
+  <!-- Live readings overlay (during active test) -->
+  <div class="live-overlay" id="live-overlay">
+    <div class="live-row"><span class="live-row-label">V</span><span class="live-row-value" id="lo-v">3.285 V</span></div>
+    <div class="live-row"><span class="live-row-label">I</span><span class="live-row-value" id="lo-i">0.00 A</span></div>
+    <div class="live-row"><span class="live-row-label">P</span><span class="live-row-value" id="lo-p">0.0 W</span></div>
+    <div class="live-row"><span class="live-row-label">Ah</span><span class="live-row-value" id="lo-ah">0.00</span></div>
+    <div class="live-row"><span class="live-row-label">Wh</span><span class="live-row-value" id="lo-wh">0.0</span></div>
+    <div class="live-elapsed" id="lo-time">0:00:00</div>
+  </div>
+
+  <div class="crosshair-tooltip" id="tooltip"></div>
+</div>
+
+<!-- Bottom bar -->
+<div class="bottom-bar">
+  <div class="bottom-bar-group">
+    <span class="bottom-bar-label">Group:</span>
+    <select class="bottom-bar-select" id="group-select">
+      <option>TS-LFP200AHA (all)</option>
+      <option>Cell #3 — 00104F02</option>
+      <option>Cell #7 — 00104F05</option>
+      <option>Cell #11 — 00104F09</option>
+    </select>
+  </div>
+  <div class="bottom-bar-spacer"></div>
+  <a class="nav-btn" href="mockup6-sequence-editor.html">Sequences</a>
+  <button class="start-btn" id="main-action-btn" onclick="openStartModal()">New Run</button>
+</div>
+
+<!-- Start modal -->
+<div class="modal-overlay" id="start-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span>Start New Run</span>
+      <span class="modal-close" onclick="closeStartModal()">&times;</span>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Cell barcode</label>
+        <input class="form-input" placeholder="Scan or type barcode..." id="modal-barcode" value="TS-LFP200AHA 00104F02">
+        <button class="form-scan-btn" onclick="this.previousElementSibling.value='TS-LFP200AHA 00104F05'">Scan with camera</button>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Cell label (optional)</label>
+        <input class="form-input" placeholder="e.g. Cell #3" id="modal-label" value="Cell #3">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Cell group</label>
+        <select class="form-select">
+          <option>TS-LFP200AHA — 200Ah LiFePO4</option>
+          <option>Custom...</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Mode</label>
+        <div class="form-chip-group">
+          <div class="form-chip active" onclick="selectChip(this)">D-CC</div>
+          <div class="form-chip" onclick="selectChip(this)">D-CP</div>
+          <div class="form-chip" onclick="selectChip(this)">C-CV</div>
+          <div class="form-chip" onclick="selectChip(this)">Sequence</div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Current</label>
+          <input class="form-input" type="number" step="0.01" value="40.00" id="modal-current">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Cutoff voltage</label>
+          <input class="form-input" type="number" step="0.01" value="2.50" id="modal-cutoff">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Max time (min)</label>
+          <input class="form-input" type="number" value="600">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Unit</label>
+          <div class="form-chip-group">
+            <div class="form-chip active" onclick="selectChipInGroup(this)" style="flex:1">Amps</div>
+            <div class="form-chip" onclick="selectChipInGroup(this)" style="flex:1">C-rate</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="modal-cancel-btn" onclick="closeStartModal()">Cancel</button>
+      <button class="modal-start-btn" onclick="confirmStart()">Start Discharge</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Fake historical run data (realistic LiFePO4 discharge curves) ──
+
+const RUN_COLORS = ['#60a5fa', '#fb923c', '#4ade80', '#f472b6', '#facc15', '#22d3ee', '#a78bfa', '#f87171'];
+
+function generateDischargeCurve(startV, endV, currentA, capacityAh, noiseScale, numPoints) {
+  const points = [];
+  const totalSeconds = (capacityAh / currentA) * 3600;
+  for (let i = 0; i < numPoints; i++) {
+    const t = (i / (numPoints - 1)) * totalSeconds;
+    const frac = i / (numPoints - 1);
+    // LiFePO4 flat curve: steep start, flat middle, steep end
+    let v;
+    if (frac < 0.05) v = startV - (startV - (startV - 0.05)) * (frac / 0.05);
+    else if (frac < 0.85) v = (startV - 0.05) - 0.03 * ((frac - 0.05) / 0.8);
+    else v = (startV - 0.08) - (startV - 0.08 - endV) * Math.pow((frac - 0.85) / 0.15, 2);
+
+    v += (Math.random() - 0.5) * noiseScale;
+    const i_a = currentA + (Math.random() - 0.5) * 0.05;
+    const cap = capacityAh * frac;
+    const power = v * i_a;
+    points.push({ t, v, i: i_a, p: power, cap });
+  }
+  return points;
+}
+
+const historicalRuns = [
+  { id: 1, cell: 'Cell #3', barcode: '00104F02', mode: 'd-cc', current: 40, capacity: 198.4, date: '2026-04-18',
+    data: generateDischargeCurve(3.35, 2.50, 40, 198.4, 0.003, 150), visible: true },
+  { id: 2, cell: 'Cell #3', barcode: '00104F02', mode: 'd-cc', current: 40, capacity: 197.8, date: '2026-04-19',
+    data: generateDischargeCurve(3.34, 2.50, 40, 197.8, 0.003, 150), visible: true },
+  { id: 3, cell: 'Cell #7', barcode: '00104F05', mode: 'd-cc', current: 40, capacity: 187.2, date: '2026-04-20',
+    data: generateDischargeCurve(3.33, 2.50, 40, 187.2, 0.004, 150), visible: true },
+  { id: 4, cell: 'Cell #7', barcode: '00104F05', mode: 'd-cc', current: 20, capacity: 189.1, date: '2026-04-21',
+    data: generateDischargeCurve(3.34, 2.50, 20, 189.1, 0.002, 150), visible: true },
+  { id: 5, cell: 'Cell #11', barcode: '00104F09', mode: 'd-cc', current: 40, capacity: 203.1, date: '2026-04-22',
+    data: generateDischargeCurve(3.36, 2.50, 40, 203.1, 0.003, 150), visible: true },
+];
+
+// Series visibility
+const seriesVis = { voltage: true, current: true, power: true, capacity: false };
+
+// Live run state
+let liveRun = null;
+let liveData = [];
+let isRunning = false;
+let liveVoltage = 3.285;
+let liveCurrent = 0;
+let liveCapacity = 0;
+let liveEnergy = 0;
+let liveElapsed = 0;
+
+// ── Chart rendering ──
+const canvas = document.getElementById('chart');
+const ctx = canvas.getContext('2d');
+let dpr = window.devicePixelRatio || 1;
+
+function drawChart() {
+  const container = document.getElementById('chart-container');
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // Background
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fillRect(0, 0, w, h);
+
+  const pad = { t: 30, r: 65, b: 40, l: 55 };
+  const cw = w - pad.l - pad.r;
+  const ch = h - pad.t - pad.b;
+
+  // Determine data bounds from all visible runs + live
+  let allRuns = historicalRuns.filter(r => r.visible);
+  let maxT = 0, minV = 5, maxV = 0, maxI = 0, maxP = 0, maxCap = 0;
+  for (const run of allRuns) {
+    for (const pt of run.data) {
+      if (pt.t > maxT) maxT = pt.t;
+      if (pt.v < minV) minV = pt.v;
+      if (pt.v > maxV) maxV = pt.v;
+      if (pt.i > maxI) maxI = pt.i;
+      if (pt.p > maxP) maxP = pt.p;
+      if (pt.cap > maxCap) maxCap = pt.cap;
+    }
+  }
+  if (liveData.length > 0) {
+    for (const pt of liveData) {
+      if (pt.t > maxT) maxT = pt.t;
+      if (pt.v < minV) minV = pt.v;
+      if (pt.v > maxV) maxV = pt.v;
+      if (pt.i > maxI) maxI = pt.i;
+      if (pt.p > maxP) maxP = pt.p;
+      if (pt.cap > maxCap) maxCap = pt.cap;
+    }
+  }
+
+  if (maxT === 0) maxT = 18000;
+  minV = Math.max(minV - 0.05, 2.0);
+  maxV = maxV + 0.05;
+  if (maxI === 0) maxI = 45;
+  if (maxP === 0) maxP = 200;
+  if (maxCap === 0) maxCap = 210;
+  maxI += 5;
+
+  // Grid
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 5; i++) {
+    const y = pad.t + (i / 5) * ch;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + cw, y); ctx.stroke();
+  }
+  for (let i = 0; i <= 6; i++) {
+    const x = pad.l + (i / 6) * cw;
+    ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, pad.t + ch); ctx.stroke();
+  }
+
+  // X axis labels (time)
+  ctx.fillStyle = '#555';
+  ctx.font = '10px system-ui';
+  ctx.textAlign = 'center';
+  for (let i = 0; i <= 6; i++) {
+    const x = pad.l + (i / 6) * cw;
+    const t = (i / 6) * maxT;
+    const hr = Math.floor(t / 3600);
+    const mn = Math.floor((t % 3600) / 60);
+    ctx.fillText(`${hr}:${String(mn).padStart(2,'0')}`, x, pad.t + ch + 18);
+  }
+
+  // Y axis labels — left (voltage)
+  if (seriesVis.voltage) {
+    ctx.fillStyle = '#60a5fa88';
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= 5; i++) {
+      const y = pad.t + (i / 5) * ch;
+      const v = maxV - (i / 5) * (maxV - minV);
+      ctx.fillText(v.toFixed(2), pad.l - 6, y + 3);
+    }
+    ctx.fillText('V', pad.l - 6, pad.t - 8);
+  }
+
+  // Y axis labels — right (current/power)
+  if (seriesVis.current) {
+    ctx.fillStyle = '#fb923c88';
+    ctx.textAlign = 'left';
+    for (let i = 0; i <= 5; i++) {
+      const y = pad.t + (i / 5) * ch;
+      const a = maxI - (i / 5) * maxI;
+      ctx.fillText(a.toFixed(0), pad.l + cw + 6, y + 3);
+    }
+    ctx.fillText('A', pad.l + cw + 6, pad.t - 8);
+  }
+
+  // Helper: map data point to pixel
+  function xPx(t) { return pad.l + (t / maxT) * cw; }
+  function yV(v) { return pad.t + (1 - (v - minV) / (maxV - minV)) * ch; }
+  function yI(i) { return pad.t + (1 - i / maxI) * ch; }
+  function yP(p) { return pad.t + (1 - p / maxP) * ch; }
+  function yCap(c) { return pad.t + (1 - c / maxCap) * ch; }
+
+  // Draw a run's series
+  function drawRun(data, color, alpha, lineWidth) {
+    if (seriesVis.voltage) {
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = alpha;
+      ctx.lineWidth = lineWidth;
+      ctx.beginPath();
+      data.forEach((pt, idx) => {
+        const x = xPx(pt.t), y = yV(pt.v);
+        idx === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    if (seriesVis.current) {
+      // Derive current color from run color with orange shift
+      ctx.strokeStyle = color.replace(/60a5fa|4ade80|f472b6|facc15|22d3ee|a78bfa|f87171/g, m => m);
+      ctx.globalAlpha = alpha * 0.6;
+      ctx.lineWidth = lineWidth * 0.7;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      data.forEach((pt, idx) => {
+        const x = xPx(pt.t), y = yI(pt.i);
+        idx === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    if (seriesVis.power) {
+      ctx.globalAlpha = alpha * 0.3;
+      ctx.lineWidth = lineWidth * 0.5;
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      data.forEach((pt, idx) => {
+        const x = xPx(pt.t), y = yP(pt.p);
+        idx === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
+  }
+
+  // Draw historical runs
+  for (let ri = 0; ri < historicalRuns.length; ri++) {
+    const run = historicalRuns[ri];
+    if (!run.visible) continue;
+    const color = RUN_COLORS[ri % RUN_COLORS.length];
+    const alpha = isRunning ? 0.2 : 0.7;
+    const lw = isRunning ? 1 : 1.5;
+    drawRun(run.data, color, alpha, lw);
+  }
+
+  // Draw live run (prominent)
+  if (liveData.length >= 2) {
+    drawRun(liveData, '#ffffff', 1, 2.5);
+
+    // Glow on the head point
+    const last = liveData[liveData.length - 1];
+    if (seriesVis.voltage) {
+      const x = xPx(last.t), y = yV(last.v);
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff22';
+      ctx.fill();
+    }
+  }
+
+  // "No data" state
+  if (allRuns.length === 0 && liveData.length === 0) {
+    ctx.fillStyle = '#444';
+    ctx.font = '14px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText('No runs yet — start a new run', w / 2, h / 2);
+  }
+}
+
+// ── Legend population ──
+function populateLegend() {
+  const el = document.getElementById('legend-runs');
+  el.innerHTML = historicalRuns.map((r, i) => {
+    const color = RUN_COLORS[i % RUN_COLORS.length];
+    return `<div class="legend-item ${r.visible ? '' : 'dimmed'}" onclick="toggleRun(${i})">
+      <div class="legend-swatch" style="background:${color}"></div>
+      <span class="legend-label">${r.cell} — ${r.date}</span>
+      <span class="legend-value">${r.capacity.toFixed(1)} Ah</span>
+      <span class="legend-eye">${r.visible ? '◉' : '◯'}</span>
+    </div>`;
+  }).join('') + (isRunning ? `<div class="legend-item">
+    <div class="legend-swatch" style="background:white;height:4px"></div>
+    <span class="legend-label" style="font-weight:600">Live run</span>
+    <span class="legend-value" style="color:var(--green)">active</span>
+  </div>` : '');
+}
+
+function toggleRun(idx) {
+  historicalRuns[idx].visible = !historicalRuns[idx].visible;
+  populateLegend();
+  drawChart();
+}
+
+function toggleSeries(el, name) {
+  seriesVis[name] = !seriesVis[name];
+  el.classList.toggle('off');
+  el.classList.toggle('active');
+  drawChart();
+}
+
+function toggleLegend() {
+  document.getElementById('legend-panel').classList.toggle('open');
+}
+
+// ── Modal ──
+function openStartModal() {
+  document.getElementById('start-modal').classList.add('open');
+}
+function closeStartModal() {
+  document.getElementById('start-modal').classList.remove('open');
+}
+function selectChip(el) {
+  el.parentElement.querySelectorAll('.form-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+}
+function selectChipInGroup(el) {
+  el.parentElement.querySelectorAll('.form-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function confirmStart() {
+  closeStartModal();
+  isRunning = true;
+  liveData = [];
+  liveVoltage = 3.35 + Math.random() * 0.01;
+  liveCurrent = parseFloat(document.getElementById('modal-current').value) || 40;
+  liveCapacity = 0;
+  liveEnergy = 0;
+  liveElapsed = 0;
+
+  document.getElementById('live-overlay').classList.add('active');
+  document.getElementById('main-action-btn').textContent = 'Stop';
+  document.getElementById('main-action-btn').className = 'stop-btn';
+  document.getElementById('main-action-btn').onclick = stopRun;
+
+  const badge = document.getElementById('state-badge');
+  badge.textContent = 'Discharging';
+  badge.style.background = '#fb923c22';
+  badge.style.color = '#fb923c';
+
+  populateLegend();
+}
+
+function stopRun() {
+  isRunning = false;
+  liveCurrent = 0;
+  document.getElementById('live-overlay').classList.remove('active');
+  document.getElementById('main-action-btn').textContent = 'New Run';
+  document.getElementById('main-action-btn').className = 'start-btn';
+  document.getElementById('main-action-btn').onclick = openStartModal;
+
+  const badge = document.getElementById('state-badge');
+  badge.textContent = 'Idle';
+  badge.style.background = '#4ade8022';
+  badge.style.color = 'var(--text2)';
+
+  populateLegend();
+  drawChart();
+}
+
+// ── Live simulation ──
+setInterval(() => {
+  // Idle voltage jitter
+  if (!isRunning) {
+    liveVoltage += (Math.random() - 0.5) * 0.001;
+  } else {
+    liveElapsed += 2;
+    liveVoltage -= 0.0003 + Math.random() * 0.0002;
+    liveCurrent += (Math.random() - 0.5) * 0.02;
+    const currentNow = Math.max(0, liveCurrent);
+    liveCapacity += currentNow * (2 / 3600);
+    const power = liveVoltage * currentNow;
+    liveEnergy += power * (2 / 3600);
+
+    liveData.push({ t: liveElapsed, v: liveVoltage, i: currentNow, p: power, cap: liveCapacity });
+
+    if (liveVoltage <= 2.50) {
+      stopRun();
+      return;
+    }
+
+    // Update live overlay
+    document.getElementById('lo-v').textContent = liveVoltage.toFixed(3) + ' V';
+    document.getElementById('lo-i').textContent = liveCurrent.toFixed(2) + ' A';
+    document.getElementById('lo-p').textContent = power.toFixed(1) + ' W';
+    document.getElementById('lo-ah').textContent = liveCapacity.toFixed(2);
+    document.getElementById('lo-wh').textContent = liveEnergy.toFixed(1);
+    const h = Math.floor(liveElapsed/3600), m = Math.floor((liveElapsed%3600)/60), s = Math.floor(liveElapsed%60);
+    document.getElementById('lo-time').textContent = `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }
+
+  // Top bar readings
+  document.getElementById('tb-voltage').innerHTML = liveVoltage.toFixed(3) + ' <span class="unit">V</span>';
+  document.getElementById('tb-current').innerHTML = Math.abs(liveCurrent).toFixed(2) + ' <span class="unit">A</span>';
+  document.getElementById('tb-capacity').innerHTML = liveCapacity.toFixed(2) + ' <span class="unit">Ah</span>';
+
+  drawChart();
+}, 2000);
+
+// ── Mouse/touch crosshair ──
+canvas.addEventListener('mousemove', (e) => {
+  // Future: show tooltip with values at cursor position
+});
+
+// Init
+populateLegend();
+drawChart();
+window.addEventListener('resize', drawChart);
+</script>
+</body>
+</html>

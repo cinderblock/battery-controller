@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Mockup 1 — Single Page + Bottom Sheets</title>
+<style>
+  :root {
+    --bg: #0f0f0f; --surface: #1a1a1a; --surface2: #252525;
+    --text: #e5e5e5; --text2: #999; --accent: #3b82f6;
+    --orange: #f59e0b; --green: #22c55e; --red: #ef4444;
+    --radius: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    overflow-x: hidden; -webkit-tap-highlight-color: transparent;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+
+  /* ── Status bar ── */
+  .status-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 16px; background: var(--surface);
+    border-bottom: 1px solid #333; font-size: 13px;
+    position: sticky; top: 0; z-index: 10;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .status-dot.connected { background: var(--green); }
+  .status-cell { margin-left: auto; color: var(--accent); cursor: pointer; }
+
+  /* ── Readings grid ── */
+  .readings {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 1px; background: #333; margin: 1px 0;
+  }
+  .reading {
+    background: var(--surface); padding: 12px 16px;
+    display: flex; flex-direction: column;
+  }
+  .reading-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; }
+  .reading-value { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .reading.primary .reading-value { font-size: 36px; }
+  .reading.full { grid-column: 1 / -1; }
+  .reading.state-indicator { background: var(--surface2); }
+  .reading-value.pending { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+  /* ── Chart area ── */
+  .chart-area {
+    background: var(--surface); margin: 1px 0;
+    height: 200px; position: relative;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .chart-placeholder {
+    color: var(--text2); font-size: 13px;
+  }
+  .chart-canvas { width: 100%; height: 100%; }
+
+  /* ── Controls ── */
+  .controls {
+    padding: 16px; display: flex; flex-direction: column; gap: 12px;
+  }
+  .mode-selector {
+    display: flex; gap: 0; border-radius: var(--radius);
+    overflow: hidden; border: 1px solid #444;
+  }
+  .mode-btn {
+    flex: 1; padding: 12px; text-align: center;
+    background: var(--surface); color: var(--text2);
+    border: none; font-size: 14px; font-weight: 500;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .mode-btn.active { background: var(--accent); color: white; }
+
+  .param-row {
+    display: flex; gap: 8px; align-items: center;
+  }
+  .param-input {
+    flex: 1; background: var(--surface2); border: 1px solid #444;
+    border-radius: 8px; padding: 10px 12px; color: var(--text);
+    font-size: 16px; text-align: right;
+  }
+  .param-label { font-size: 13px; color: var(--text2); min-width: 70px; }
+  .param-unit { font-size: 13px; color: var(--text2); min-width: 24px; }
+
+  .action-btn {
+    padding: 16px; border-radius: var(--radius); border: none;
+    font-size: 16px; font-weight: 600; cursor: pointer;
+    transition: all 0.15s; min-height: 52px;
+  }
+  .action-btn.start { background: var(--green); color: #000; }
+  .action-btn.stop { background: var(--red); color: white; }
+  .action-btn.secondary { background: var(--surface2); color: var(--text); border: 1px solid #444; }
+
+  .preset-bar {
+    display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px;
+  }
+  .preset-chip {
+    white-space: nowrap; padding: 6px 12px; border-radius: 16px;
+    background: var(--surface2); border: 1px solid #444;
+    color: var(--text2); font-size: 12px; cursor: pointer;
+  }
+  .preset-chip.active { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Bottom sheet ── */
+  .sheet-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    z-index: 100; opacity: 0; pointer-events: none;
+    transition: opacity 0.3s;
+  }
+  .sheet-overlay.open { opacity: 1; pointer-events: auto; }
+
+  .sheet {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: var(--surface); border-radius: 16px 16px 0 0;
+    z-index: 101; transform: translateY(100%);
+    transition: transform 0.3s ease-out;
+    max-height: 85vh; overflow-y: auto;
+    padding-bottom: env(safe-area-inset-bottom, 16px);
+  }
+  .sheet.open { transform: translateY(0); }
+
+  .sheet-handle {
+    width: 36px; height: 4px; background: #555;
+    border-radius: 2px; margin: 8px auto 16px;
+  }
+  .sheet-title {
+    font-size: 18px; font-weight: 600; padding: 0 20px 16px;
+    border-bottom: 1px solid #333;
+  }
+  .sheet-body { padding: 16px 20px; }
+
+  /* ── Quick actions bar ── */
+  .quick-actions {
+    display: flex; gap: 8px; padding: 12px 16px;
+    border-top: 1px solid #333; background: var(--surface);
+    position: sticky; bottom: 0;
+  }
+  .quick-btn {
+    flex: 1; padding: 10px; border-radius: 8px;
+    background: var(--surface2); border: 1px solid #444;
+    color: var(--text2); font-size: 12px; text-align: center;
+    cursor: pointer; display: flex; flex-direction: column;
+    align-items: center; gap: 4px;
+  }
+  .quick-btn svg { width: 20px; height: 20px; }
+  .quick-btn.active { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Cell list ── */
+  .cell-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 0; border-bottom: 1px solid #333; cursor: pointer;
+  }
+  .cell-name { font-weight: 500; }
+  .cell-meta { font-size: 12px; color: var(--text2); margin-top: 2px; }
+  .cell-capacity { font-variant-numeric: tabular-nums; color: var(--accent); }
+
+  /* ── Cycle builder ── */
+  .cycle-step {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; background: var(--surface2);
+    border-radius: 8px; margin-bottom: 6px;
+  }
+  .cycle-step-num { width: 24px; height: 24px; border-radius: 50%; background: #444; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .cycle-step-desc { flex: 1; font-size: 13px; }
+  .cycle-step-time { font-size: 12px; color: var(--text2); }
+
+  /* ── Lock indicator ── */
+  .lock-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 4px; font-size: 11px;
+    background: #44403c; color: var(--orange);
+  }
+  .lock-badge.unlocked { background: #1a2e1a; color: var(--green); }
+
+  .layout-tag {
+    position: fixed; top: 0; right: 0; padding: 4px 10px;
+    background: var(--accent); color: white; font-size: 11px;
+    font-weight: 600; z-index: 200; border-radius: 0 0 0 8px;
+  }
+</style>
+</head>
+<body>
+<div class="layout-tag">1: Single Page + Sheets</div>
+
+<!-- Status bar -->
+<div class="status-bar">
+  <div class="status-dot connected"></div>
+  <span>EBC-A40L</span>
+  <span id="state-badge" style="padding:2px 8px;border-radius:4px;font-size:12px;font-weight:500;">Idle</span>
+  <span class="status-cell" onclick="openSheet('cell-sheet')">
+    <span id="cell-display">No cell scanned</span>
+  </span>
+</div>
+
+<!-- Readings -->
+<div class="readings">
+  <div class="reading primary">
+    <span class="reading-label">Voltage</span>
+    <span class="reading-value" id="r-voltage">3.285 V</span>
+  </div>
+  <div class="reading primary">
+    <span class="reading-label">Current</span>
+    <span class="reading-value" id="r-current">0.00 A</span>
+  </div>
+  <div class="reading">
+    <span class="reading-label">Power</span>
+    <span class="reading-value" id="r-power">0.0 W</span>
+  </div>
+  <div class="reading">
+    <span class="reading-label">Capacity</span>
+    <span class="reading-value" id="r-capacity">0.00 Ah</span>
+  </div>
+  <div class="reading">
+    <span class="reading-label">Energy</span>
+    <span class="reading-value" id="r-energy">0.0 Wh</span>
+  </div>
+  <div class="reading">
+    <span class="reading-label">Time</span>
+    <span class="reading-value" id="r-time">0:00</span>
+  </div>
+</div>
+
+<!-- Chart -->
+<div class="chart-area">
+  <canvas class="chart-canvas" id="chart"></canvas>
+</div>
+
+<!-- Controls -->
+<div class="controls" id="controls">
+  <div class="preset-bar">
+    <div class="preset-chip active" onclick="applyPreset('dcc-full')">D-CC 40A → 2.5V</div>
+    <div class="preset-chip" onclick="applyPreset('dcc-gentle')">D-CC 20A → 2.8V</div>
+    <div class="preset-chip" onclick="applyPreset('ccv-std')">C-CV 40A → 3.65V</div>
+    <div class="preset-chip" onclick="applyPreset('ccv-gentle')">C-CV 20A → 3.65V</div>
+  </div>
+  <div class="mode-selector">
+    <button class="mode-btn active" onclick="setMode('d-cc',this)">D-CC</button>
+    <button class="mode-btn" onclick="setMode('d-cp',this)">D-CP</button>
+    <button class="mode-btn" onclick="setMode('c-cv',this)">C-CV</button>
+  </div>
+  <div class="param-row">
+    <span class="param-label">Current</span>
+    <input class="param-input" type="number" step="0.01" value="40.00" id="p-current">
+    <span class="param-unit">A</span>
+  </div>
+  <div class="param-row">
+    <span class="param-label">Cutoff V</span>
+    <input class="param-input" type="number" step="0.01" value="2.50" id="p-cutoff">
+    <span class="param-unit">V</span>
+  </div>
+  <div class="param-row" id="p-time-row">
+    <span class="param-label">Max time</span>
+    <input class="param-input" type="number" step="1" value="600" id="p-time">
+    <span class="param-unit">min</span>
+  </div>
+  <button class="action-btn start" id="btn-start" onclick="doStart()">Start Discharge</button>
+</div>
+
+<!-- Quick actions bar -->
+<div class="quick-actions">
+  <div class="quick-btn" onclick="openSheet('cell-sheet')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="8" x2="7" y2="16"/><line x1="11" y1="8" x2="11" y2="16"/><line x1="15" y1="8" x2="15" y2="16"/></svg>
+    Scan Cell
+  </div>
+  <div class="quick-btn" onclick="openSheet('cycle-sheet')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+    Cycle Test
+  </div>
+  <div class="quick-btn" onclick="openSheet('history-sheet')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    History
+  </div>
+  <div class="quick-btn" onclick="openSheet('compare-sheet')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    Compare
+  </div>
+</div>
+
+<!-- Cell sheet -->
+<div class="sheet-overlay" id="cell-sheet-overlay" onclick="closeSheet('cell-sheet')"></div>
+<div class="sheet" id="cell-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title">Select Cell</div>
+  <div class="sheet-body">
+    <div style="margin-bottom:12px">
+      <input class="param-input" style="width:100%;text-align:left" placeholder="Type or scan barcode..." id="barcode-input">
+    </div>
+    <button class="action-btn secondary" style="width:100%;margin-bottom:16px" onclick="fakeScan()">📷 Scan Barcode (camera)</button>
+    <div id="cell-list"></div>
+  </div>
+</div>
+
+<!-- Cycle sheet -->
+<div class="sheet-overlay" id="cycle-sheet-overlay" onclick="closeSheet('cycle-sheet')"></div>
+<div class="sheet" id="cycle-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title">Cycle Test Program</div>
+  <div class="sheet-body">
+    <div class="preset-bar" style="margin-bottom:12px">
+      <div class="preset-chip active">Standard Capacity Test</div>
+      <div class="preset-chip">Quick Check</div>
+      <div class="preset-chip">Custom</div>
+    </div>
+    <div id="cycle-steps">
+      <div class="cycle-step"><span class="cycle-step-num">1</span><span class="cycle-step-desc">D-CC 40A → 2.5V</span><span class="cycle-step-time">~5h</span></div>
+      <div class="cycle-step"><span class="cycle-step-num">2</span><span class="cycle-step-desc">Wait 30 min</span><span class="cycle-step-time">30m</span></div>
+      <div class="cycle-step"><span class="cycle-step-num">3</span><span class="cycle-step-desc">C-CV 40A → 3.65V / 2A</span><span class="cycle-step-time">~5h</span></div>
+      <div class="cycle-step"><span class="cycle-step-num">4</span><span class="cycle-step-desc">Wait 30 min</span><span class="cycle-step-time">30m</span></div>
+      <div class="cycle-step" style="border:1px dashed #555;background:transparent;cursor:pointer"><span class="cycle-step-num" style="background:transparent;border:1px dashed #555">+</span><span class="cycle-step-desc" style="color:var(--text2)">Add step...</span></div>
+    </div>
+    <div class="param-row" style="margin-top:12px">
+      <span class="param-label">Repeat</span>
+      <input class="param-input" type="number" value="3" style="width:60px">
+      <span class="param-unit">cycles</span>
+    </div>
+    <button class="action-btn start" style="width:100%;margin-top:12px">Start Cycle Program</button>
+  </div>
+</div>
+
+<!-- History sheet -->
+<div class="sheet-overlay" id="history-sheet-overlay" onclick="closeSheet('history-sheet')"></div>
+<div class="sheet" id="history-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title">Test History</div>
+  <div class="sheet-body" id="history-list"></div>
+</div>
+
+<!-- Compare sheet -->
+<div class="sheet-overlay" id="compare-sheet-overlay" onclick="closeSheet('compare-sheet')"></div>
+<div class="sheet" id="compare-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-title">Compare Curves</div>
+  <div class="sheet-body">
+    <p style="color:var(--text2);font-size:13px;margin-bottom:12px">Select runs to overlay:</p>
+    <div id="compare-list"></div>
+    <div style="height:200px;background:var(--surface2);border-radius:8px;margin-top:12px;display:flex;align-items:center;justify-content:center;color:var(--text2)">
+      Chart comparison area
+    </div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+const device = createFakeDevice();
+let chartData = [];
+
+// Sheets
+function openSheet(id) {
+  document.getElementById(id).classList.add('open');
+  document.getElementById(id + '-overlay').classList.add('open');
+}
+function closeSheet(id) {
+  document.getElementById(id).classList.remove('open');
+  document.getElementById(id + '-overlay').classList.remove('open');
+}
+
+// Mode
+let currentMode = 'd-cc';
+function setMode(mode, btn) {
+  currentMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('btn-start').textContent =
+    mode === 'c-cv' ? 'Start Charge' : 'Start Discharge';
+}
+
+function applyPreset(p) {
+  document.querySelectorAll('.preset-chip').forEach(c => c.classList.remove('active'));
+  event.target.classList.add('active');
+  switch(p) {
+    case 'dcc-full': setMode('d-cc', document.querySelector('.mode-btn')); document.getElementById('p-current').value='40.00'; document.getElementById('p-cutoff').value='2.50'; break;
+    case 'dcc-gentle': document.getElementById('p-current').value='20.00'; document.getElementById('p-cutoff').value='2.80'; break;
+    case 'ccv-std': setMode('c-cv', document.querySelectorAll('.mode-btn')[2]); document.getElementById('p-current').value='40.00'; document.getElementById('p-cutoff').value='3.65'; break;
+    case 'ccv-gentle': document.getElementById('p-current').value='20.00'; document.getElementById('p-cutoff').value='3.65'; break;
+  }
+}
+
+function doStart() {
+  const r = device.getReading();
+  if (r.state !== 'idle' && r.state !== 'complete') {
+    device.stopTest();
+    return;
+  }
+  device.startTest(currentMode, {
+    current: parseFloat(document.getElementById('p-current').value),
+    cutoffV: parseFloat(document.getElementById('p-cutoff').value),
+    targetV: parseFloat(document.getElementById('p-cutoff').value),
+    cutoffCurrent: 2.0,
+  });
+}
+
+function fakeScan() {
+  const cells = device.getCells();
+  const cell = cells[Math.floor(Math.random() * cells.length)];
+  device.scanCell(cell.barcode);
+  document.getElementById('barcode-input').value = cell.barcode;
+  setTimeout(() => closeSheet('cell-sheet'), 500);
+}
+
+// Populate lists
+function populateCells() {
+  const list = document.getElementById('cell-list');
+  list.innerHTML = device.getCells().map(c => `
+    <div class="cell-item" onclick="device.scanCell('${c.barcode}');closeSheet('cell-sheet')">
+      <div>
+        <div class="cell-name">${c.label || c.barcode}</div>
+        <div class="cell-meta">${c.barcode} · ${c.runs} runs</div>
+      </div>
+      <span class="cell-capacity">${c.avgCapacity ? (c.avgCapacity/1000).toFixed(1) + ' Ah' : '—'}</span>
+    </div>
+  `).join('');
+}
+
+function populateHistory() {
+  const list = document.getElementById('history-list');
+  list.innerHTML = device.getRuns().map(r => `
+    <div class="cell-item">
+      <div>
+        <div class="cell-name">${r.label} — ${r.mode.toUpperCase()}</div>
+        <div class="cell-meta">${r.date} · ${r.duration}</div>
+      </div>
+      <span class="cell-capacity">${(r.capacity/1000).toFixed(1)} Ah</span>
+    </div>
+  `).join('');
+}
+
+function populateCompare() {
+  const list = document.getElementById('compare-list');
+  list.innerHTML = device.getRuns().map(r => `
+    <label class="cell-item" style="cursor:pointer">
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="checkbox" style="width:18px;height:18px">
+        <div>
+          <div class="cell-name">${r.label} — ${r.mode.toUpperCase()}</div>
+          <div class="cell-meta">${r.date}</div>
+        </div>
+      </div>
+      <span class="cell-capacity">${(r.capacity/1000).toFixed(1)} Ah</span>
+    </label>
+  `).join('');
+}
+
+populateCells();
+populateHistory();
+populateCompare();
+
+// Simple chart
+const canvas = document.getElementById('chart');
+const ctx = canvas.getContext('2d');
+
+function drawChart() {
+  const w = canvas.parentElement.clientWidth;
+  const h = canvas.parentElement.clientHeight;
+  canvas.width = w * devicePixelRatio;
+  canvas.height = h * devicePixelRatio;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(0, 0, w, h);
+
+  if (chartData.length < 2) {
+    ctx.fillStyle = '#555';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Chart will appear when a test starts', w/2, h/2);
+    return;
+  }
+
+  const pad = { t: 20, r: 50, b: 25, l: 50 };
+  const cw = w - pad.l - pad.r;
+  const ch = h - pad.t - pad.b;
+
+  const voltages = chartData.map(d => d.v);
+  const currents = chartData.map(d => d.i);
+  const vMin = Math.min(...voltages) - 0.05;
+  const vMax = Math.max(...voltages) + 0.05;
+  const iMax = Math.max(...currents, 1) + 1;
+
+  // Voltage line
+  ctx.strokeStyle = '#3b82f6';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  chartData.forEach((d, idx) => {
+    const x = pad.l + (idx / (chartData.length - 1)) * cw;
+    const y = pad.t + (1 - (d.v - vMin) / (vMax - vMin)) * ch;
+    idx === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // Current line
+  ctx.strokeStyle = '#f59e0b';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  chartData.forEach((d, idx) => {
+    const x = pad.l + (idx / (chartData.length - 1)) * cw;
+    const y = pad.t + (1 - d.i / iMax) * ch;
+    idx === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // Axis labels
+  ctx.font = '10px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#3b82f6';
+  ctx.fillText(vMax.toFixed(2) + 'V', pad.l - 4, pad.t + 10);
+  ctx.fillText(vMin.toFixed(2) + 'V', pad.l - 4, pad.t + ch);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#f59e0b';
+  ctx.fillText(iMax.toFixed(0) + 'A', w - pad.r + 4, pad.t + 10);
+  ctx.fillText('0A', w - pad.r + 4, pad.t + ch);
+}
+
+// Update loop
+device.on((type, data) => {
+  if (type === 'reading') {
+    document.getElementById('r-voltage').textContent = fmtV(data.voltage);
+    document.getElementById('r-current').textContent = fmtA(data.current);
+    document.getElementById('r-power').textContent = fmtW(data.power);
+    document.getElementById('r-capacity').textContent = fmtAh(data.capacity);
+    document.getElementById('r-energy').textContent = fmtWh(data.energy);
+    document.getElementById('r-time').textContent = fmtTime(data.elapsed);
+
+    const badge = document.getElementById('state-badge');
+    badge.textContent = stateLabel(data.state);
+    badge.style.background = stateColor(data.state) + '22';
+    badge.style.color = stateColor(data.state);
+
+    if (data.state !== 'idle' && data.state !== 'complete') {
+      chartData.push({ v: data.voltage, i: Math.abs(data.current) });
+      if (chartData.length > 300) chartData.shift();
+    }
+    drawChart();
+
+    const pending = device.isPending();
+    ['r-voltage','r-current','r-power'].forEach(id => {
+      document.getElementById(id).classList.toggle('pending', pending);
+    });
+
+    const btn = document.getElementById('btn-start');
+    if (data.state !== 'idle' && data.state !== 'complete') {
+      btn.textContent = 'Stop';
+      btn.className = 'action-btn stop';
+      btn.onclick = () => device.stopTest();
+    } else {
+      btn.textContent = currentMode === 'c-cv' ? 'Start Charge' : 'Start Discharge';
+      btn.className = 'action-btn start';
+      btn.onclick = doStart;
+    }
+  }
+
+  if (type === 'cellScanned') {
+    document.getElementById('cell-display').textContent = data.label || data.barcode;
+  }
+
+  if (type === 'stateChange' && data === 'complete') {
+    chartData = [];
+  }
+});
+
+window.addEventListener('resize', drawChart);
+</script>
+</body>
+</html>

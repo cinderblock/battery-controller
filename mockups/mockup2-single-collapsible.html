@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Mockup 2 — Single Page, Collapsible Sections</title>
+<style>
+  :root {
+    --bg: #0f0f0f; --surface: #1a1a1a; --surface2: #252525;
+    --text: #e5e5e5; --text2: #999; --accent: #3b82f6;
+    --orange: #f59e0b; --green: #22c55e; --red: #ef4444;
+    --radius: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    -webkit-tap-highlight-color: transparent;
+    padding-bottom: 20px;
+  }
+
+  .layout-tag {
+    position: fixed; top: 0; right: 0; padding: 4px 10px;
+    background: var(--orange); color: #000; font-size: 11px;
+    font-weight: 600; z-index: 200; border-radius: 0 0 0 8px;
+  }
+
+  /* ── Status + readings hero ── */
+  .hero {
+    background: var(--surface); padding: 12px 16px;
+    border-bottom: 1px solid #333;
+    position: sticky; top: 0; z-index: 10;
+  }
+  .hero-top {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+  .hero-device { font-size: 13px; }
+  .hero-state {
+    padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500;
+  }
+  .hero-cell { margin-left: auto; font-size: 13px; color: var(--accent); }
+
+  .hero-readings {
+    display: flex; gap: 16px; overflow-x: auto; padding: 4px 0;
+  }
+  .hero-reading {
+    display: flex; flex-direction: column; min-width: 0;
+  }
+  .hero-label { font-size: 10px; color: var(--text2); text-transform: uppercase; }
+  .hero-value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .hero-reading.primary .hero-value { font-size: 28px; }
+  .hero-value.pending { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+  /* ── Collapsible section ── */
+  .section {
+    border-bottom: 1px solid #333;
+  }
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px; cursor: pointer; user-select: none;
+    background: var(--surface);
+  }
+  .section-header:active { background: var(--surface2); }
+  .section-title { font-size: 15px; font-weight: 600; }
+  .section-chevron {
+    width: 20px; height: 20px; transition: transform 0.2s;
+    color: var(--text2);
+  }
+  .section.open .section-chevron { transform: rotate(180deg); }
+  .section-body {
+    max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out;
+    background: var(--bg);
+  }
+  .section.open .section-body { max-height: 2000px; }
+  .section-content { padding: 16px; }
+
+  /* ── Chart ── */
+  .chart-area { height: 200px; position: relative; }
+  .chart-canvas { width: 100%; height: 100%; }
+
+  /* ── Controls ── */
+  .mode-selector {
+    display: flex; gap: 0; border-radius: var(--radius);
+    overflow: hidden; border: 1px solid #444; margin-bottom: 12px;
+  }
+  .mode-btn {
+    flex: 1; padding: 12px; text-align: center;
+    background: var(--surface); color: var(--text2);
+    border: none; font-size: 14px; font-weight: 500;
+    cursor: pointer;
+  }
+  .mode-btn.active { background: var(--accent); color: white; }
+
+  .param-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .param-input {
+    flex: 1; background: var(--surface2); border: 1px solid #444;
+    border-radius: 8px; padding: 10px 12px; color: var(--text);
+    font-size: 16px; text-align: right;
+  }
+  .param-label { font-size: 13px; color: var(--text2); min-width: 70px; }
+  .param-unit { font-size: 13px; color: var(--text2); min-width: 24px; }
+
+  .action-btn {
+    width: 100%; padding: 16px; border-radius: var(--radius); border: none;
+    font-size: 16px; font-weight: 600; cursor: pointer; min-height: 52px;
+    margin-top: 8px;
+  }
+  .action-btn.start { background: var(--green); color: #000; }
+  .action-btn.stop { background: var(--red); color: white; }
+  .action-btn.secondary { background: var(--surface2); color: var(--text); border: 1px solid #444; }
+
+  .preset-bar { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 12px; }
+  .preset-chip {
+    white-space: nowrap; padding: 6px 12px; border-radius: 16px;
+    background: var(--surface2); border: 1px solid #444;
+    color: var(--text2); font-size: 12px; cursor: pointer;
+  }
+  .preset-chip.active { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Cell list ── */
+  .cell-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 0; border-bottom: 1px solid #333; cursor: pointer;
+  }
+  .cell-name { font-weight: 500; }
+  .cell-meta { font-size: 12px; color: var(--text2); margin-top: 2px; }
+  .cell-capacity { font-variant-numeric: tabular-nums; color: var(--accent); }
+  .cell-selected { background: var(--accent)22; border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; }
+
+  /* ── Cycle steps ── */
+  .cycle-step {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; background: var(--surface);
+    border-radius: 8px; margin-bottom: 6px;
+  }
+  .cycle-step-num { width: 24px; height: 24px; border-radius: 50%; background: #444; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+
+  /* ── History ── */
+  .run-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 0; border-bottom: 1px solid #333;
+  }
+  .run-mode {
+    display: inline-block; padding: 2px 6px; border-radius: 4px;
+    font-size: 11px; font-weight: 500; margin-right: 6px;
+  }
+  .run-mode.dcc { background: var(--orange)22; color: var(--orange); }
+  .run-mode.ccv { background: var(--accent)22; color: var(--accent); }
+
+  /* ── Compare ── */
+  .compare-chart-placeholder {
+    height: 200px; background: var(--surface); border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text2); font-size: 13px; margin-top: 12px;
+  }
+
+  .section-badge {
+    font-size: 11px; padding: 2px 6px; border-radius: 4px;
+    background: var(--surface2); color: var(--text2); margin-left: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="layout-tag">2: Single + Sections</div>
+
+<!-- Sticky hero with live readings -->
+<div class="hero">
+  <div class="hero-top">
+    <div class="status-dot"></div>
+    <span class="hero-device">EBC-A40L</span>
+    <span class="hero-state" id="state-badge">Idle</span>
+    <span class="hero-cell" id="cell-display">No cell</span>
+  </div>
+  <div class="hero-readings">
+    <div class="hero-reading primary">
+      <span class="hero-label">Voltage</span>
+      <span class="hero-value" id="r-voltage">3.285 V</span>
+    </div>
+    <div class="hero-reading primary">
+      <span class="hero-label">Current</span>
+      <span class="hero-value" id="r-current">0.00 A</span>
+    </div>
+    <div class="hero-reading">
+      <span class="hero-label">Power</span>
+      <span class="hero-value" id="r-power">0.0 W</span>
+    </div>
+    <div class="hero-reading">
+      <span class="hero-label">Capacity</span>
+      <span class="hero-value" id="r-capacity">0.00 Ah</span>
+    </div>
+    <div class="hero-reading">
+      <span class="hero-label">Energy</span>
+      <span class="hero-value" id="r-energy">0.0 Wh</span>
+    </div>
+    <div class="hero-reading">
+      <span class="hero-label">Time</span>
+      <span class="hero-value" id="r-time">0:00</span>
+    </div>
+  </div>
+</div>
+
+<!-- Chart section (always visible) -->
+<div class="section open" id="sec-chart">
+  <div class="section-header" onclick="toggleSection('sec-chart')">
+    <span class="section-title">Live Chart</span>
+    <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+  </div>
+  <div class="section-body"><div class="section-content">
+    <div class="chart-area"><canvas class="chart-canvas" id="chart"></canvas></div>
+  </div></div>
+</div>
+
+<!-- Test controls -->
+<div class="section open" id="sec-controls">
+  <div class="section-header" onclick="toggleSection('sec-controls')">
+    <span class="section-title">Test Controls</span>
+    <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+  </div>
+  <div class="section-body"><div class="section-content">
+    <div class="preset-bar">
+      <div class="preset-chip active">D-CC 40A→2.5V</div>
+      <div class="preset-chip">D-CC 20A→2.8V</div>
+      <div class="preset-chip">C-CV 40A→3.65V</div>
+    </div>
+    <div class="mode-selector">
+      <button class="mode-btn active" onclick="setMode('d-cc',this)">D-CC</button>
+      <button class="mode-btn" onclick="setMode('d-cp',this)">D-CP</button>
+      <button class="mode-btn" onclick="setMode('c-cv',this)">C-CV</button>
+    </div>
+    <div class="param-row"><span class="param-label">Current</span><input class="param-input" type="number" step="0.01" value="40.00" id="p-current"><span class="param-unit">A</span></div>
+    <div class="param-row"><span class="param-label">Cutoff V</span><input class="param-input" type="number" step="0.01" value="2.50" id="p-cutoff"><span class="param-unit">V</span></div>
+    <div class="param-row"><span class="param-label">Max time</span><input class="param-input" type="number" step="1" value="600" id="p-time"><span class="param-unit">min</span></div>
+    <button class="action-btn start" id="btn-start" onclick="doStart()">Start Discharge</button>
+  </div></div>
+</div>
+
+<!-- Cell selection -->
+<div class="section" id="sec-cell">
+  <div class="section-header" onclick="toggleSection('sec-cell')">
+    <span class="section-title">Cell<span class="section-badge" id="cell-badge">none selected</span></span>
+    <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+  </div>
+  <div class="section-body"><div class="section-content">
+    <input class="param-input" style="width:100%;text-align:left;margin-bottom:8px" placeholder="Type or scan barcode...">
+    <button class="action-btn secondary" onclick="fakeScan()">Scan Barcode</button>
+    <div id="cell-list" style="margin-top:12px"></div>
+  </div></div>
+</div>
+
+<!-- Cycle test -->
+<div class="section" id="sec-cycle">
+  <div class="section-header" onclick="toggleSection('sec-cycle')">
+    <span class="section-title">Cycle Program</span>
+    <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+  </div>
+  <div class="section-body"><div class="section-content">
+    <div class="cycle-step"><span class="cycle-step-num">1</span><span style="flex:1;font-size:13px">D-CC 40A → 2.5V</span></div>
+    <div class="cycle-step"><span class="cycle-step-num">2</span><span style="flex:1;font-size:13px">Wait 30 min</span></div>
+    <div class="cycle-step"><span class="cycle-step-num">3</span><span style="flex:1;font-size:13px">C-CV 40A → 3.65V / 2A</span></div>
+    <div class="cycle-step"><span class="cycle-step-num">4</span><span style="flex:1;font-size:13px">Wait 30 min</span></div>
+    <div class="param-row" style="margin-top:8px"><span class="param-label">Repeat</span><input class="param-input" type="number" value="3" style="width:60px"><span class="param-unit">cycles</span></div>
+    <button class="action-btn start" style="margin-top:8px">Start Cycle</button>
+  </div></div>
+</div>
+
+<!-- History -->
+<div class="section" id="sec-history">
+  <div class="section-header" onclick="toggleSection('sec-history')">
+    <span class="section-title">History<span class="section-badge">6 runs</span></span>
+    <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+  </div>
+  <div class="section-body"><div class="section-content" id="history-list"></div></div>
+</div>
+
+<!-- Compare -->
+<div class="section" id="sec-compare">
+  <div class="section-header" onclick="toggleSection('sec-compare')">
+    <span class="section-title">Compare Curves</span>
+    <svg class="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+  </div>
+  <div class="section-body"><div class="section-content">
+    <div id="compare-list"></div>
+    <div class="compare-chart-placeholder">Select runs above to compare</div>
+  </div></div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+const device = createFakeDevice();
+let chartData = [];
+let currentMode = 'd-cc';
+
+function toggleSection(id) {
+  document.getElementById(id).classList.toggle('open');
+  if (id === 'sec-chart') setTimeout(drawChart, 50);
+}
+
+function setMode(mode, btn) {
+  currentMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('btn-start').textContent = mode === 'c-cv' ? 'Start Charge' : 'Start Discharge';
+}
+
+function doStart() {
+  const r = device.getReading();
+  if (r.state !== 'idle' && r.state !== 'complete') { device.stopTest(); return; }
+  device.startTest(currentMode, {
+    current: parseFloat(document.getElementById('p-current').value),
+    cutoffV: parseFloat(document.getElementById('p-cutoff').value),
+    targetV: parseFloat(document.getElementById('p-cutoff').value),
+    cutoffCurrent: 2.0,
+  });
+}
+
+function fakeScan() {
+  const cells = device.getCells();
+  const cell = cells[Math.floor(Math.random() * cells.length)];
+  device.scanCell(cell.barcode);
+}
+
+// Populate
+const runs = device.getRuns();
+document.getElementById('history-list').innerHTML = runs.map(r => `
+  <div class="run-item">
+    <div><span class="run-mode ${r.mode === 'd-cc' ? 'dcc' : 'ccv'}">${r.mode.toUpperCase()}</span>${r.label}<div style="font-size:12px;color:var(--text2)">${r.date} · ${r.duration}</div></div>
+    <span class="cell-capacity">${(r.capacity/1000).toFixed(1)} Ah</span>
+  </div>`).join('');
+
+document.getElementById('compare-list').innerHTML = runs.map(r => `
+  <label class="run-item" style="cursor:pointer"><div style="display:flex;align-items:center;gap:8px"><input type="checkbox" style="width:18px;height:18px"><div><span class="run-mode ${r.mode === 'd-cc' ? 'dcc' : 'ccv'}">${r.mode.toUpperCase()}</span>${r.label}<div style="font-size:12px;color:var(--text2)">${r.date}</div></div></div><span class="cell-capacity">${(r.capacity/1000).toFixed(1)} Ah</span></label>`).join('');
+
+document.getElementById('cell-list').innerHTML = device.getCells().map(c => `
+  <div class="cell-item" onclick="device.scanCell('${c.barcode}');toggleSection('sec-cell')">
+    <div><div class="cell-name">${c.label || c.barcode}</div><div class="cell-meta">${c.barcode} · ${c.runs} runs</div></div>
+    <span class="cell-capacity">${c.avgCapacity ? (c.avgCapacity/1000).toFixed(1)+' Ah' : '—'}</span>
+  </div>`).join('');
+
+// Chart
+const canvas = document.getElementById('chart');
+const ctx = canvas.getContext('2d');
+function drawChart() {
+  const w = canvas.parentElement.clientWidth; const h = canvas.parentElement.clientHeight;
+  canvas.width = w*devicePixelRatio; canvas.height = h*devicePixelRatio;
+  canvas.style.width = w+'px'; canvas.style.height = h+'px';
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  ctx.fillStyle = '#1a1a1a'; ctx.fillRect(0,0,w,h);
+  if (chartData.length < 2) { ctx.fillStyle='#555';ctx.font='13px sans-serif';ctx.textAlign='center';ctx.fillText('Start a test to see data',w/2,h/2);return; }
+  const pad={t:20,r:50,b:25,l:50},cw=w-pad.l-pad.r,ch=h-pad.t-pad.b;
+  const vs=chartData.map(d=>d.v),is=chartData.map(d=>d.i);
+  const vMin=Math.min(...vs)-0.05,vMax=Math.max(...vs)+0.05,iMax=Math.max(...is,1)+1;
+  ctx.strokeStyle='#3b82f6';ctx.lineWidth=2;ctx.beginPath();
+  chartData.forEach((d,i)=>{const x=pad.l+(i/(chartData.length-1))*cw,y=pad.t+(1-(d.v-vMin)/(vMax-vMin))*ch;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});ctx.stroke();
+  ctx.strokeStyle='#f59e0b';ctx.lineWidth=2;ctx.beginPath();
+  chartData.forEach((d,i)=>{const x=pad.l+(i/(chartData.length-1))*cw,y=pad.t+(1-d.i/iMax)*ch;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});ctx.stroke();
+  ctx.font='10px sans-serif';ctx.textAlign='right';ctx.fillStyle='#3b82f6';ctx.fillText(vMax.toFixed(2)+'V',pad.l-4,pad.t+10);ctx.fillText(vMin.toFixed(2)+'V',pad.l-4,pad.t+ch);
+  ctx.textAlign='left';ctx.fillStyle='#f59e0b';ctx.fillText(iMax.toFixed(0)+'A',w-pad.r+4,pad.t+10);ctx.fillText('0A',w-pad.r+4,pad.t+ch);
+}
+
+device.on((type, data) => {
+  if (type === 'reading') {
+    document.getElementById('r-voltage').textContent = fmtV(data.voltage);
+    document.getElementById('r-current').textContent = fmtA(data.current);
+    document.getElementById('r-power').textContent = fmtW(data.power);
+    document.getElementById('r-capacity').textContent = fmtAh(data.capacity);
+    document.getElementById('r-energy').textContent = fmtWh(data.energy);
+    document.getElementById('r-time').textContent = fmtTime(data.elapsed);
+    const badge = document.getElementById('state-badge');
+    badge.textContent = stateLabel(data.state);
+    badge.style.background = stateColor(data.state)+'22';
+    badge.style.color = stateColor(data.state);
+    const pending = device.isPending();
+    ['r-voltage','r-current','r-power'].forEach(id=>document.getElementById(id).classList.toggle('pending',pending));
+    if (data.state!=='idle'&&data.state!=='complete') { chartData.push({v:data.voltage,i:Math.abs(data.current)}); if(chartData.length>300)chartData.shift(); }
+    drawChart();
+    const btn = document.getElementById('btn-start');
+    if (data.state!=='idle'&&data.state!=='complete') { btn.textContent='Stop';btn.className='action-btn stop';btn.onclick=()=>device.stopTest(); }
+    else { btn.textContent=currentMode==='c-cv'?'Start Charge':'Start Discharge';btn.className='action-btn start';btn.onclick=doStart; }
+  }
+  if (type === 'cellScanned') {
+    document.getElementById('cell-display').textContent = data.label || data.barcode;
+    document.getElementById('cell-badge').textContent = data.label || data.barcode.slice(-8);
+  }
+  if (type === 'stateChange' && data === 'complete') chartData = [];
+});
+window.addEventListener('resize', drawChart);
+</script>
+</body>
+</html>

@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Sequence Editor</title>
+<style>
+  :root {
+    --bg: #0a0a0a; --surface: #141414; --surface2: #1e1e1e; --surface3: #282828;
+    --text: #e5e5e5; --text2: #777; --text3: #444;
+    --accent: #60a5fa; --accent2: #818cf8;
+    --orange: #fb923c; --green: #4ade80; --red: #f87171;
+    --yellow: #facc15; --cyan: #22d3ee; --pink: #f472b6;
+    --radius: 10px;
+    --charge-color: #60a5fa; --discharge-color: #fb923c;
+    --wait-color: #777; --loop-color: #a78bfa;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    -webkit-tap-highlight-color: transparent;
+    min-height: 100vh;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; background: var(--surface);
+    border-bottom: 1px solid #222;
+    position: sticky; top: 0; z-index: 10;
+  }
+  .back-btn {
+    padding: 6px 12px; border-radius: 6px; border: 1px solid #333;
+    background: var(--surface2); color: var(--text2); font-size: 12px;
+    cursor: pointer; text-decoration: none;
+  }
+  .header-title { font-size: 16px; font-weight: 600; flex: 1; }
+  .header-btn {
+    padding: 6px 14px; border-radius: 6px; border: none;
+    font-size: 12px; font-weight: 500; cursor: pointer;
+  }
+  .header-btn.save { background: var(--accent); color: #000; }
+  .header-btn.run { background: var(--green); color: #000; }
+
+  /* ── Sequence name + cell group ── */
+  .seq-info {
+    padding: 16px; border-bottom: 1px solid #222;
+  }
+  .seq-name-input {
+    width: 100%; background: transparent; border: none; border-bottom: 1px solid #333;
+    color: var(--text); font-size: 20px; font-weight: 600; padding: 4px 0;
+    outline: none;
+  }
+  .seq-name-input:focus { border-color: var(--accent); }
+  .seq-meta { display: flex; gap: 12px; margin-top: 10px; align-items: center; }
+  .seq-meta-label { font-size: 12px; color: var(--text2); }
+  .seq-meta-select {
+    background: var(--surface2); border: 1px solid #333; border-radius: 6px;
+    color: var(--text); font-size: 13px; padding: 5px 8px;
+  }
+  .unit-toggle {
+    display: flex; border-radius: 6px; overflow: hidden; border: 1px solid #333;
+    margin-left: auto;
+  }
+  .unit-btn {
+    padding: 5px 12px; font-size: 12px; border: none;
+    background: var(--surface2); color: var(--text2); cursor: pointer;
+  }
+  .unit-btn.active { background: var(--accent); color: #000; font-weight: 600; }
+
+  /* ── Visual timeline (canvas chart preview) ── */
+  .timeline-wrap {
+    position: relative; border-bottom: 1px solid #222;
+    height: 140px; display: flex; align-items: stretch;
+  }
+  .tl-canvas { flex: 1; display: block; cursor: pointer; }
+  .tl-add-btn {
+    width: 36px; display: flex; align-items: center; justify-content: center;
+    border-left: 1px solid #222; color: var(--text3);
+    cursor: pointer; font-size: 20px; flex-shrink: 0;
+  }
+  .tl-add-btn:active { color: var(--accent); background: var(--surface2); }
+
+  /* ── Step list (detailed editor) ── */
+  .step-list { padding: 8px 16px; }
+
+  .step-card {
+    background: var(--surface); border: 1px solid #222;
+    border-radius: var(--radius); margin-bottom: 8px;
+    overflow: hidden;
+  }
+  .step-card.selected { border-color: var(--accent); }
+
+  .step-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; cursor: pointer;
+  }
+  .step-drag { color: var(--text3); cursor: grab; font-size: 14px; padding: 4px; }
+  .step-icon {
+    width: 28px; height: 28px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; flex-shrink: 0;
+  }
+  .step-icon.discharge { background: var(--discharge-color)22; color: var(--discharge-color); }
+  .step-icon.charge { background: var(--charge-color)22; color: var(--charge-color); }
+  .step-icon.wait { background: #77777722; color: var(--text2); }
+  .step-icon.loop { background: var(--loop-color)22; color: var(--loop-color); }
+  .step-info { flex: 1; }
+  .step-title { font-size: 14px; font-weight: 500; }
+  .step-subtitle { font-size: 11px; color: var(--text2); margin-top: 1px; }
+  .step-duration { font-size: 11px; color: var(--text2); }
+  .step-remove { color: var(--text3); cursor: pointer; padding: 4px 8px; font-size: 16px; }
+  .step-remove:hover { color: var(--red); }
+
+  .step-params {
+    padding: 0 14px 14px; display: none;
+    border-top: 1px solid #222; margin-top: 0; padding-top: 12px;
+  }
+  .step-card.expanded .step-params { display: block; }
+
+  .sp-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .sp-label { font-size: 12px; color: var(--text2); min-width: 80px; }
+  .sp-input {
+    flex: 1; background: var(--surface2); border: 1px solid #333;
+    border-radius: 6px; padding: 8px 10px; color: var(--text);
+    font-size: 14px; text-align: right;
+  }
+  .sp-unit { font-size: 12px; color: var(--text2); min-width: 28px; }
+  .sp-note { font-size: 11px; color: var(--text3); margin-top: 4px; }
+
+  /* ── Add step panel ── */
+  .add-panel {
+    padding: 12px 16px; border-top: 1px solid #222;
+    display: flex; gap: 6px; flex-wrap: wrap;
+    position: sticky; bottom: 0; background: var(--surface);
+  }
+  .add-btn {
+    padding: 10px 16px; border-radius: 8px; border: 1px solid #333;
+    background: var(--surface2); color: var(--text2); font-size: 13px;
+    cursor: pointer; display: flex; align-items: center; gap: 6px;
+    font-weight: 500;
+  }
+  .add-btn:active { border-color: var(--accent); color: var(--text); }
+  .add-dot { width: 8px; height: 8px; border-radius: 2px; }
+
+  /* ── Estimated duration ── */
+  .est-bar {
+    padding: 10px 16px; background: var(--surface2);
+    border-top: 1px solid #222; border-bottom: 1px solid #222;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 12px; color: var(--text2);
+  }
+  .est-time { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+
+  /* ── Presets ── */
+  .presets {
+    padding: 12px 16px; border-bottom: 1px solid #222;
+    display: flex; gap: 6px; overflow-x: auto;
+  }
+  .preset {
+    white-space: nowrap; padding: 6px 14px; border-radius: 16px;
+    background: var(--surface2); border: 1px solid #333;
+    color: var(--text2); font-size: 12px; cursor: pointer;
+  }
+  .preset.active { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <a class="back-btn" href="mockup5-chart-first.html">&larr; Back</a>
+  <span class="header-title">Sequence Editor</span>
+  <button class="header-btn save">Save</button>
+  <button class="header-btn run">Run</button>
+</div>
+
+<!-- Sequence info -->
+<div class="seq-info">
+  <input class="seq-name-input" value="Standard Capacity Test" placeholder="Sequence name...">
+  <div class="seq-meta">
+    <span class="seq-meta-label">Cell:</span>
+    <select class="seq-meta-select">
+      <option>TS-LFP200AHA — 200 Ah</option>
+      <option>Custom (enter capacity)</option>
+    </select>
+    <div class="unit-toggle">
+      <button class="unit-btn active" onclick="setUnit('amps',this)">Amps</button>
+      <button class="unit-btn" onclick="setUnit('crate',this)">C-rate</button>
+    </div>
+  </div>
+</div>
+
+<!-- Presets -->
+<div class="presets">
+  <div class="preset active">Standard Capacity</div>
+  <div class="preset">Quick Check</div>
+  <div class="preset">Gentle Cycle</div>
+  <div class="preset">Full Characterization</div>
+  <div class="preset">Blank</div>
+</div>
+
+<!-- Visual timeline — renders as a mini voltage chart with ramps -->
+<div class="timeline-wrap">
+  <canvas id="tl-canvas" class="tl-canvas"></canvas>
+  <div class="tl-add-btn" onclick="showAddMenu()">+</div>
+</div>
+
+<!-- Estimated duration -->
+<div class="est-bar">
+  <span>Estimated total duration</span>
+  <span class="est-time">~32h (3 cycles × ~10h 40m)</span>
+</div>
+
+<!-- Step list -->
+<div class="step-list">
+
+  <!-- Step 1: Discharge -->
+  <div class="step-card expanded selected" id="step-0">
+    <div class="step-header" onclick="toggleStep(0)">
+      <span class="step-drag">⠿</span>
+      <div class="step-icon discharge">D</div>
+      <div class="step-info">
+        <div class="step-title">Discharge (D-CC)</div>
+        <div class="step-subtitle" id="step-0-sub">40.00 A → 2.50 V cutoff</div>
+      </div>
+      <span class="step-duration">~5h</span>
+      <span class="step-remove" onclick="event.stopPropagation()">×</span>
+    </div>
+    <div class="step-params">
+      <div class="sp-row">
+        <span class="sp-label">Mode</span>
+        <select class="sp-input" style="text-align:left">
+          <option selected>D-CC (Constant Current)</option>
+          <option>D-CP (Constant Power)</option>
+        </select>
+      </div>
+      <div class="sp-row">
+        <span class="sp-label">Current</span>
+        <input class="sp-input" type="number" step="0.01" value="40.00" id="sp-0-current">
+        <span class="sp-unit" id="sp-0-unit">A</span>
+      </div>
+      <div class="sp-row">
+        <span class="sp-label">Cutoff V</span>
+        <input class="sp-input" type="number" step="0.01" value="2.50">
+        <span class="sp-unit">V</span>
+      </div>
+      <div class="sp-row">
+        <span class="sp-label">Max time</span>
+        <input class="sp-input" type="number" value="600">
+        <span class="sp-unit">min</span>
+      </div>
+      <div class="sp-note">At 0.20C for TS-LFP200AHA (200 Ah)</div>
+    </div>
+  </div>
+
+  <!-- Step 2: Wait -->
+  <div class="step-card" id="step-1">
+    <div class="step-header" onclick="toggleStep(1)">
+      <span class="step-drag">⠿</span>
+      <div class="step-icon wait">⏸</div>
+      <div class="step-info">
+        <div class="step-title">Wait</div>
+        <div class="step-subtitle">30 minutes rest</div>
+      </div>
+      <span class="step-duration">30m</span>
+      <span class="step-remove" onclick="event.stopPropagation()">×</span>
+    </div>
+    <div class="step-params">
+      <div class="sp-row">
+        <span class="sp-label">Duration</span>
+        <input class="sp-input" type="number" value="30">
+        <span class="sp-unit">min</span>
+      </div>
+      <div class="sp-note">Cell rests at open-circuit voltage. Readings continue.</div>
+    </div>
+  </div>
+
+  <!-- Step 3: Charge -->
+  <div class="step-card" id="step-2">
+    <div class="step-header" onclick="toggleStep(2)">
+      <span class="step-drag">⠿</span>
+      <div class="step-icon charge">C</div>
+      <div class="step-info">
+        <div class="step-title">Charge (C-CV)</div>
+        <div class="step-subtitle">40.00 A → 3.65 V, cutoff 2.00 A</div>
+      </div>
+      <span class="step-duration">~5h</span>
+      <span class="step-remove" onclick="event.stopPropagation()">×</span>
+    </div>
+    <div class="step-params">
+      <div class="sp-row">
+        <span class="sp-label">Current</span>
+        <input class="sp-input" type="number" step="0.01" value="40.00">
+        <span class="sp-unit">A</span>
+      </div>
+      <div class="sp-row">
+        <span class="sp-label">Target V</span>
+        <input class="sp-input" type="number" step="0.001" value="3.650">
+        <span class="sp-unit">V</span>
+      </div>
+      <div class="sp-row">
+        <span class="sp-label">Cutoff I</span>
+        <input class="sp-input" type="number" step="0.01" value="2.00">
+        <span class="sp-unit">A</span>
+      </div>
+      <div class="sp-row">
+        <span class="sp-label">Max time</span>
+        <input class="sp-input" type="number" value="600">
+        <span class="sp-unit">min</span>
+      </div>
+      <div class="sp-note">CC phase at 40A, then CV at 3.65V until current drops to 2A</div>
+    </div>
+  </div>
+
+  <!-- Step 4: Wait -->
+  <div class="step-card" id="step-3">
+    <div class="step-header" onclick="toggleStep(3)">
+      <span class="step-drag">⠿</span>
+      <div class="step-icon wait">⏸</div>
+      <div class="step-info">
+        <div class="step-title">Wait</div>
+        <div class="step-subtitle">30 minutes rest</div>
+      </div>
+      <span class="step-duration">30m</span>
+      <span class="step-remove" onclick="event.stopPropagation()">×</span>
+    </div>
+    <div class="step-params">
+      <div class="sp-row">
+        <span class="sp-label">Duration</span>
+        <input class="sp-input" type="number" value="30">
+        <span class="sp-unit">min</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loop wrapper -->
+  <div class="step-card" id="step-4">
+    <div class="step-header" onclick="toggleStep(4)">
+      <span class="step-drag">⠿</span>
+      <div class="step-icon loop">⟳</div>
+      <div class="step-info">
+        <div class="step-title">Repeat All</div>
+        <div class="step-subtitle">Loop steps 1–4</div>
+      </div>
+      <span class="step-duration">×3</span>
+      <span class="step-remove" onclick="event.stopPropagation()">×</span>
+    </div>
+    <div class="step-params">
+      <div class="sp-row">
+        <span class="sp-label">Cycles</span>
+        <input class="sp-input" type="number" value="3" style="width:80px">
+        <span class="sp-unit"></span>
+      </div>
+      <div class="sp-row">
+        <span class="sp-label">Steps</span>
+        <select class="sp-input" style="text-align:left">
+          <option selected>All steps (1–4)</option>
+          <option>Steps 1–2</option>
+          <option>Custom range...</option>
+        </select>
+      </div>
+      <div class="sp-note">Each cycle: discharge → wait → charge → wait. Total: 3 full cycles.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Add step buttons -->
+<div class="add-panel">
+  <button class="add-btn"><div class="add-dot" style="background:var(--discharge-color)"></div> Discharge</button>
+  <button class="add-btn"><div class="add-dot" style="background:var(--charge-color)"></div> Charge</button>
+  <button class="add-btn"><div class="add-dot" style="background:var(--wait-color)"></div> Wait</button>
+  <button class="add-btn"><div class="add-dot" style="background:var(--loop-color)"></div> Loop</button>
+</div>
+
+<script>
+let selectedStep = 0;
+let unitMode = 'amps';
+const cellCapacity = 200; // Ah
+
+// ── Sequence steps model ──
+const steps = [
+  { type: 'discharge', mode: 'd-cc', currentA: 40, cutoffV: 2.50, maxTimeMin: 600,
+    // Sim params (trivial physics): LFP discharge from ~3.35V → 2.5V, flat in middle
+    simStartV: 3.35, simEndV: 2.50, simDurationH: 5.0 },
+  { type: 'wait', durationMin: 30,
+    simStartV: 2.50, simEndV: 2.55, simDurationH: 0.5 }, // OCV recovery
+  { type: 'charge', mode: 'c-cv', currentA: 40, targetV: 3.65, cutoffCurrentA: 2, maxTimeMin: 600,
+    simStartV: 2.55, simEndV: 3.65, simDurationH: 5.2 },
+  { type: 'wait', durationMin: 30,
+    simStartV: 3.65, simEndV: 3.58, simDurationH: 0.5 }, // settling
+];
+const loopCount = 3;
+
+// Generate simulated voltage curve for a step
+function simStepCurve(step, numPoints) {
+  const pts = [];
+  for (let i = 0; i < numPoints; i++) {
+    const f = i / (numPoints - 1);
+    let v;
+    if (step.type === 'discharge') {
+      // LFP: steep drop, flat middle, steep tail
+      if (f < 0.05) v = step.simStartV - (step.simStartV - (step.simStartV - 0.04)) * (f / 0.05);
+      else if (f < 0.85) v = (step.simStartV - 0.04) - 0.04 * ((f - 0.05) / 0.8);
+      else v = (step.simStartV - 0.08) - (step.simStartV - 0.08 - step.simEndV) * Math.pow((f - 0.85) / 0.15, 2);
+    } else if (step.type === 'charge') {
+      // CC phase (linear V rise) then CV phase (voltage plateau, current drops)
+      const ccFrac = 0.6;
+      if (f < ccFrac) {
+        v = step.simStartV + (step.simEndV - 0.15 - step.simStartV) * (f / ccFrac);
+      } else {
+        v = (step.simEndV - 0.15) + 0.15 * (1 - Math.exp(-4 * (f - ccFrac) / (1 - ccFrac)));
+      }
+    } else { // wait
+      v = step.simStartV + (step.simEndV - step.simStartV) * (1 - Math.exp(-3 * f));
+    }
+    pts.push(v);
+  }
+  return pts;
+}
+
+// ── Timeline canvas rendering ──
+const tlCanvas = document.getElementById('tl-canvas');
+const tlCtx = tlCanvas.getContext('2d');
+
+function drawTimeline() {
+  const wrap = tlCanvas.parentElement;
+  const w = wrap.clientWidth - 36; // minus add button
+  const h = wrap.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+  tlCanvas.width = w * dpr;
+  tlCanvas.height = h * dpr;
+  tlCanvas.style.width = w + 'px';
+  tlCanvas.style.height = h + 'px';
+  tlCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // Background
+  tlCtx.fillStyle = '#0a0a0a';
+  tlCtx.fillRect(0, 0, w, h);
+
+  const pad = { t: 16, b: 28, l: 8, r: 8 };
+  const cw = w - pad.l - pad.r;
+  const ch = h - pad.t - pad.b;
+
+  // Voltage range
+  const vMin = 2.3, vMax = 3.8;
+  function yV(v) { return pad.t + (1 - (v - vMin) / (vMax - vMin)) * ch; }
+
+  // Compute total duration for all cycles
+  const singleCycleDuration = steps.reduce((s, st) => s + st.simDurationH, 0);
+  const totalDuration = singleCycleDuration * loopCount;
+
+  // Grid lines
+  tlCtx.strokeStyle = '#1a1a1a';
+  tlCtx.lineWidth = 1;
+  for (let v = 2.5; v <= 3.7; v += 0.2) {
+    const y = yV(v);
+    tlCtx.beginPath(); tlCtx.moveTo(pad.l, y); tlCtx.lineTo(pad.l + cw, y); tlCtx.stroke();
+  }
+
+  // V axis labels
+  tlCtx.fillStyle = '#333';
+  tlCtx.font = '9px system-ui';
+  tlCtx.textAlign = 'right';
+  for (let v = 2.5; v <= 3.7; v += 0.3) {
+    tlCtx.fillText(v.toFixed(1), pad.l + cw + pad.r - 1, yV(v) + 3);
+  }
+
+  // Draw each cycle
+  let xOff = pad.l;
+  const ptsPerStep = 60;
+
+  for (let cycle = 0; cycle < loopCount; cycle++) {
+    const cycleAlpha = cycle === 0 ? 1 : 0.5 + 0.5 * (cycle / (loopCount - 1));
+
+    for (let si = 0; si < steps.length; si++) {
+      const step = steps[si];
+      const stepWidth = (step.simDurationH / totalDuration) * cw;
+      const pts = simStepCurve(step, ptsPerStep);
+
+      // Background shading for the step block
+      let bgColor;
+      if (step.type === 'discharge') bgColor = 'rgba(251,146,60,0.06)';
+      else if (step.type === 'charge') bgColor = 'rgba(96,165,250,0.06)';
+      else bgColor = 'rgba(119,119,119,0.04)';
+
+      if (selectedStep === si && cycle === 0) {
+        bgColor = step.type === 'discharge' ? 'rgba(251,146,60,0.15)' :
+                  step.type === 'charge' ? 'rgba(96,165,250,0.15)' : 'rgba(119,119,119,0.1)';
+      }
+
+      tlCtx.fillStyle = bgColor;
+      tlCtx.fillRect(xOff, pad.t, stepWidth, ch);
+
+      // Voltage curve
+      let lineColor;
+      if (step.type === 'discharge') lineColor = '#fb923c';
+      else if (step.type === 'charge') lineColor = '#60a5fa';
+      else lineColor = '#666';
+
+      tlCtx.globalAlpha = cycle === 0 ? 1 : 0.3;
+      tlCtx.strokeStyle = lineColor;
+      tlCtx.lineWidth = cycle === 0 ? 2.5 : 1.5;
+      tlCtx.beginPath();
+      for (let pi = 0; pi < pts.length; pi++) {
+        const x = xOff + (pi / (pts.length - 1)) * stepWidth;
+        const y = yV(pts[pi]);
+        pi === 0 ? tlCtx.moveTo(x, y) : tlCtx.lineTo(x, y);
+      }
+      tlCtx.stroke();
+      tlCtx.globalAlpha = 1;
+
+      // Step label (first cycle only)
+      if (cycle === 0) {
+        tlCtx.fillStyle = lineColor;
+        tlCtx.font = '10px system-ui';
+        tlCtx.textAlign = 'center';
+        const labelX = xOff + stepWidth / 2;
+        let label;
+        if (step.type === 'discharge') label = `D-CC ${step.currentA}A`;
+        else if (step.type === 'charge') label = `C-CV ${step.currentA}A`;
+        else label = `Wait ${step.durationMin}m`;
+        tlCtx.fillText(label, labelX, h - 8);
+      }
+
+      // Separator line between steps
+      if (si < steps.length - 1 || cycle < loopCount - 1) {
+        tlCtx.strokeStyle = '#2a2a2a';
+        tlCtx.lineWidth = 1;
+        tlCtx.setLineDash([3, 3]);
+        tlCtx.beginPath();
+        tlCtx.moveTo(xOff + stepWidth, pad.t);
+        tlCtx.lineTo(xOff + stepWidth, pad.t + ch);
+        tlCtx.stroke();
+        tlCtx.setLineDash([]);
+      }
+
+      xOff += stepWidth;
+    }
+
+    // Cycle boundary
+    if (cycle < loopCount - 1) {
+      tlCtx.strokeStyle = '#a78bfa44';
+      tlCtx.lineWidth = 2;
+      tlCtx.setLineDash([4, 4]);
+      tlCtx.beginPath();
+      tlCtx.moveTo(xOff, pad.t - 4);
+      tlCtx.lineTo(xOff, pad.t + ch + 4);
+      tlCtx.stroke();
+      tlCtx.setLineDash([]);
+
+      // Cycle label
+      tlCtx.fillStyle = '#a78bfa';
+      tlCtx.font = '9px system-ui';
+      tlCtx.textAlign = 'center';
+      tlCtx.fillText(`cycle ${cycle + 1}→${cycle + 2}`, xOff, pad.t - 2);
+    }
+  }
+
+  // Time axis labels
+  tlCtx.fillStyle = '#444';
+  tlCtx.font = '9px system-ui';
+  tlCtx.textAlign = 'center';
+  for (let i = 0; i <= 4; i++) {
+    const x = pad.l + (i / 4) * cw;
+    const t = (i / 4) * totalDuration;
+    tlCtx.fillText(t.toFixed(0) + 'h', x, h - 18);
+  }
+}
+
+// Handle click on timeline to select step
+tlCanvas.addEventListener('click', (e) => {
+  const rect = tlCanvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const w = rect.width;
+  const pad = { l: 8, r: 8 };
+  const cw = w - pad.l - pad.r;
+
+  const singleDur = steps.reduce((s, st) => s + st.simDurationH, 0);
+  const totalDur = singleDur * loopCount;
+  const clickTime = ((x - pad.l) / cw) * totalDur;
+  const timeInCycle = clickTime % singleDur;
+
+  let acc = 0;
+  for (let i = 0; i < steps.length; i++) {
+    acc += steps[i].simDurationH;
+    if (timeInCycle <= acc) {
+      selectStep(i);
+      break;
+    }
+  }
+});
+
+function toggleStep(idx) {
+  document.querySelectorAll('.step-card').forEach((el, i) => {
+    if (i === idx) {
+      el.classList.toggle('expanded');
+      el.classList.add('selected');
+    } else {
+      el.classList.remove('selected');
+    }
+  });
+  selectedStep = idx;
+  drawTimeline();
+}
+
+function selectStep(idx) {
+  toggleStep(idx);
+  const card = document.getElementById('step-' + idx);
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function setUnit(mode, btn) {
+  unitMode = mode;
+  btn.parentElement.querySelectorAll('.unit-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  const currentInput = document.getElementById('sp-0-current');
+  const unitLabel = document.getElementById('sp-0-unit');
+  const subtitle = document.getElementById('step-0-sub');
+
+  if (mode === 'crate') {
+    const amps = parseFloat(currentInput.value) || 40;
+    const crate = amps / cellCapacity;
+    currentInput.value = crate.toFixed(3);
+    unitLabel.textContent = 'C';
+    subtitle.textContent = `${crate.toFixed(3)}C (${amps.toFixed(0)}A) → 2.50 V cutoff`;
+  } else {
+    const crate = parseFloat(currentInput.value) || 0.2;
+    const amps = crate * cellCapacity;
+    currentInput.value = amps.toFixed(2);
+    unitLabel.textContent = 'A';
+    subtitle.textContent = `${amps.toFixed(2)} A → 2.50 V cutoff`;
+  }
+}
+
+function showAddMenu() {
+  // In real app, this would add a step
+}
+
+// Init
+drawTimeline();
+window.addEventListener('resize', drawTimeline);
+</script>
+</body>
+</html>

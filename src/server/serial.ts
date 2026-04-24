@@ -219,7 +219,7 @@ export class SerialManager {
    * Send a 10-token packet to device
    * Format: START + 7 data tokens + checksum + END
    */
-  private async sendPacket(data: Buffer): Promise<void> {
+  async sendPacket(data: Buffer): Promise<void> {
     if (!this.fileHandle) throw new Error('Serial port not connected');
 
     if (data.length !== TxPacketLength - 3) {

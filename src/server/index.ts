@@ -2,7 +2,9 @@
 
 /**
  * Main server entry point
- * Single Bun server handles both HTTP and WebSocket
+ *
+ * Wires together: SerialManager → DeviceSession → TestRecorder → SQLite
+ * Serves REST API + typed WebSocket broadcasts on a single Bun server.
  */
 
 import type { ServerWebSocket } from 'bun';
@@ -10,13 +12,61 @@ import homepage from '../frontend/index.html';
 import { logger } from '../utils/logger.ts';
 import { shutdown } from '../utils/shutdown.ts';
 import { SerialManager } from './serial.ts';
-import { StateManager } from './state.ts';
 import { startTcpBridge } from './tcp-bridge.ts';
+import { DeviceSession, type DecodedReading, type SessionEvent } from './device-session.ts';
+import { TestRecorder, type TestSetpoints } from './test-recorder.ts';
+import { SettingsLock } from './settings-lock.ts';
+import { CycleRunner } from './cycle-runner.ts';
+import {
+  initDb, closeDb, markIncompleteRuns, ensureDefaultCellGroup,
+  getCells, getCellById, getCellByBarcode, upsertCell, setCellGroup,
+  getTestRunsForCell, getTestRun, getRecentTestRuns,
+  getDataPointsForRun, getDataPointCount,
+  getCellGroups, getCellsInGroup,
+  getSequences, getSequence, createSequence, updateSequence,
+  getSetting, setSetting,
+} from './db.ts';
+import {
+  getCellCapacityStats,
+  getGroupFleetSummary,
+  getAllCellStats,
+} from './capacity-estimation.ts';
 
 const Port = Number(process.env.PORT) || 80;
 
-// WebSocket client tracking
-const wsClients = new Set<ServerWebSocket>();
+// ── WebSocket client tracking ──────────────────────────────────────
+
+type WsData = { id: number };
+const wsClients = new Set<ServerWebSocket<WsData>>();
+let wsIdCounter = 0;
+
+function broadcast(msg: object): void {
+  const json = JSON.stringify(msg);
+  for (const client of wsClients) {
+    try { client.send(json); }
+    catch { /* client will be cleaned up on close */ }
+  }
+}
+
+// ── JSON helpers ───────────────────────────────────────────────────
+
+function jsonResponse(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function errorResponse(message: string, status = 400): Response {
+  return jsonResponse({ error: message }, status);
+}
+
+async function parseBody<T = Record<string, unknown>>(req: Request): Promise<T | null> {
+  try { return await req.json() as T; }
+  catch { return null; }
+}
+
+// ── Main ───────────────────────────────────────────────────────────
 
 async function main() {
   // Bridge mode: transparent TCP-serial byte pipe (no WebSocket server)
@@ -25,227 +75,580 @@ async function main() {
     return;
   }
 
-  logger.info('🚀 Starting Battery Charge & Discharge Controller Server...');
+  logger.info('Starting Battery Controller Server...');
 
-  // Heartbeat watchdog timer
-  let heartbeatWatchdog: Timer | null = null;
+  // ── Initialize database ────────────────────────────────────────
+  initDb();
+  const incompleteRuns = markIncompleteRuns();
+  if (incompleteRuns > 0) {
+    logger.info(`Marked ${incompleteRuns} incomplete run(s) from previous session as 'service_restart'`);
+  }
+  ensureDefaultCellGroup();
 
-  // Initialize state manager
-  const stateManager = new StateManager();
-
-  // Initialize serial port communication
+  // ── Initialize serial + session + recorder ─────────────────────
   const serialManager = new SerialManager();
   await serialManager.connect();
 
-  // Update serial port status when connection changes
-  serialManager.addConnectionListener(connected => {
-    stateManager.updateSerialPortStatus(connected);
-    if (!connected) {
-      // Port closed, device is definitely disconnected
-      stateManager.updateDeviceStatus(false);
+  const session = new DeviceSession(serialManager);
+  const recorder = new TestRecorder(session);
+  const settingsLock = new SettingsLock();
+  const cycleRunner = new CycleRunner(session, recorder);
+
+  session.start();
+  recorder.start();
+  cycleRunner.start();
+
+  // ── Wire session events → WebSocket broadcasts ────────────────
+  session.on((event: SessionEvent) => {
+    switch (event.type) {
+      case 'reading':
+        broadcast({ type: 'reading', data: event.data });
+        break;
+      case 'stateChange':
+        broadcast({
+          type: 'state',
+          data: {
+            mode: event.to,
+            previousMode: event.from,
+            activeRunId: recorder.getActiveRunId(),
+            timestamp: Date.now(),
+          },
+        });
+        break;
+      case 'connected':
+        broadcast({ type: 'connected', data: { timestamp: Date.now() } });
+        break;
+      case 'disconnected':
+        broadcast({ type: 'disconnected', data: { timestamp: Date.now() } });
+        break;
+      case 'deviceInfo':
+        broadcast({ type: 'deviceInfo', data: event.data });
+        break;
+      case 'commandPending':
+        broadcast({ type: 'commandPending', data: event.data });
+        break;
+      case 'commandConfirmed':
+        broadcast({ type: 'commandConfirmed', data: event.data });
+        break;
+      case 'commandTimeout':
+        broadcast({ type: 'commandTimeout', data: event.data });
+        break;
     }
   });
 
-  // Listen for packets from device and log them
-  serialManager.addPacketListener((packet: Buffer) => {
-    const hex =
-      packet
-        .toString('hex')
-        .toUpperCase()
-        .match(/.{1,2}/g)
-        ?.join(' ') || '';
-    logger.info('📥 Received pack:', hex);
-
-    // Add to message history
-    stateManager.addMessage('in', hex);
-
-    // Record device activity
-    stateManager.recordDeviceActivity();
+  // ── Wire lock state → WebSocket broadcasts ────────────────────
+  settingsLock.onLockChange(locked => {
+    broadcast({ type: 'lockState', data: { locked } });
   });
 
-  // Initial serial port status
-  stateManager.updateSerialPortStatus(serialManager.isPortOpen());
+  // ── Wire cycle state → WebSocket broadcasts ───────────────────
+  cycleRunner.onStateChange(state => {
+    broadcast({ type: 'cycleState', data: state });
+  });
 
-  // Helper function to reset heartbeat watchdog timer
-  function resetHeartbeatWatchdog() {
-    // Clear existing watchdog if any
-    if (heartbeatWatchdog !== null) {
-      clearTimeout(heartbeatWatchdog);
+  // ── Guard: reject commands when locked ────────────────────────
+  function requireUnlocked(): Response | null {
+    if (settingsLock.isLocked()) {
+      return errorResponse('Settings are locked', 403);
+    }
+    return null;
+  }
+
+  // ── REST route handler ────────────────────────────────────────
+  async function handleApi(req: Request, pathname: string): Promise<Response | null> {
+    const method = req.method;
+
+    // ── Test control ──────────────────────────────────────────
+    if (pathname === '/api/test/start' && method === 'POST') {
+      const locked = requireUnlocked();
+      if (locked) return locked;
+
+      const body = await parseBody<{
+        mode: string;
+        currentA?: number;
+        voltageV?: number;
+        powerW?: number;
+        cutoffV?: number;
+        cutoffCurrentA?: number;
+        maxTimeMin?: number;
+        cellId?: number;
+        barcode?: string;
+      }>(req);
+      if (!body?.mode) return errorResponse('Missing mode');
+
+      if (session.isRunning()) {
+        return errorResponse('A test is already running', 409);
+      }
+
+      // Associate cell if provided
+      if (body.barcode) {
+        const cell = upsertCell(body.barcode);
+        recorder.setCellId(cell.id);
+      } else if (body.cellId) {
+        recorder.setCellId(body.cellId);
+      }
+
+      // Record setpoints
+      const setpoints: TestSetpoints = {
+        currentA: body.currentA,
+        voltageV: body.voltageV,
+        powerW: body.powerW,
+        cutoffV: body.cutoffV,
+        cutoffCurrentA: body.cutoffCurrentA,
+        maxTimeMin: body.maxTimeMin,
+      };
+      recorder.setSetpoints(setpoints);
+
+      // Send command to device
+      switch (body.mode) {
+        case 'd-cc':
+          if (!body.currentA || !body.cutoffV) return errorResponse('D-CC requires currentA and cutoffV');
+          await session.startDCC(body.currentA, body.cutoffV);
+          break;
+        case 'd-cp':
+          if (!body.powerW || !body.cutoffV) return errorResponse('D-CP requires powerW and cutoffV');
+          await session.startDCP(body.powerW, body.cutoffV, body.maxTimeMin ?? 0);
+          break;
+        case 'c-cv':
+          if (!body.currentA || !body.voltageV || !body.cutoffCurrentA)
+            return errorResponse('C-CV requires currentA, voltageV, and cutoffCurrentA');
+          await session.startCCV(body.currentA, body.voltageV, body.cutoffCurrentA);
+          break;
+        default:
+          return errorResponse(`Unknown mode: ${body.mode}`);
+      }
+
+      return jsonResponse({ ok: true, mode: body.mode });
     }
 
-    // Set new watchdog that fires after 2 seconds of inactivity
-    heartbeatWatchdog = setTimeout(() => {
-      // Send heartbeat to all clients
-      const heartbeatMessage = JSON.stringify({
-        type: 'heartbeat',
-        data: { timestamp: Date.now() },
+    if (pathname === '/api/test/stop' && method === 'POST') {
+      const locked = requireUnlocked();
+      if (locked) return locked;
+
+      await session.stop();
+      return jsonResponse({ ok: true });
+    }
+
+    if (pathname === '/api/test/continue' && method === 'POST') {
+      const locked = requireUnlocked();
+      if (locked) return locked;
+
+      const body = await parseBody<{
+        currentA?: number;
+        voltageV?: number;
+        powerW?: number;
+        cutoffV?: number;
+        cutoffCurrentA?: number;
+        maxTimeMin?: number;
+      }>(req);
+      if (!body) return errorResponse('Missing body');
+
+      const mode = session.getMode();
+      switch (mode) {
+        case 'd-cc':
+          if (!body.currentA || !body.cutoffV) return errorResponse('D-CC continue requires currentA and cutoffV');
+          await session.continueDCC(body.currentA, body.cutoffV);
+          break;
+        case 'd-cp':
+          if (!body.powerW || !body.cutoffV) return errorResponse('D-CP continue requires powerW and cutoffV');
+          await session.continueDCP(body.powerW, body.cutoffV, body.maxTimeMin ?? 0);
+          break;
+        case 'c-cv':
+          if (!body.currentA || !body.voltageV || !body.cutoffCurrentA)
+            return errorResponse('C-CV continue requires currentA, voltageV, and cutoffCurrentA');
+          await session.continueCCV(body.currentA, body.voltageV, body.cutoffCurrentA);
+          break;
+        default:
+          return errorResponse(`Not in a running state (mode: ${mode})`, 409);
+      }
+
+      return jsonResponse({ ok: true, mode });
+    }
+
+    if (pathname === '/api/test/current' && method === 'GET') {
+      return jsonResponse({
+        mode: session.getMode(),
+        reading: session.getReading(),
+        stats: session.getTestStats(),
+        pendingCommand: session.getPendingCommand(),
+        activeRunId: recorder.getActiveRunId(),
+        deviceInfo: session.getDeviceInfo(),
+        serialConnected: serialManager.isPortOpen(),
       });
+    }
 
-      for (const client of wsClients) {
-        try {
-          client.send(heartbeatMessage);
-        } catch (error) {
-          logger.error('Failed to send heartbeat to WebSocket client:', error);
+    // ── Cell management ───────────────────────────────────────
+    if (pathname === '/api/cells' && method === 'GET') {
+      return jsonResponse(getCells());
+    }
+
+    if (pathname === '/api/cells' && method === 'POST') {
+      const body = await parseBody<{ barcode: string; label?: string }>(req);
+      if (!body?.barcode) return errorResponse('Missing barcode');
+      const cell = upsertCell(body.barcode, body.label);
+      return jsonResponse(cell);
+    }
+
+    if (pathname === '/api/cells/scan' && method === 'POST') {
+      const body = await parseBody<{ barcode: string; label?: string }>(req);
+      if (!body?.barcode) return errorResponse('Missing barcode');
+      const cell = upsertCell(body.barcode, body.label);
+      recorder.setCellId(cell.id);
+      return jsonResponse({ ok: true, cell });
+    }
+
+    // /api/cells/:id/runs
+    const cellRunsMatch = pathname.match(/^\/api\/cells\/(\d+)\/runs$/);
+    if (cellRunsMatch && method === 'GET') {
+      const cellId = parseInt(cellRunsMatch[1], 10);
+      const cell = getCellById(cellId);
+      if (!cell) return errorResponse('Cell not found', 404);
+      return jsonResponse(getTestRunsForCell(cellId));
+    }
+
+    // /api/cells/:id
+    const cellByIdMatch = pathname.match(/^\/api\/cells\/(\d+)$/);
+    if (cellByIdMatch && method === 'GET') {
+      const cellId = parseInt(cellByIdMatch[1], 10);
+      const cell = getCellById(cellId);
+      if (!cell) return errorResponse('Cell not found', 404);
+      return jsonResponse(cell);
+    }
+
+    // ── Test run queries ──────────────────────────────────────
+    if (pathname === '/api/runs/recent' && method === 'GET') {
+      const url = new URL(req.url);
+      const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
+      return jsonResponse(getRecentTestRuns(limit));
+    }
+
+    // /api/runs/:id
+    const runByIdMatch = pathname.match(/^\/api\/runs\/(\d+)$/);
+    if (runByIdMatch && method === 'GET') {
+      const runId = parseInt(runByIdMatch[1], 10);
+      const run = getTestRun(runId);
+      if (!run) return errorResponse('Run not found', 404);
+      return jsonResponse(run);
+    }
+
+    // /api/runs/:id/data
+    const runDataMatch = pathname.match(/^\/api\/runs\/(\d+)\/data$/);
+    if (runDataMatch && method === 'GET') {
+      const runId = parseInt(runDataMatch[1], 10);
+      const run = getTestRun(runId);
+      if (!run) return errorResponse('Run not found', 404);
+      return jsonResponse(getDataPointsForRun(runId));
+    }
+
+    // /api/runs/:id/export (CSV)
+    const runExportMatch = pathname.match(/^\/api\/runs\/(\d+)\/export$/);
+    if (runExportMatch && method === 'GET') {
+      const runId = parseInt(runExportMatch[1], 10);
+      const run = getTestRun(runId);
+      if (!run) return errorResponse('Run not found', 404);
+
+      const points = getDataPointsForRun(runId);
+      const header = 'elapsed_s,voltage_v,current_a,power_w,capacity_mah,energy_mwh,state_byte\n';
+      const rows = points.map(p =>
+        `${p.elapsed_s},${p.voltage_v},${p.current_a},${p.power_w},${p.capacity_mah},${p.energy_mwh},${p.state_byte}`
+      ).join('\n');
+
+      return new Response(header + rows, {
+        headers: {
+          'Content-Type': 'text/csv',
+          'Content-Disposition': `attachment; filename="run-${runId}.csv"`,
+        },
+      });
+    }
+
+    // ── Cell groups ───────────────────────────────────────────
+    if (pathname === '/api/cell-groups' && method === 'GET') {
+      return jsonResponse(getCellGroups());
+    }
+
+    // /api/cell-groups/:id/cells
+    const groupCellsMatch = pathname.match(/^\/api\/cell-groups\/(\d+)\/cells$/);
+    if (groupCellsMatch && method === 'GET') {
+      const groupId = parseInt(groupCellsMatch[1], 10);
+      return jsonResponse(getCellsInGroup(groupId));
+    }
+
+    // /api/cell-groups/:id/summary — fleet summary for a cell group
+    const groupSummaryMatch = pathname.match(/^\/api\/cell-groups\/(\d+)\/summary$/);
+    if (groupSummaryMatch && method === 'GET') {
+      const groupId = parseInt(groupSummaryMatch[1], 10);
+      const summary = getGroupFleetSummary(groupId);
+      if (!summary) return errorResponse('Cell group not found', 404);
+      return jsonResponse(summary);
+    }
+
+    // ── Capacity stats ───────────────────────────────────────
+
+    // /api/cells/:id/capacity — per-cell capacity statistics
+    const cellCapMatch = pathname.match(/^\/api\/cells\/(\d+)\/capacity$/);
+    if (cellCapMatch && method === 'GET') {
+      const cellId = parseInt(cellCapMatch[1], 10);
+      const stats = getCellCapacityStats(cellId);
+      if (!stats) return errorResponse('Cell not found', 404);
+      return jsonResponse(stats);
+    }
+
+    // /api/capacity/all — all cell stats (regardless of group)
+    if (pathname === '/api/capacity/all' && method === 'GET') {
+      return jsonResponse(getAllCellStats());
+    }
+
+    // /api/cells/:id/group — assign a cell to a group
+    const cellGroupMatch = pathname.match(/^\/api\/cells\/(\d+)\/group$/);
+    if (cellGroupMatch && method === 'PUT') {
+      const cellId = parseInt(cellGroupMatch[1], 10);
+      const cell = getCellById(cellId);
+      if (!cell) return errorResponse('Cell not found', 404);
+      const body = await req.json() as { groupId: number | null };
+      setCellGroup(cellId, body.groupId);
+      return jsonResponse({ ok: true });
+    }
+
+    // ── Sequences ─────────────────────────────────────────────
+    if (pathname === '/api/sequences' && method === 'GET') {
+      return jsonResponse(getSequences());
+    }
+
+    if (pathname === '/api/sequences' && method === 'POST') {
+      const body = await parseBody<{ name: string; stepsJson: string; cellGroupId?: number }>(req);
+      if (!body?.name || !body?.stepsJson) return errorResponse('Missing name or stepsJson');
+      const seq = createSequence(body.name, body.stepsJson, body.cellGroupId);
+      return jsonResponse(seq, 201);
+    }
+
+    const seqByIdMatch = pathname.match(/^\/api\/sequences\/(\d+)$/);
+    if (seqByIdMatch && method === 'GET') {
+      const id = parseInt(seqByIdMatch[1], 10);
+      const seq = getSequence(id);
+      if (!seq) return errorResponse('Sequence not found', 404);
+      return jsonResponse(seq);
+    }
+
+    if (seqByIdMatch && method === 'PUT') {
+      const id = parseInt(seqByIdMatch[1], 10);
+      const body = await parseBody<{ name: string; stepsJson: string }>(req);
+      if (!body?.name || !body?.stepsJson) return errorResponse('Missing name or stepsJson');
+      updateSequence(id, body.name, body.stepsJson);
+      return jsonResponse({ ok: true });
+    }
+
+    // ── Settings lock ─────────────────────────────────────────
+    if (pathname === '/api/lock/status' && method === 'GET') {
+      return jsonResponse({
+        locked: settingsLock.isLocked(),
+        hasPassword: settingsLock.hasPassword(),
+      });
+    }
+
+    if (pathname === '/api/lock' && method === 'POST') {
+      const body = await parseBody<{ password: string; oldPassword?: string }>(req);
+      if (!body?.password) return errorResponse('Missing password');
+      const ok = await settingsLock.setPassword(body.password, body.oldPassword);
+      if (!ok) return errorResponse('Old password is incorrect', 403);
+      settingsLock.lock();
+      return jsonResponse({ ok: true, locked: true });
+    }
+
+    if (pathname === '/api/unlock' && method === 'POST') {
+      const body = await parseBody<{ password: string }>(req);
+      if (!body?.password) return errorResponse('Missing password');
+      const ok = await settingsLock.unlock(body.password);
+      if (!ok) return errorResponse('Incorrect password', 403);
+      return jsonResponse({ ok: true, locked: false });
+    }
+
+    if (pathname === '/api/lock/engage' && method === 'POST') {
+      const ok = settingsLock.lock();
+      if (!ok) return errorResponse('No password set — cannot lock', 400);
+      return jsonResponse({ ok: true, locked: true });
+    }
+
+    // ── Cycle programs ─────────────────────────────────────────
+    if (pathname === '/api/cycle/status' && method === 'GET') {
+      return jsonResponse(cycleRunner.getState());
+    }
+
+    if (pathname === '/api/cycle/start' && method === 'POST') {
+      const locked = requireUnlocked();
+      if (locked) return locked;
+
+      const body = await parseBody<{ name: string; steps: unknown[]; cellId?: number }>(req);
+      if (!body?.name || !body?.steps) return errorResponse('Missing name or steps');
+
+      try {
+        await cycleRunner.startSequence(body.name, body.steps as any, body.cellId ?? null);
+        return jsonResponse({ ok: true, state: cycleRunner.getState() });
+      } catch (e) {
+        return errorResponse(e instanceof Error ? e.message : 'Failed to start cycle', 409);
+      }
+    }
+
+    if (pathname === '/api/cycle/stop' && method === 'POST') {
+      const locked = requireUnlocked();
+      if (locked) return locked;
+
+      await cycleRunner.abort();
+      return jsonResponse({ ok: true });
+    }
+
+    // ── Data export ──────────────────────────────────────────
+
+    // CSV export for all runs of a specific cell
+    const cellExportMatch = pathname.match(/^\/api\/cells\/(\d+)\/export$/);
+    if (cellExportMatch && method === 'GET') {
+      const cellId = parseInt(cellExportMatch[1], 10);
+      const cell = getCellById(cellId);
+      if (!cell) return errorResponse('Cell not found', 404);
+
+      const cellRuns = getTestRunsForCell(cellId);
+      const header = 'run_id,mode,started_at,ended_at,end_reason,elapsed_s,voltage_v,current_a,power_w,capacity_mah,energy_mwh,state_byte\n';
+      const rows: string[] = [];
+      for (const run of cellRuns) {
+        const points = getDataPointsForRun(run.id);
+        for (const p of points) {
+          rows.push(
+            `${run.id},${run.mode},${run.started_at},${run.ended_at ?? ''},${run.end_reason ?? ''},` +
+            `${p.elapsed_s},${p.voltage_v},${p.current_a},${p.power_w},${p.capacity_mah},${p.energy_mwh},${p.state_byte}`
+          );
         }
       }
 
-      // Reset watchdog to continue the cycle
-      resetHeartbeatWatchdog();
-    }, 2000);
-  }
-
-  // Helper function to broadcast message to all clients and reset watchdog
-  function broadcastToClients(message: string) {
-    for (const client of wsClients) {
-      try {
-        client.send(message);
-      } catch (error) {
-        logger.error('Failed to send to WebSocket client:', error);
-      }
+      const filename = `cell-${cell.barcode.replace(/[^a-zA-Z0-9-_]/g, '_')}.csv`;
+      return new Response(header + rows.join('\n'), {
+        headers: {
+          'Content-Type': 'text/csv',
+          'Content-Disposition': `attachment; filename="${filename}"`,
+        },
+      });
     }
-    // Reset watchdog after any broadcast
-    resetHeartbeatWatchdog();
+
+    // Full SQLite database download
+    if (pathname === '/api/export/db' && method === 'GET') {
+      const dbPath = process.env.DB_PATH || '/opt/battery-controller/data/battery.db';
+      const file = Bun.file(dbPath);
+      if (!await file.exists()) return errorResponse('Database file not found', 404);
+      return new Response(file, {
+        headers: {
+          'Content-Type': 'application/x-sqlite3',
+          'Content-Disposition': 'attachment; filename="battery.db"',
+        },
+      });
+    }
+
+    return null; // Not an API route
   }
 
-  // Create single Bun server for HTTP + WebSocket
-  const server = Bun.serve({
+  // ── Create server ─────────────────────────────────────────────
+  const server = Bun.serve<WsData>({
     port: Port,
-
     development: process.env.NODE_ENV === 'development',
 
-    error: error => {
-      logger.error('❌ Server error:', error);
+    error(error) {
+      logger.error('Server error:', error);
     },
 
-    // WebSocket handler
     websocket: {
       open(ws) {
         wsClients.add(ws);
-        logger.info('🔌 WebSocket client connected');
+        logger.info(`WebSocket client connected (#${ws.data.id}, total: ${wsClients.size})`);
 
-        // Update WebSocket status
-        stateManager.updateWebSocketStatus(true);
-        stateManager.recordWebSocketActivity();
-
-        // Send initial state
-        ws.send(
-          JSON.stringify({
-            type: 'state',
-            data: stateManager.getState(),
-          })
-        );
-
-        // Send message history
-        ws.send(
-          JSON.stringify({
-            type: 'history',
-            data: stateManager.getMessageHistory(),
-          })
-        );
-
-        // Reset watchdog after sending initial data
-        resetHeartbeatWatchdog();
+        // Send current state snapshot
+        ws.send(JSON.stringify({
+          type: 'snapshot',
+          data: {
+            mode: session.getMode(),
+            reading: session.getReading(),
+            stats: session.getTestStats(),
+            deviceInfo: session.getDeviceInfo(),
+            activeRunId: recorder.getActiveRunId(),
+            serialConnected: serialManager.isPortOpen(),
+            locked: settingsLock.isLocked(),
+            cycleState: cycleRunner.getState(),
+          },
+        }));
       },
+
       close(ws) {
         wsClients.delete(ws);
-        logger.info('🔌 WebSocket client disconnected');
-
-        // Update WebSocket status
-        if (wsClients.size === 0) {
-          stateManager.updateWebSocketStatus(false);
-        }
+        logger.info(`WebSocket client disconnected (#${ws.data.id}, total: ${wsClients.size})`);
       },
-      async message(ws, message) {
-        try {
-          const data = JSON.parse(message as string);
-          logger.info('📨 Received WebSocket message:', JSON.stringify(data, null, 2));
 
-          // Record WebSocket activity
-          stateManager.recordWebSocketActivity();
-
-          if (data.type === 'command') {
-            logger.info('📨 Received command:', data.data.command);
-
-            if (data.data.command === 'start') {
-              await serialManager.sendConnectCommand();
-              stateManager.addMessage('out', '05 00 00 00 00 00 00 CONNECT');
-              // Device connection will be updated when packets are received
-            } else if (data.data.command === 'stop') {
-              await serialManager.sendDisconnectCommand();
-              stateManager.addMessage('out', '06 00 00 00 00 00 00 DISCONNECT');
-              // Device is now disconnected
-              stateManager.updateDeviceStatus(false);
-            }
-          }
-        } catch (error) {
-          logger.error('❌ Failed to process WebSocket message:', error);
-        }
+      message(_ws, _message) {
+        // All commands go through the REST API — no WebSocket commands.
+        // This keeps the protocol simple and debuggable.
       },
     },
 
     routes: {
       '/': homepage,
-      // ...other HTTP routes
+      '/sequences': homepage, // SPA: same HTML, client-side routing
     },
-    fetch(req, server) {
+
+    async fetch(req, server) {
       const url = new URL(req.url);
-      // Upgrade HTTP requests to WebSocket if needed
-      if (url.pathname === '/ws' && server.upgrade(req)) return;
 
-      return new Response('Not Found', { status: 404 });
+      // WebSocket upgrade
+      if (url.pathname === '/ws') {
+        const upgraded = server.upgrade(req, { data: { id: ++wsIdCounter } });
+        if (upgraded) return;
+        return new Response('WebSocket upgrade failed', { status: 400 });
+      }
+
+      // Static files (zbar.wasm barcode scanner)
+      if (url.pathname === '/static/zbar.js') {
+        const file = Bun.file(new URL(import.meta.resolve('zbar.wasm/dist/zbar.js')).pathname);
+        return new Response(file, {
+          headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=86400' },
+        });
+      }
+      if (url.pathname === '/static/zbar.wasm') {
+        const file = Bun.file(new URL(import.meta.resolve('zbar.wasm/dist/zbar.wasm.bin')).pathname);
+        return new Response(file, {
+          headers: { 'Content-Type': 'application/wasm', 'Cache-Control': 'public, max-age=86400' },
+        });
+      }
+
+      // REST API
+      if (url.pathname.startsWith('/api/')) {
+        const response = await handleApi(req, url.pathname);
+        if (response) return response;
+        return new Response('Not Found', { status: 404 });
+      }
+
+      // SPA fallback: serve index.html for unrecognized paths
+      // (handles direct navigation / page refresh on client-side routes)
+      return new Response(Bun.file(new URL(import.meta.resolve('../frontend/index.html')).pathname), {
+        headers: { 'Content-Type': 'text/html' },
+      });
     },
   });
 
-  // Subscribe to state changes and broadcast to all WebSocket clients
-  stateManager.subscribe(state => {
-    const message = JSON.stringify({
-      type: 'state',
-      data: state,
-    });
+  logger.info(`Server running at http://localhost:${Port}`);
+  logger.info(`WebSocket at ws://localhost:${Port}/ws`);
+  logger.info(`Device mode: ${session.getMode()}, serial: ${serialManager.isPortOpen() ? 'connected' : 'disconnected'}`);
 
-    broadcastToClients(message);
-  });
-
-  // Subscribe to new serial messages and broadcast to all WebSocket clients
-  stateManager.subscribeToMessages(msg => {
-    const message = JSON.stringify({
-      type: 'message',
-      data: msg,
-    });
-
-    broadcastToClients(message);
-  });
-
-  // Initialize heartbeat watchdog timer
-  resetHeartbeatWatchdog();
-
-  // Periodically check device connection status
-  setInterval(() => {
-    const isConnected = serialManager.isDeviceConnected();
-    const currentState = stateManager.getState();
-    if (currentState.connectionChain.device.connected !== isConnected) {
-      stateManager.updateDeviceStatus(isConnected);
-    }
-  }, 1000); // Check every second
-
-  logger.info(`🌐 Server running at http://localhost:${Port}`);
-  logger.info(`📡 WebSocket available at ws://localhost:${Port}/ws`);
-  logger.info('✅ Server ready');
-
-  // Graceful shutdown
-  process.on('SIGINT', async () => {
-    logger.info('\n🛑 Shutting down gracefully...');
-    // Clear heartbeat watchdog
-    if (heartbeatWatchdog !== null) {
-      clearTimeout(heartbeatWatchdog);
-    }
+  // ── Graceful shutdown ──────────────────────────────────────────
+  async function gracefulShutdown() {
+    logger.info('Shutting down...');
+    cycleRunner.stop();
+    recorder.stop();
+    session.destroy();
     await serialManager.disconnect();
+    closeDb();
     server.stop();
     shutdown(0);
-  });
+  }
+
+  process.on('SIGINT', gracefulShutdown);
+  process.on('SIGTERM', gracefulShutdown);
 }
 
 main().catch(error => {
-  logger.error('❌ Failed to start server:', error);
+  logger.error('Failed to start server:', error);
   shutdown(1);
 });

@@ -261,7 +261,8 @@ async function setupPiHardware() {
 async function createDirectories() {
   log('Creating application directories...', '📁');
 
-  await sudoExec('mkdir', ['-p', DeployAppDir]).then(() => sudoExec('chown', ['-R', 'pi:', DeployAppDir]));
+  await sudoExec('mkdir', ['-p', `${DeployAppDir}/data`]);
+  await sudoExec('chown', ['-R', 'pi:', DeployAppDir]);
 
   log('Directories created', '✅');
 }
@@ -319,6 +320,7 @@ Conflicts=${allConflicts(mode)}
 WorkingDirectory=${DeployAppDir}
 ExecStart=${execArgs[mode]}
 Environment="NODE_ENV=${env[mode]}"
+Environment="DB_PATH=${DeployAppDir}/data/battery.db"
 Restart=always
 RestartSec=${restartSec[mode]}
 

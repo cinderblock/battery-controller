@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Mockup 4 — Four Pages with Tab Bar</title>
+<style>
+  :root {
+    --bg: #0f0f0f; --surface: #1a1a1a; --surface2: #252525;
+    --text: #e5e5e5; --text2: #999; --accent: #3b82f6;
+    --orange: #f59e0b; --green: #22c55e; --red: #ef4444;
+    --radius: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    -webkit-tap-highlight-color: transparent;
+    padding-bottom: 60px;
+  }
+
+  .layout-tag {
+    position: fixed; top: 0; right: 0; padding: 4px 10px;
+    background: var(--red); color: white; font-size: 11px;
+    font-weight: 600; z-index: 200; border-radius: 0 0 0 8px;
+  }
+
+  /* ── Tab bar ── */
+  .tab-bar {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    display: flex; background: var(--surface);
+    border-top: 1px solid #333; z-index: 50;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  .tab {
+    flex: 1; padding: 6px 0 4px; text-align: center;
+    color: var(--text2); font-size: 10px; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  .tab.active { color: var(--accent); }
+  .tab svg { width: 22px; height: 22px; }
+
+  /* ── Pages ── */
+  .page { display: none; }
+  .page.active { display: block; }
+  .page-header {
+    padding: 12px 16px; background: var(--surface);
+    border-bottom: 1px solid #333;
+  }
+  .page-title { font-size: 18px; font-weight: 600; }
+
+  /* ── Live mini-bar (shown on non-live pages) ── */
+  .live-mini {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 16px; background: var(--surface2);
+    border-bottom: 1px solid #333; font-size: 13px;
+    cursor: pointer;
+  }
+  .live-mini-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .live-mini-reading { font-variant-numeric: tabular-nums; font-weight: 500; }
+
+  /* ── Shared components ── */
+  .readings { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #333; margin: 1px 0; }
+  .reading { background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; }
+  .reading-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; }
+  .reading-value { font-size: 32px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 4px; }
+  .reading.primary .reading-value { font-size: 40px; }
+  .reading-value.pending { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+  .chart-area { background: var(--surface); height: 220px; margin: 1px 0; }
+  .chart-canvas { width: 100%; height: 100%; }
+
+  .controls { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .mode-selector { display: flex; border-radius: var(--radius); overflow: hidden; border: 1px solid #444; }
+  .mode-btn { flex:1;padding:14px;text-align:center;background:var(--surface);color:var(--text2);border:none;font-size:15px;font-weight:500;cursor:pointer; }
+  .mode-btn.active { background: var(--accent); color: white; }
+  .param-row { display: flex; gap: 8px; align-items: center; }
+  .param-input { flex:1;background:var(--surface2);border:1px solid #444;border-radius:8px;padding:12px;color:var(--text);font-size:16px;text-align:right; }
+  .param-label { font-size: 14px; color: var(--text2); min-width: 80px; }
+  .param-unit { font-size: 14px; color: var(--text2); min-width: 28px; }
+  .action-btn { width:100%;padding:18px;border-radius:var(--radius);border:none;font-size:17px;font-weight:600;cursor:pointer;min-height:56px; }
+  .action-btn.start { background: var(--green); color: #000; }
+  .action-btn.stop { background: var(--red); color: white; }
+  .action-btn.secondary { background: var(--surface2); color: var(--text); border: 1px solid #444; }
+
+  .preset-bar { display: flex; gap: 6px; overflow-x: auto; }
+  .preset-chip { white-space:nowrap;padding:8px 14px;border-radius:16px;background:var(--surface2);border:1px solid #444;color:var(--text2);font-size:13px;cursor:pointer; }
+  .preset-chip.active { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Cell cards ── */
+  .cell-card {
+    background: var(--surface); border-radius: var(--radius);
+    padding: 14px; margin-bottom: 8px; cursor: pointer;
+    border: 1px solid #333;
+  }
+  .cell-card-top { display: flex; justify-content: space-between; align-items: center; }
+  .cell-card-name { font-weight: 600; font-size: 16px; }
+  .cell-card-cap { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 16px; }
+  .cell-card-meta { font-size: 12px; color: var(--text2); margin-top: 4px; }
+  .cell-card-bar { height: 4px; border-radius: 2px; background: #333; margin-top: 8px; overflow: hidden; }
+  .cell-card-bar-fill { height: 100%; border-radius: 2px; background: var(--accent); }
+
+  .scan-bar {
+    display: flex; gap: 8px; padding: 16px;
+    border-bottom: 1px solid #333; background: var(--surface);
+  }
+  .scan-bar input {
+    flex: 1; background: var(--surface2); border: 1px solid #444;
+    border-radius: 8px; padding: 10px 12px; color: var(--text); font-size: 14px;
+  }
+  .scan-bar button {
+    padding: 10px 16px; border-radius: 8px; border: 1px solid #444;
+    background: var(--surface2); color: var(--accent); font-size: 14px; cursor: pointer;
+  }
+
+  /* ── Cycle page ── */
+  .cycle-step {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px; background: var(--surface);
+    border-radius: 8px; margin-bottom: 6px; border: 1px solid #333;
+  }
+  .cycle-step-num { width: 28px; height: 28px; border-radius: 50%; background: var(--accent)33; color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .cycle-step-desc { flex: 1; font-size: 14px; }
+  .cycle-step-time { font-size: 12px; color: var(--text2); }
+  .cycle-step-remove { color: var(--text2); cursor: pointer; padding: 4px; }
+
+  .cycle-add {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px; border-radius: 8px;
+    border: 1px dashed #555; cursor: pointer;
+    color: var(--text2); margin-bottom: 12px;
+  }
+
+  /* ── Compare page ── */
+  .compare-chart-area {
+    height: 280px; background: var(--surface); border-radius: var(--radius);
+    margin: 16px; display: flex; align-items: center; justify-content: center;
+    color: var(--text2); border: 1px solid #333;
+  }
+  .run-check {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px; border-bottom: 1px solid #333;
+    cursor: pointer;
+  }
+  .run-check input { width: 20px; height: 20px; }
+  .run-check-info { flex: 1; }
+  .run-check-name { font-size: 14px; font-weight: 500; }
+  .run-check-meta { font-size: 12px; color: var(--text2); }
+  .run-check-cap { color: var(--accent); font-variant-numeric: tabular-nums; }
+  .run-mode { display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:500;margin-right:4px; }
+  .run-mode.dcc { background: #f59e0b22; color: var(--orange); }
+  .run-mode.ccv { background: #3b82f622; color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="layout-tag">4: Four Pages</div>
+
+<!-- ═══ Page 1: Dashboard (Live) ═══ -->
+<div class="page active" id="page-dash">
+  <div class="page-header" style="display:flex;align-items:center;gap:8px">
+    <div style="width:8px;height:8px;border-radius:50%;background:var(--green)"></div>
+    <span style="font-size:14px">EBC-A40L</span>
+    <span id="state-badge" style="padding:2px 8px;border-radius:4px;font-size:12px;font-weight:500">Idle</span>
+    <span style="margin-left:auto;font-size:13px;color:var(--accent)" id="cell-display">No cell</span>
+  </div>
+  <div class="readings">
+    <div class="reading primary"><span class="reading-label">Voltage</span><span class="reading-value" id="r-voltage">3.285 V</span></div>
+    <div class="reading primary"><span class="reading-label">Current</span><span class="reading-value" id="r-current">0.00 A</span></div>
+    <div class="reading"><span class="reading-label">Power</span><span class="reading-value" id="r-power">0.0 W</span></div>
+    <div class="reading"><span class="reading-label">Capacity</span><span class="reading-value" id="r-capacity">0.00 Ah</span></div>
+    <div class="reading"><span class="reading-label">Energy</span><span class="reading-value" id="r-energy">0.0 Wh</span></div>
+    <div class="reading"><span class="reading-label">Time</span><span class="reading-value" id="r-time">0:00</span></div>
+  </div>
+  <div class="chart-area"><canvas class="chart-canvas" id="chart"></canvas></div>
+</div>
+
+<!-- ═══ Page 2: Test Control ═══ -->
+<div class="page" id="page-test">
+  <div class="page-header"><span class="page-title">Test Control</span></div>
+  <div class="live-mini" id="mini-bar-test" onclick="showPage('dash')">
+    <div class="live-mini-dot" id="mini-dot-test" style="background:var(--green)"></div>
+    <span class="live-mini-reading" id="mini-v-test">3.285V</span>
+    <span class="live-mini-reading" id="mini-i-test">0.00A</span>
+    <span class="live-mini-reading" id="mini-ah-test">0.00Ah</span>
+    <span style="margin-left:auto;font-size:12px;color:var(--text2)">tap for live →</span>
+  </div>
+  <div class="controls">
+    <div class="preset-bar">
+      <div class="preset-chip active">D-CC 40A → 2.5V</div>
+      <div class="preset-chip">D-CC 20A → 2.8V</div>
+      <div class="preset-chip">C-CV 40A → 3.65V</div>
+      <div class="preset-chip">C-CV 20A → 3.65V</div>
+    </div>
+    <div class="mode-selector">
+      <button class="mode-btn active" onclick="setMode('d-cc',this)">D-CC</button>
+      <button class="mode-btn" onclick="setMode('d-cp',this)">D-CP</button>
+      <button class="mode-btn" onclick="setMode('c-cv',this)">C-CV</button>
+    </div>
+    <div class="param-row"><span class="param-label">Current</span><input class="param-input" type="number" step="0.01" value="40.00" id="p-current"><span class="param-unit">A</span></div>
+    <div class="param-row"><span class="param-label">Cutoff V</span><input class="param-input" type="number" step="0.01" value="2.50" id="p-cutoff"><span class="param-unit">V</span></div>
+    <div class="param-row"><span class="param-label">Max time</span><input class="param-input" type="number" step="1" value="600" id="p-time"><span class="param-unit">min</span></div>
+    <button class="action-btn start" id="btn-start" onclick="doStart()">Start Discharge</button>
+  </div>
+</div>
+
+<!-- ═══ Page 3: Cells ═══ -->
+<div class="page" id="page-cells">
+  <div class="page-header"><span class="page-title">Cells</span></div>
+  <div class="live-mini" id="mini-bar-cells" onclick="showPage('dash')">
+    <div class="live-mini-dot" id="mini-dot-cells" style="background:var(--green)"></div>
+    <span class="live-mini-reading" id="mini-v-cells">3.285V</span>
+    <span class="live-mini-reading" id="mini-i-cells">0.00A</span>
+    <span style="margin-left:auto;font-size:12px;color:var(--text2)">tap for live →</span>
+  </div>
+  <div class="scan-bar">
+    <input placeholder="Barcode...">
+    <button>Scan</button>
+  </div>
+  <div style="padding:16px" id="cell-cards"></div>
+</div>
+
+<!-- ═══ Page 4: Compare ═══ -->
+<div class="page" id="page-compare">
+  <div class="page-header"><span class="page-title">Compare Curves</span></div>
+  <div class="compare-chart-area">Select runs below to compare</div>
+  <div id="compare-list"></div>
+</div>
+
+<!-- Tab bar -->
+<div class="tab-bar">
+  <div class="tab active" onclick="showPage('dash')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    Live
+  </div>
+  <div class="tab" onclick="showPage('test')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+    Control
+  </div>
+  <div class="tab" onclick="showPage('cells')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="6" width="22" height="12" rx="2"/><line x1="23" y1="10" x2="23" y2="14"/></svg>
+    Cells
+  </div>
+  <div class="tab" onclick="showPage('compare')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    Compare
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+const device = createFakeDevice();
+let chartData = [];
+let currentMode = 'd-cc';
+
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-'+name).classList.add('active');
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    t.classList.toggle('active', ['dash','test','cells','compare'][i] === name);
+  });
+  if (name === 'dash') setTimeout(drawChart, 50);
+}
+
+function setMode(mode, btn) {
+  currentMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('btn-start').textContent = mode === 'c-cv' ? 'Start Charge' : 'Start Discharge';
+}
+
+function doStart() {
+  const r = device.getReading();
+  if (r.state !== 'idle' && r.state !== 'complete') { device.stopTest(); return; }
+  device.startTest(currentMode, {
+    current: parseFloat(document.getElementById('p-current').value),
+    cutoffV: parseFloat(document.getElementById('p-cutoff').value),
+    targetV: parseFloat(document.getElementById('p-cutoff').value),
+    cutoffCurrent: 2.0,
+  });
+}
+
+// Populate
+const cells = device.getCells();
+document.getElementById('cell-cards').innerHTML = cells.map(c => `
+  <div class="cell-card" onclick="device.scanCell('${c.barcode}')">
+    <div class="cell-card-top"><span class="cell-card-name">${c.label||c.barcode.slice(-8)}</span><span class="cell-card-cap">${c.avgCapacity?(c.avgCapacity/1000).toFixed(1)+' Ah':'—'}</span></div>
+    <div class="cell-card-meta">${c.barcode} · ${c.runs} runs</div>
+    ${c.avgCapacity?`<div class="cell-card-bar"><div class="cell-card-bar-fill" style="width:${(c.avgCapacity/205000*100).toFixed(0)}%"></div></div>`:''}
+  </div>`).join('');
+
+const runs = device.getRuns();
+document.getElementById('compare-list').innerHTML = runs.map(r => `
+  <label class="run-check"><input type="checkbox"><div class="run-check-info"><div class="run-check-name"><span class="run-mode ${r.mode==='d-cc'?'dcc':'ccv'}">${r.mode.toUpperCase()}</span>${r.label}</div><div class="run-check-meta">${r.date} · ${r.duration}</div></div><span class="run-check-cap">${(r.capacity/1000).toFixed(1)} Ah</span></label>`).join('');
+
+// Chart
+const canvas = document.getElementById('chart');
+const ctx = canvas.getContext('2d');
+function drawChart() {
+  const w=canvas.parentElement.clientWidth,h=canvas.parentElement.clientHeight;
+  canvas.width=w*devicePixelRatio;canvas.height=h*devicePixelRatio;canvas.style.width=w+'px';canvas.style.height=h+'px';
+  ctx.scale(devicePixelRatio,devicePixelRatio);ctx.fillStyle='#1a1a1a';ctx.fillRect(0,0,w,h);
+  if(chartData.length<2){ctx.fillStyle='#555';ctx.font='13px sans-serif';ctx.textAlign='center';ctx.fillText('Start a test to see data',w/2,h/2);return;}
+  const pad={t:20,r:50,b:25,l:50},cw=w-pad.l-pad.r,ch=h-pad.t-pad.b;
+  const vs=chartData.map(d=>d.v),is=chartData.map(d=>d.i);
+  const vMin=Math.min(...vs)-0.05,vMax=Math.max(...vs)+0.05,iMax=Math.max(...is,1)+1;
+  ctx.strokeStyle='#3b82f6';ctx.lineWidth=2;ctx.beginPath();chartData.forEach((d,i)=>{const x=pad.l+(i/(chartData.length-1))*cw,y=pad.t+(1-(d.v-vMin)/(vMax-vMin))*ch;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});ctx.stroke();
+  ctx.strokeStyle='#f59e0b';ctx.lineWidth=2;ctx.beginPath();chartData.forEach((d,i)=>{const x=pad.l+(i/(chartData.length-1))*cw,y=pad.t+(1-d.i/iMax)*ch;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});ctx.stroke();
+}
+
+// Update
+device.on((type, data) => {
+  if (type === 'reading') {
+    document.getElementById('r-voltage').textContent = fmtV(data.voltage);
+    document.getElementById('r-current').textContent = fmtA(data.current);
+    document.getElementById('r-power').textContent = fmtW(data.power);
+    document.getElementById('r-capacity').textContent = fmtAh(data.capacity);
+    document.getElementById('r-energy').textContent = fmtWh(data.energy);
+    document.getElementById('r-time').textContent = fmtTime(data.elapsed);
+    const badge=document.getElementById('state-badge');
+    badge.textContent=stateLabel(data.state);badge.style.background=stateColor(data.state)+'22';badge.style.color=stateColor(data.state);
+    const pending=device.isPending();
+    ['r-voltage','r-current','r-power'].forEach(id=>document.getElementById(id).classList.toggle('pending',pending));
+    if(data.state!=='idle'&&data.state!=='complete'){chartData.push({v:data.voltage,i:Math.abs(data.current)});if(chartData.length>300)chartData.shift();}
+    drawChart();
+    const btn=document.getElementById('btn-start');
+    if(data.state!=='idle'&&data.state!=='complete'){btn.textContent='Stop';btn.className='action-btn stop';btn.onclick=()=>device.stopTest();}
+    else{btn.textContent=currentMode==='c-cv'?'Start Charge':'Start Discharge';btn.className='action-btn start';btn.onclick=doStart;}
+    // Mini bars
+    ['test','cells'].forEach(p => {
+      const el = id => document.getElementById(id);
+      if(el('mini-v-'+p)) el('mini-v-'+p).textContent = data.voltage.toFixed(3)+'V';
+      if(el('mini-i-'+p)) el('mini-i-'+p).textContent = Math.abs(data.current).toFixed(2)+'A';
+      if(el('mini-ah-'+p)) el('mini-ah-'+p).textContent = (data.capacity/1000).toFixed(2)+'Ah';
+      if(el('mini-dot-'+p)) el('mini-dot-'+p).style.background = stateColor(data.state);
+    });
+  }
+  if(type==='cellScanned') document.getElementById('cell-display').textContent=data.label||data.barcode;
+  if(type==='stateChange'&&data==='complete') chartData=[];
+});
+window.addEventListener('resize',drawChart);
+</script>
+</body>
+</html>

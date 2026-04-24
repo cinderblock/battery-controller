@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Mockup 3 — Two Pages (Live + Data)</title>
+<style>
+  :root {
+    --bg: #0f0f0f; --surface: #1a1a1a; --surface2: #252525;
+    --text: #e5e5e5; --text2: #999; --accent: #3b82f6;
+    --orange: #f59e0b; --green: #22c55e; --red: #ef4444;
+    --radius: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    -webkit-tap-highlight-color: transparent;
+    padding-bottom: 60px;
+  }
+
+  .layout-tag {
+    position: fixed; top: 0; right: 0; padding: 4px 10px;
+    background: var(--green); color: #000; font-size: 11px;
+    font-weight: 600; z-index: 200; border-radius: 0 0 0 8px;
+  }
+
+  /* ── Bottom tab bar ── */
+  .tab-bar {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    display: flex; background: var(--surface);
+    border-top: 1px solid #333; z-index: 50;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  .tab {
+    flex: 1; padding: 8px 0 6px; text-align: center;
+    color: var(--text2); font-size: 11px; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  .tab.active { color: var(--accent); }
+  .tab svg { width: 22px; height: 22px; }
+  .tab .tab-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    display: none;
+  }
+  .tab.has-activity .tab-dot { display: block; background: var(--orange); }
+
+  /* ── Pages ── */
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* ── Page 1: Live ── */
+  .status-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 16px; background: var(--surface);
+    border-bottom: 1px solid #333; font-size: 13px;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+
+  .readings {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 1px; background: #333; margin: 1px 0;
+  }
+  .reading {
+    background: var(--surface); padding: 12px 16px;
+    display: flex; flex-direction: column;
+  }
+  .reading-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; }
+  .reading-value { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .reading.primary .reading-value { font-size: 36px; }
+  .reading-value.pending { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+  .chart-area { background: var(--surface); margin: 1px 0; height: 200px; }
+  .chart-canvas { width: 100%; height: 100%; }
+
+  .controls { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .mode-selector { display: flex; border-radius: var(--radius); overflow: hidden; border: 1px solid #444; }
+  .mode-btn { flex:1;padding:12px;text-align:center;background:var(--surface);color:var(--text2);border:none;font-size:14px;font-weight:500;cursor:pointer; }
+  .mode-btn.active { background: var(--accent); color: white; }
+  .param-row { display: flex; gap: 8px; align-items: center; }
+  .param-input { flex:1;background:var(--surface2);border:1px solid #444;border-radius:8px;padding:10px 12px;color:var(--text);font-size:16px;text-align:right; }
+  .param-label { font-size: 13px; color: var(--text2); min-width: 70px; }
+  .param-unit { font-size: 13px; color: var(--text2); min-width: 24px; }
+  .action-btn { width:100%;padding:16px;border-radius:var(--radius);border:none;font-size:16px;font-weight:600;cursor:pointer;min-height:52px; }
+  .action-btn.start { background: var(--green); color: #000; }
+  .action-btn.stop { background: var(--red); color: white; }
+  .action-btn.secondary { background: var(--surface2); color: var(--text); border: 1px solid #444; }
+
+  .cell-selector {
+    display: flex; gap: 8px; align-items: center;
+    padding: 10px 16px; background: var(--surface);
+    border-bottom: 1px solid #333; cursor: pointer;
+  }
+  .cell-selector-label { font-size: 13px; color: var(--text2); }
+  .cell-selector-value { font-size: 14px; color: var(--accent); }
+
+  .preset-bar { display: flex; gap: 6px; overflow-x: auto; }
+  .preset-chip { white-space:nowrap;padding:6px 12px;border-radius:16px;background:var(--surface2);border:1px solid #444;color:var(--text2);font-size:12px;cursor:pointer; }
+  .preset-chip.active { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Cycle strip (on live page) ── */
+  .cycle-strip {
+    margin: 0 16px; padding: 12px; background: var(--surface2);
+    border-radius: 8px; border: 1px solid #444;
+    display: flex; align-items: center; gap: 12px;
+    cursor: pointer;
+  }
+  .cycle-strip-icon { font-size: 20px; }
+  .cycle-strip-text { flex: 1; }
+  .cycle-strip-title { font-size: 14px; font-weight: 500; }
+  .cycle-strip-sub { font-size: 12px; color: var(--text2); }
+
+  /* ── Page 2: Data ── */
+  .data-header {
+    padding: 16px; border-bottom: 1px solid #333;
+  }
+  .data-header h2 { font-size: 20px; margin-bottom: 4px; }
+
+  .sub-tabs {
+    display: flex; border-bottom: 1px solid #333;
+    background: var(--surface);
+  }
+  .sub-tab {
+    flex: 1; padding: 12px; text-align: center;
+    color: var(--text2); font-size: 14px; cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  .sub-tab.active { color: var(--accent); border-color: var(--accent); }
+
+  .data-content { padding: 16px; }
+
+  .cell-card {
+    background: var(--surface); border-radius: var(--radius);
+    padding: 14px; margin-bottom: 8px; cursor: pointer;
+    border: 1px solid #333;
+  }
+  .cell-card-top { display: flex; justify-content: space-between; align-items: center; }
+  .cell-card-name { font-weight: 600; }
+  .cell-card-cap { color: var(--accent); font-variant-numeric: tabular-nums; }
+  .cell-card-meta { font-size: 12px; color: var(--text2); margin-top: 4px; }
+  .cell-card-bar { height: 4px; border-radius: 2px; background: #333; margin-top: 8px; overflow: hidden; }
+  .cell-card-bar-fill { height: 100%; border-radius: 2px; background: var(--accent); }
+
+  .run-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 0; border-bottom: 1px solid #333;
+  }
+  .run-mode { display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:500;margin-right:6px; }
+  .run-mode.dcc { background: #f59e0b22; color: var(--orange); }
+  .run-mode.ccv { background: #3b82f622; color: var(--accent); }
+
+  .compare-placeholder {
+    height: 250px; background: var(--surface); border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text2); margin-top: 12px;
+  }
+
+  .fleet-summary {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px;
+    background: #333; border-radius: var(--radius); overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .fleet-stat {
+    background: var(--surface); padding: 12px; text-align: center;
+  }
+  .fleet-stat-val { font-size: 22px; font-weight: 600; }
+  .fleet-stat-label { font-size: 11px; color: var(--text2); margin-top: 2px; }
+</style>
+</head>
+<body>
+<div class="layout-tag">3: Two Pages</div>
+
+<!-- ═══ Page 1: Live ═══ -->
+<div class="page active" id="page-live">
+  <div class="status-bar">
+    <div class="status-dot"></div>
+    <span>EBC-A40L</span>
+    <span id="state-badge" style="padding:2px 8px;border-radius:4px;font-size:12px;font-weight:500">Idle</span>
+  </div>
+
+  <div class="cell-selector" onclick="alert('Cell selector sheet would open')">
+    <span class="cell-selector-label">Cell:</span>
+    <span class="cell-selector-value" id="cell-display">Tap to scan or select</span>
+    <span style="color:var(--text2)">›</span>
+  </div>
+
+  <div class="readings">
+    <div class="reading primary"><span class="reading-label">Voltage</span><span class="reading-value" id="r-voltage">3.285 V</span></div>
+    <div class="reading primary"><span class="reading-label">Current</span><span class="reading-value" id="r-current">0.00 A</span></div>
+    <div class="reading"><span class="reading-label">Power</span><span class="reading-value" id="r-power">0.0 W</span></div>
+    <div class="reading"><span class="reading-label">Capacity</span><span class="reading-value" id="r-capacity">0.00 Ah</span></div>
+    <div class="reading"><span class="reading-label">Energy</span><span class="reading-value" id="r-energy">0.0 Wh</span></div>
+    <div class="reading"><span class="reading-label">Time</span><span class="reading-value" id="r-time">0:00</span></div>
+  </div>
+
+  <div class="chart-area"><canvas class="chart-canvas" id="chart"></canvas></div>
+
+  <div class="controls">
+    <div class="preset-bar">
+      <div class="preset-chip active">D-CC 40A→2.5V</div>
+      <div class="preset-chip">D-CC 20A→2.8V</div>
+      <div class="preset-chip">C-CV 40A→3.65V</div>
+    </div>
+    <div class="mode-selector">
+      <button class="mode-btn active" onclick="setMode('d-cc',this)">D-CC</button>
+      <button class="mode-btn" onclick="setMode('d-cp',this)">D-CP</button>
+      <button class="mode-btn" onclick="setMode('c-cv',this)">C-CV</button>
+    </div>
+    <div class="param-row"><span class="param-label">Current</span><input class="param-input" type="number" step="0.01" value="40.00" id="p-current"><span class="param-unit">A</span></div>
+    <div class="param-row"><span class="param-label">Cutoff V</span><input class="param-input" type="number" step="0.01" value="2.50" id="p-cutoff"><span class="param-unit">V</span></div>
+    <div class="param-row"><span class="param-label">Max time</span><input class="param-input" type="number" step="1" value="600" id="p-time"><span class="param-unit">min</span></div>
+    <button class="action-btn start" id="btn-start" onclick="doStart()">Start Discharge</button>
+
+    <div class="cycle-strip" onclick="alert('Cycle setup would open')">
+      <span class="cycle-strip-icon">🔄</span>
+      <div class="cycle-strip-text">
+        <div class="cycle-strip-title">Cycle Test</div>
+        <div class="cycle-strip-sub">Set up automated charge/discharge cycles</div>
+      </div>
+      <span style="color:var(--text2)">›</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Page 2: Data ═══ -->
+<div class="page" id="page-data">
+  <div class="data-header">
+    <h2>Battery Data</h2>
+    <p style="font-size:13px;color:var(--text2)">Cell inventory, test history, and comparisons</p>
+  </div>
+
+  <div class="sub-tabs">
+    <div class="sub-tab active" onclick="showSubTab('cells',this)">Cells</div>
+    <div class="sub-tab" onclick="showSubTab('history',this)">History</div>
+    <div class="sub-tab" onclick="showSubTab('compare',this)">Compare</div>
+  </div>
+
+  <!-- Cells sub-tab -->
+  <div class="data-content sub-content active" id="sub-cells">
+    <div class="fleet-summary">
+      <div class="fleet-stat"><div class="fleet-stat-val">6</div><div class="fleet-stat-label">Cells Tested</div></div>
+      <div class="fleet-stat"><div class="fleet-stat-val">196.8</div><div class="fleet-stat-label">Avg Ah</div></div>
+      <div class="fleet-stat"><div class="fleet-stat-val">12</div><div class="fleet-stat-label">Total Runs</div></div>
+    </div>
+    <div id="cell-cards"></div>
+  </div>
+
+  <!-- History sub-tab -->
+  <div class="data-content sub-content" id="sub-history" style="display:none">
+    <div id="history-list"></div>
+  </div>
+
+  <!-- Compare sub-tab -->
+  <div class="data-content sub-content" id="sub-compare" style="display:none">
+    <p style="color:var(--text2);font-size:13px;margin-bottom:12px">Select runs to overlay on a single chart:</p>
+    <div id="compare-list"></div>
+    <div class="compare-placeholder">Comparison chart</div>
+  </div>
+</div>
+
+<!-- Tab bar -->
+<div class="tab-bar">
+  <div class="tab active" onclick="showPage('live',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    Live
+    <div class="tab-dot"></div>
+  </div>
+  <div class="tab" onclick="showPage('data',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+    Data
+    <div class="tab-dot"></div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+const device = createFakeDevice();
+let chartData = [];
+let currentMode = 'd-cc';
+
+function showPage(name, tab) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-'+name).classList.add('active');
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  tab.classList.add('active');
+  if (name === 'live') setTimeout(drawChart, 50);
+}
+
+function showSubTab(name, tab) {
+  document.querySelectorAll('.sub-content').forEach(c => c.style.display='none');
+  document.getElementById('sub-'+name).style.display='block';
+  document.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
+  tab.classList.add('active');
+}
+
+function setMode(mode, btn) {
+  currentMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('btn-start').textContent = mode === 'c-cv' ? 'Start Charge' : 'Start Discharge';
+}
+
+function doStart() {
+  const r = device.getReading();
+  if (r.state !== 'idle' && r.state !== 'complete') { device.stopTest(); return; }
+  device.startTest(currentMode, {
+    current: parseFloat(document.getElementById('p-current').value),
+    cutoffV: parseFloat(document.getElementById('p-cutoff').value),
+    targetV: parseFloat(document.getElementById('p-cutoff').value),
+    cutoffCurrent: 2.0,
+  });
+}
+
+// Populate data page
+const cells = device.getCells();
+document.getElementById('cell-cards').innerHTML = cells.map(c => `
+  <div class="cell-card">
+    <div class="cell-card-top">
+      <span class="cell-card-name">${c.label || c.barcode.slice(-8)}</span>
+      <span class="cell-card-cap">${c.avgCapacity ? (c.avgCapacity/1000).toFixed(1)+' Ah' : '—'}</span>
+    </div>
+    <div class="cell-card-meta">${c.barcode} · ${c.runs} runs · Last: ${c.lastTest || 'never'}</div>
+    ${c.avgCapacity ? `<div class="cell-card-bar"><div class="cell-card-bar-fill" style="width:${(c.avgCapacity/205000*100).toFixed(0)}%"></div></div>` : ''}
+  </div>`).join('');
+
+const runs = device.getRuns();
+document.getElementById('history-list').innerHTML = runs.map(r => `
+  <div class="run-item"><div><span class="run-mode ${r.mode==='d-cc'?'dcc':'ccv'}">${r.mode.toUpperCase()}</span>${r.label}<div style="font-size:12px;color:var(--text2)">${r.date} · ${r.duration}</div></div><span class="cell-capacity">${(r.capacity/1000).toFixed(1)} Ah</span></div>`).join('');
+
+document.getElementById('compare-list').innerHTML = runs.map(r => `
+  <label class="run-item" style="cursor:pointer"><div style="display:flex;align-items:center;gap:8px"><input type="checkbox" style="width:18px;height:18px"><div><span class="run-mode ${r.mode==='d-cc'?'dcc':'ccv'}">${r.mode.toUpperCase()}</span>${r.label}<div style="font-size:12px;color:var(--text2)">${r.date}</div></div></div><span class="cell-capacity">${(r.capacity/1000).toFixed(1)} Ah</span></label>`).join('');
+
+// Chart
+const canvas = document.getElementById('chart');
+const ctx = canvas.getContext('2d');
+function drawChart() {
+  const w=canvas.parentElement.clientWidth,h=canvas.parentElement.clientHeight;
+  canvas.width=w*devicePixelRatio;canvas.height=h*devicePixelRatio;canvas.style.width=w+'px';canvas.style.height=h+'px';
+  ctx.scale(devicePixelRatio,devicePixelRatio);ctx.fillStyle='#1a1a1a';ctx.fillRect(0,0,w,h);
+  if(chartData.length<2){ctx.fillStyle='#555';ctx.font='13px sans-serif';ctx.textAlign='center';ctx.fillText('Start a test to see data',w/2,h/2);return;}
+  const pad={t:20,r:50,b:25,l:50},cw=w-pad.l-pad.r,ch=h-pad.t-pad.b;
+  const vs=chartData.map(d=>d.v),is=chartData.map(d=>d.i);
+  const vMin=Math.min(...vs)-0.05,vMax=Math.max(...vs)+0.05,iMax=Math.max(...is,1)+1;
+  ctx.strokeStyle='#3b82f6';ctx.lineWidth=2;ctx.beginPath();chartData.forEach((d,i)=>{const x=pad.l+(i/(chartData.length-1))*cw,y=pad.t+(1-(d.v-vMin)/(vMax-vMin))*ch;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});ctx.stroke();
+  ctx.strokeStyle='#f59e0b';ctx.lineWidth=2;ctx.beginPath();chartData.forEach((d,i)=>{const x=pad.l+(i/(chartData.length-1))*cw,y=pad.t+(1-d.i/iMax)*ch;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});ctx.stroke();
+}
+
+device.on((type, data) => {
+  if (type === 'reading') {
+    document.getElementById('r-voltage').textContent = fmtV(data.voltage);
+    document.getElementById('r-current').textContent = fmtA(data.current);
+    document.getElementById('r-power').textContent = fmtW(data.power);
+    document.getElementById('r-capacity').textContent = fmtAh(data.capacity);
+    document.getElementById('r-energy').textContent = fmtWh(data.energy);
+    document.getElementById('r-time').textContent = fmtTime(data.elapsed);
+    const badge = document.getElementById('state-badge');
+    badge.textContent = stateLabel(data.state);badge.style.background=stateColor(data.state)+'22';badge.style.color=stateColor(data.state);
+    const pending = device.isPending();
+    ['r-voltage','r-current','r-power'].forEach(id=>document.getElementById(id).classList.toggle('pending',pending));
+    if(data.state!=='idle'&&data.state!=='complete'){chartData.push({v:data.voltage,i:Math.abs(data.current)});if(chartData.length>300)chartData.shift();}
+    drawChart();
+    const btn=document.getElementById('btn-start');
+    if(data.state!=='idle'&&data.state!=='complete'){btn.textContent='Stop';btn.className='action-btn stop';btn.onclick=()=>device.stopTest();}
+    else{btn.textContent=currentMode==='c-cv'?'Start Charge':'Start Discharge';btn.className='action-btn start';btn.onclick=doStart;}
+  }
+  if(type==='cellScanned') document.getElementById('cell-display').textContent=data.label||data.barcode;
+  if(type==='stateChange'&&data==='complete') chartData=[];
+});
+window.addEventListener('resize',drawChart);
+</script>
+</body>
+</html>
