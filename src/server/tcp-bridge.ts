@@ -5,14 +5,17 @@
  * No frame parsing, no buffering — raw bytes forwarded bidirectionally
  * with timing fidelity preserved.
  *
- * Runs on the Raspberry Pi as an alternative to the WebSocket server.
+ * Can run either as:
+ * - Standalone mode: `--bridge` CLI flag, owns the process lifecycle
+ * - Dynamic mode: started/stopped from the web UI while the main server runs
+ *
  * The Windows proxy connects here to relay traffic from the virtual COM port.
  */
 
 import { spawn } from 'node:child_process';
 import type { FileHandle } from 'node:fs/promises';
 import { open } from 'node:fs/promises';
-import type { Socket } from 'bun';
+import type { Socket, TCPSocketListener } from 'bun';
 import { BaudRate } from '../protocol/constants.ts';
 import { BridgeTcpPort } from '../run/config.ts';
 import { logger } from '../utils/logger.ts';
@@ -59,14 +62,23 @@ async function configureSerialPort(portPath: string): Promise<void> {
   });
 }
 
+// ── Stoppable bridge instance ────────────────────────────────────
+
+export interface TcpBridge {
+  /** Stop the bridge, close serial port and TCP listener */
+  stop(): Promise<void>;
+  /** Whether a TCP client is currently connected */
+  hasClient(): boolean;
+}
+
 /**
- * Start the TCP-serial bridge.
+ * Start the TCP-serial bridge and return a handle to stop it.
  *
  * - Opens the serial port as a raw file
- * - Listens for a single TCP client
+ * - Listens for a single TCP client on the bridge port
  * - Forwards bytes bidirectionally with no parsing or buffering
  */
-export async function startTcpBridge(): Promise<void> {
+export async function startTcpBridge(): Promise<TcpBridge> {
   logger.info(`[bridge] Starting TCP-serial bridge`);
   logger.info(`[bridge] Serial port: ${SERIAL_PORT}`);
   logger.info(`[bridge] TCP port: ${TCP_PORT}`);
@@ -80,13 +92,14 @@ export async function startTcpBridge(): Promise<void> {
 
   // Track active client
   let activeClient: Socket<unknown> | null = null;
+  let stopped = false;
 
   // Start reading from serial port and forwarding to TCP
   const serialReadBuffer = new Uint8Array(1024);
 
   async function serialReadLoop() {
     try {
-      while (true) {
+      while (!stopped) {
         const { bytesRead } = await serialHandle.read(serialReadBuffer, 0, serialReadBuffer.length);
         if (bytesRead === 0) continue;
 
@@ -97,8 +110,8 @@ export async function startTcpBridge(): Promise<void> {
         }
       }
     } catch (error) {
+      if (stopped) return; // Expected when serial handle is closed during stop
       logger.error('[bridge] Serial read error:', error);
-      // If serial dies, close the TCP client
       if (activeClient) {
         activeClient.end();
         activeClient = null;
@@ -110,7 +123,7 @@ export async function startTcpBridge(): Promise<void> {
   serialReadLoop();
 
   // Start TCP server
-  Bun.listen({
+  const tcpServer: TCPSocketListener<unknown> = Bun.listen({
     hostname: '0.0.0.0',
     port: TCP_PORT,
     socket: {
@@ -127,7 +140,7 @@ export async function startTcpBridge(): Promise<void> {
       data(_socket, data) {
         // Forward TCP data -> serial port (immediate, no buffering)
         serialHandle.write(new Uint8Array(data)).catch(err => {
-          logger.error('[bridge] Serial write error:', err);
+          if (!stopped) logger.error('[bridge] Serial write error:', err);
         });
       },
 
@@ -150,22 +163,41 @@ export async function startTcpBridge(): Promise<void> {
   logger.info(`[bridge] Listening on TCP port ${TCP_PORT}`);
   logger.info('[bridge] Bridge ready — waiting for connections');
 
-  // Graceful shutdown
+  return {
+    async stop() {
+      if (stopped) return;
+      stopped = true;
+      logger.info('[bridge] Stopping bridge...');
+      if (activeClient) {
+        activeClient.end();
+        activeClient = null;
+      }
+      tcpServer.stop(true);
+      await serialHandle.close();
+      logger.info('[bridge] Bridge stopped');
+    },
+    hasClient() {
+      return activeClient !== null;
+    },
+  };
+}
+
+/**
+ * Start the bridge in standalone mode (owns the process lifecycle).
+ * Used when the server is started with `--bridge`.
+ */
+export async function startTcpBridgeStandalone(): Promise<void> {
+  const bridge = await startTcpBridge();
+
   process.on('SIGINT', async () => {
     logger.info('\n[bridge] Shutting down...');
-    if (activeClient) {
-      activeClient.end();
-    }
-    await serialHandle.close();
+    await bridge.stop();
     process.exit(0);
   });
 
   process.on('SIGTERM', async () => {
     logger.info('[bridge] SIGTERM received, shutting down...');
-    if (activeClient) {
-      activeClient.end();
-    }
-    await serialHandle.close();
+    await bridge.stop();
     process.exit(0);
   });
 }

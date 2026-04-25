@@ -118,9 +118,55 @@ html, body {
   background: #e65100;
 }
 
+.disconnect-bridge {
+  background: #1565c0;
+}
+
 @keyframes banner-slide-in {
   from { transform: translateY(-100%); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
+}
+
+/* ── Bridge toggle button ──────────────────────────────────────── */
+
+.bridge-toggle {
+  background: var(--surface);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  transition: all 0.2s;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.bridge-toggle:hover:not(:disabled) {
+  background: var(--border);
+  color: var(--text);
+}
+
+.bridge-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.bridge-toggle.bridge-active {
+  background: #1565c0;
+  color: #fff;
+  border-color: #1565c0;
+}
+
+.bridge-toggle.bridge-active:hover:not(:disabled) {
+  background: #1976d2;
+}
+
+.badge-bridge {
+  background: #1565c0 !important;
+  color: #fff !important;
 }
 
 /* ── Chart area ─────────────────────────────────────────────────── */

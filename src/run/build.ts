@@ -20,7 +20,7 @@ import { shutdown } from '../utils/shutdown.ts';
 
 export interface BuildOutput {
   filename: string;
-  content: string;
+  content: string | Uint8Array;
 }
 
 export interface BuildOptions {
@@ -56,8 +56,8 @@ export async function buildSetup(): Promise<string> {
   const setupResult = await Bun.build({
     entrypoints: ['./src/run/setup.ts'],
     target: 'bun',
-    minify: false,
-    sourcemap: 'inline',
+    minify: true,
+    sourcemap: 'none',
     external: externals,
   });
 
@@ -89,8 +89,8 @@ export async function buildServer(): Promise<BuildOutput[]> {
     serverResult = await Bun.build({
       entrypoints: ['./src/server/index.ts'],
       target: 'bun',
-      minify: false,
-      sourcemap: 'inline',
+      minify: true,
+      sourcemap: 'none',
       external: externals,
       naming: {
         entry: '[name].[ext]',
@@ -151,6 +151,20 @@ export async function buildServer(): Promise<BuildOutput[]> {
     const filename = basename(output.path);
     serverOutputs.push({ filename, content });
     logger.info(`  ✅ ${filename}`);
+  }
+
+  // Include zbar.wasm static assets (barcode scanner)
+  // Read from node_modules at build time so they deploy alongside the bundle
+  // without needing npm install on the Pi.
+  const zbarJsFile = Bun.file('./node_modules/zbar.wasm/dist/zbar.js');
+  const zbarWasmFile = Bun.file('./node_modules/zbar.wasm/dist/zbar.wasm.bin');
+
+  if (await zbarJsFile.exists() && await zbarWasmFile.exists()) {
+    serverOutputs.push({ filename: 'zbar.js', content: await zbarJsFile.text() });
+    serverOutputs.push({ filename: 'zbar.wasm.bin', content: new Uint8Array(await zbarWasmFile.arrayBuffer()) });
+    logger.info('  ✅ zbar.js + zbar.wasm.bin (static assets)');
+  } else {
+    logger.warn('⚠️  zbar.wasm not found in node_modules — barcode scanning will be unavailable');
   }
 
   logger.info(`✅ Server bundle built (${serverOutputs.length} file${serverOutputs.length !== 1 ? 's' : ''})`);

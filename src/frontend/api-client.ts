@@ -49,6 +49,7 @@ export interface WsSnapshot {
     activeRunId: number | null;
     serialConnected: boolean;
     locked: boolean;
+    bridgeActive?: boolean;
   };
 }
 
@@ -102,6 +103,11 @@ export interface WsLockState {
   data: { locked: boolean };
 }
 
+export interface WsBridgeState {
+  type: 'bridgeState';
+  data: { active: boolean };
+}
+
 export type WsMessage =
   | WsSnapshot
   | WsReading
@@ -112,7 +118,8 @@ export type WsMessage =
   | WsCommandPending
   | WsCommandConfirmed
   | WsCommandTimeout
-  | WsLockState;
+  | WsLockState
+  | WsBridgeState;
 
 // ── REST entity types ──────────────────────────────────────────────
 

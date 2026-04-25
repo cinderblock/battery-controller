@@ -2,12 +2,13 @@
  * StartModal — modal dialog to configure and start a new test.
  *
  * Inputs: cell barcode (camera scanner + manual entry), mode selector
- * (D-CC / D-CP / C-CV), parameters with validation, Amps / C-rate toggle.
+ * (D-CC / D-CP / C-CV / Sequence), parameters with validation, Amps / C-rate toggle.
+ * Sequence mode loads saved sequences and starts a cycle program.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useSession, type StartTestParams } from '../hooks/useDeviceSession.ts';
-import type { CellGroup } from '../api-client.ts';
+import { api, apiPost, type CellGroup } from '../api-client.ts';
 import { BarcodeScanner } from './BarcodeScanner.tsx';
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -19,11 +20,17 @@ interface StartModalProps {
   selectedGroupId: number | null;
 }
 
-type TestMode = 'd-cc' | 'd-cp' | 'c-cv';
+type TestMode = 'd-cc' | 'd-cp' | 'c-cv' | 'sequence';
+
+interface SavedSequence {
+  id: number;
+  name: string;
+  steps_json: string;
+}
 
 // ── Defaults per mode ──────────────────────────────────────────────
 
-const DEFAULTS: Record<TestMode, { currentA: number; voltageV: number; powerW: number; cutoffV: number; cutoffCurrentA: number; maxTimeMin: number }> = {
+const DEFAULTS = {
   'd-cc': { currentA: 40.0, voltageV: 0, powerW: 0, cutoffV: 2.50, cutoffCurrentA: 0, maxTimeMin: 600 },
   'd-cp': { currentA: 0, voltageV: 0, powerW: 100, cutoffV: 2.50, cutoffCurrentA: 0, maxTimeMin: 600 },
   'c-cv': { currentA: 40.0, voltageV: 3.65, powerW: 0, cutoffV: 0, cutoffCurrentA: 2.0, maxTimeMin: 600 },
@@ -46,18 +53,42 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Sequence mode state
+  const [sequences, setSequences] = useState<SavedSequence[]>([]);
+  const [selectedSequenceId, setSelectedSequenceId] = useState<number | null>(null);
+  const [sequencesLoaded, setSequencesLoaded] = useState(false);
+
   // Get capacity from selected cell group for C-rate conversion
   const selectedGroup = cellGroups.find(g => g.id === selectedGroupId) ?? cellGroups[0];
   const capacityAh = selectedGroup ? selectedGroup.nominal_capacity_mah / 1000 : 200;
 
+  // Load saved sequences when modal opens
+  useEffect(() => {
+    if (!open || sequencesLoaded) return;
+    api<SavedSequence[]>('/api/sequences')
+      .then(seqs => {
+        setSequences(seqs);
+        if (seqs.length > 0 && !selectedSequenceId) setSelectedSequenceId(seqs[0].id);
+      })
+      .catch(() => {})
+      .finally(() => setSequencesLoaded(true));
+  }, [open, sequencesLoaded, selectedSequenceId]);
+
+  // Reset loaded flag when modal closes so it refreshes next open
+  useEffect(() => {
+    if (!open) setSequencesLoaded(false);
+  }, [open]);
+
   const handleModeChange = useCallback((newMode: TestMode) => {
     setMode(newMode);
-    const d = DEFAULTS[newMode];
-    setCurrentA(d.currentA);
-    setVoltageV(d.voltageV);
-    setPowerW(d.powerW);
-    setCutoffV(d.cutoffV);
-    setCutoffCurrentA(d.cutoffCurrentA);
+    if (newMode !== 'sequence') {
+      const d = DEFAULTS[newMode];
+      setCurrentA(d.currentA);
+      setVoltageV(d.voltageV);
+      setPowerW(d.powerW);
+      setCutoffV(d.cutoffV);
+      setCutoffCurrentA(d.cutoffCurrentA);
+    }
     setError(null);
   }, []);
 
@@ -70,41 +101,61 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
     setError(null);
     setSubmitting(true);
 
-    const actualCurrentA = useCRate ? currentA * capacityAh : currentA;
-
-    const params: StartTestParams = { mode };
-
-    if (barcode.trim()) {
-      params.barcode = barcode.trim();
-    }
-
-    switch (mode) {
-      case 'd-cc':
-        params.currentA = actualCurrentA;
-        params.cutoffV = cutoffV;
-        break;
-      case 'd-cp':
-        params.powerW = powerW;
-        params.cutoffV = cutoffV;
-        break;
-      case 'c-cv':
-        params.currentA = actualCurrentA;
-        params.voltageV = voltageV;
-        params.cutoffCurrentA = cutoffCurrentA;
-        break;
-    }
-
     try {
-      await startTest(params);
-      onClose();
+      if (mode === 'sequence') {
+        // Start a cycle program from a saved sequence
+        const seq = sequences.find(s => s.id === selectedSequenceId);
+        if (!seq) { setError('No sequence selected'); setSubmitting(false); return; }
+
+        const steps = JSON.parse(seq.steps_json);
+
+        // Associate cell if barcode provided
+        let cellId: number | undefined;
+        if (barcode.trim()) {
+          const cell = await apiPost<{ id: number }>('/api/cells', { barcode: barcode.trim() });
+          cellId = cell.id;
+        }
+
+        await apiPost('/api/cycle/start', { name: seq.name, steps, cellId });
+        onClose();
+      } else {
+        // Start a single-mode test
+        const actualCurrentA = useCRate ? currentA * capacityAh : currentA;
+        const params: StartTestParams = { mode };
+
+        if (barcode.trim()) {
+          params.barcode = barcode.trim();
+        }
+
+        switch (mode) {
+          case 'd-cc':
+            params.currentA = actualCurrentA;
+            params.cutoffV = cutoffV;
+            break;
+          case 'd-cp':
+            params.powerW = powerW;
+            params.cutoffV = cutoffV;
+            break;
+          case 'c-cv':
+            params.currentA = actualCurrentA;
+            params.voltageV = voltageV;
+            params.cutoffCurrentA = cutoffCurrentA;
+            break;
+        }
+
+        await startTest(params);
+        onClose();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to start test');
     } finally {
       setSubmitting(false);
     }
-  }, [mode, barcode, currentA, voltageV, powerW, cutoffV, cutoffCurrentA, useCRate, capacityAh, startTest, onClose]);
+  }, [mode, barcode, currentA, voltageV, powerW, cutoffV, cutoffCurrentA, useCRate, capacityAh, startTest, onClose, sequences, selectedSequenceId]);
 
   if (!open) return null;
+
+  const selectedSequence = sequences.find(s => s.id === selectedSequenceId);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -134,7 +185,6 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
                 type="button"
                 title="Scan with camera"
               >
-                {/* Camera icon (SVG) */}
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
                   <circle cx="12" cy="13" r="4" />
@@ -171,97 +221,121 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
               className={`mode-btn ${mode === 'c-cv' ? 'active' : ''}`}
               onClick={() => handleModeChange('c-cv')}
             >C-CV</button>
+            {sequences.length > 0 && (
+              <button
+                className={`mode-btn ${mode === 'sequence' ? 'active' : ''}`}
+                onClick={() => handleModeChange('sequence')}
+              >Sequence</button>
+            )}
           </div>
         </div>
 
-        {/* Parameters */}
-        <div className="form-params">
-          {/* Current (D-CC and C-CV) */}
-          {(mode === 'd-cc' || mode === 'c-cv') && (
-            <div className="form-group">
-              <label>
-                {mode === 'c-cv' ? 'Charge Current' : 'Discharge Current'}
-                <button
-                  className={`crate-toggle ${useCRate ? 'active' : ''}`}
-                  onClick={() => setUseCRate(!useCRate)}
-                >
-                  {useCRate ? 'C' : 'A'}
-                </button>
-              </label>
-              <input
-                type="number"
-                value={currentA}
-                onChange={e => setCurrentA(parseFloat(e.target.value) || 0)}
-                step={useCRate ? 0.01 : 0.01}
-                min={0}
-                max={useCRate ? 1 : 40}
-              />
-              {useCRate && (
-                <span className="form-hint">{(currentA * capacityAh).toFixed(2)} A</span>
-              )}
-            </div>
-          )}
+        {/* Sequence selector (when mode = sequence) */}
+        {mode === 'sequence' && (
+          <div className="form-group">
+            <label>Sequence</label>
+            <select
+              value={selectedSequenceId ?? ''}
+              onChange={e => setSelectedSequenceId(Number(e.target.value))}
+              className="sequence-select"
+            >
+              {sequences.map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            {selectedSequence && (
+              <span className="form-hint">
+                {JSON.parse(selectedSequence.steps_json).length} steps
+              </span>
+            )}
+          </div>
+        )}
 
-          {/* Power (D-CP) */}
-          {mode === 'd-cp' && (
-            <div className="form-group">
-              <label>Power (W)</label>
-              <input
-                type="number"
-                value={powerW}
-                onChange={e => setPowerW(parseFloat(e.target.value) || 0)}
-                step={1}
-                min={0}
-                max={350}
-              />
-            </div>
-          )}
+        {/* Parameters (single-mode only) */}
+        {mode !== 'sequence' && (
+          <div className="form-params">
+            {(mode === 'd-cc' || mode === 'c-cv') && (
+              <div className="form-group">
+                <label>
+                  {mode === 'c-cv' ? 'Charge Current' : 'Discharge Current'}
+                  <button
+                    className={`crate-toggle ${useCRate ? 'active' : ''}`}
+                    onClick={() => setUseCRate(!useCRate)}
+                  >
+                    {useCRate ? 'C' : 'A'}
+                  </button>
+                </label>
+                <input
+                  type="number"
+                  value={currentA}
+                  onChange={e => setCurrentA(parseFloat(e.target.value) || 0)}
+                  step={useCRate ? 0.01 : 0.01}
+                  min={0}
+                  max={useCRate ? 1 : 40}
+                />
+                {useCRate && (
+                  <span className="form-hint">{(currentA * capacityAh).toFixed(2)} A</span>
+                )}
+              </div>
+            )}
 
-          {/* Target voltage (C-CV) */}
-          {mode === 'c-cv' && (
-            <div className="form-group">
-              <label>Target Voltage (V)</label>
-              <input
-                type="number"
-                value={voltageV}
-                onChange={e => setVoltageV(parseFloat(e.target.value) || 0)}
-                step={0.01}
-                min={0}
-                max={5.0}
-              />
-            </div>
-          )}
+            {mode === 'd-cp' && (
+              <div className="form-group">
+                <label>Power (W)</label>
+                <input
+                  type="number"
+                  value={powerW}
+                  onChange={e => setPowerW(parseFloat(e.target.value) || 0)}
+                  step={1}
+                  min={0}
+                  max={350}
+                />
+              </div>
+            )}
 
-          {/* Cutoff voltage (D-CC and D-CP) */}
-          {(mode === 'd-cc' || mode === 'd-cp') && (
-            <div className="form-group">
-              <label>Cutoff Voltage (V)</label>
-              <input
-                type="number"
-                value={cutoffV}
-                onChange={e => setCutoffV(parseFloat(e.target.value) || 0)}
-                step={0.01}
-                min={0}
-                max={5.0}
-              />
-            </div>
-          )}
+            {mode === 'c-cv' && (
+              <div className="form-group">
+                <label>Target Voltage (V)</label>
+                <input
+                  type="number"
+                  value={voltageV}
+                  onChange={e => setVoltageV(parseFloat(e.target.value) || 0)}
+                  step={0.01}
+                  min={0}
+                  max={5.0}
+                />
+              </div>
+            )}
 
-          {/* Cutoff current (C-CV) */}
-          {mode === 'c-cv' && (
-            <div className="form-group">
-              <label>Cutoff Current (A)</label>
-              <input
-                type="number"
-                value={cutoffCurrentA}
-                onChange={e => setCutoffCurrentA(parseFloat(e.target.value) || 0)}
-                step={0.01}
-                min={0}
-                max={40}
-              />
-            </div>
-          )}
-        </div>
+            {(mode === 'd-cc' || mode === 'd-cp') && (
+              <div className="form-group">
+                <label>Cutoff Voltage (V)</label>
+                <input
+                  type="number"
+                  value={cutoffV}
+                  onChange={e => setCutoffV(parseFloat(e.target.value) || 0)}
+                  step={0.01}
+                  min={0}
+                  max={5.0}
+                />
+              </div>
+            )}
+
+            {mode === 'c-cv' && (
+              <div className="form-group">
+                <label>Cutoff Current (A)</label>
+                <input
+                  type="number"
+                  value={cutoffCurrentA}
+                  onChange={e => setCutoffCurrentA(parseFloat(e.target.value) || 0)}
+                  step={0.01}
+                  min={0}
+                  max={40}
+                />
+              </div>
+            )}
+          </div>
+        )}
 
         {error && <div className="form-error">{error}</div>}
 
@@ -270,7 +344,7 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
             Cancel
           </button>
           <button className="btn btn-start" onClick={handleSubmit} disabled={submitting}>
-            {submitting ? 'Starting...' : 'Start'}
+            {submitting ? 'Starting...' : mode === 'sequence' ? 'Run Sequence' : 'Start'}
           </button>
         </div>
       </div>

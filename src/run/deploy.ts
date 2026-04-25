@@ -174,7 +174,7 @@ async function deployBuildOutputs(
   if (!outputs.length) return;
 
   // De-dupe by filename (last one wins)
-  const byName = new Map<string, string>();
+  const byName = new Map<string, string | Uint8Array>();
   for (const output of outputs) byName.set(output.filename, output.content);
 
   const filenames = sortFilenamesForDeploy([...byName.keys()]);

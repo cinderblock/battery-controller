@@ -44,6 +44,7 @@ export interface SessionState {
   pendingCommand: PendingCommand | null;
   activeRunId: number | null;
   locked: boolean;
+  bridgeActive: boolean;
   livePoints: LivePoint[];
 }
 
@@ -57,6 +58,7 @@ const INITIAL_STATE: SessionState = {
   pendingCommand: null,
   activeRunId: null,
   locked: false,
+  bridgeActive: false,
   livePoints: [],
 };
 
@@ -68,6 +70,8 @@ export interface SessionContextValue {
   stopTest: () => Promise<void>;
   continueTest: (params: ContinueTestParams) => Promise<void>;
   scanCell: (barcode: string, label?: string) => Promise<void>;
+  enableBridge: () => Promise<void>;
+  disableBridge: () => Promise<void>;
 }
 
 export interface StartTestParams {
@@ -154,6 +158,7 @@ export function useDeviceSessionManager(): SessionContextValue {
             activeRunId: msg.data.activeRunId,
             serialConnected: msg.data.serialConnected,
             locked: msg.data.locked,
+            bridgeActive: msg.data.bridgeActive ?? false,
             livePoints: [],
           }));
           prevModeRef.current = msg.data.mode;
@@ -226,6 +231,10 @@ export function useDeviceSessionManager(): SessionContextValue {
         case 'lockState':
           setState(s => ({ ...s, locked: msg.data.locked }));
           break;
+
+        case 'bridgeState':
+          setState(s => ({ ...s, bridgeActive: msg.data.active }));
+          break;
       }
     };
 
@@ -259,12 +268,22 @@ export function useDeviceSessionManager(): SessionContextValue {
     await apiPost('/api/cells/scan', { barcode, label });
   }, []);
 
+  const enableBridge = useCallback(async () => {
+    await apiPost('/api/bridge/start', {});
+  }, []);
+
+  const disableBridge = useCallback(async () => {
+    await apiPost('/api/bridge/stop', {});
+  }, []);
+
   return {
     state,
     startTest,
     stopTest,
     continueTest,
     scanCell,
+    enableBridge,
+    disableBridge,
   };
 }
 

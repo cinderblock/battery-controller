@@ -1,9 +1,11 @@
 /**
  * TopBar — minimal status strip at the top of the chart view.
  *
- * Shows: connection dot, device state badge, condensed live readings.
+ * Shows: connection dot, device state badge, condensed live readings,
+ * and a bridge mode toggle for proxying the serial port to EB Tester.
  */
 
+import { useState } from 'react';
 import { useSession } from '../hooks/useDeviceSession.ts';
 import type { DeviceMode } from '../api-client.ts';
 
@@ -26,22 +28,43 @@ const MODE_CLASSES: Record<DeviceMode, string> = {
 };
 
 export function TopBar() {
-  const { state } = useSession();
-  const { wsConnected, serialConnected, mode, reading, pendingCommand } = state;
+  const { state, enableBridge, disableBridge } = useSession();
+  const { wsConnected, serialConnected, mode, reading, pendingCommand, bridgeActive } = state;
+  const [bridgeLoading, setBridgeLoading] = useState(false);
 
-  const connected = wsConnected && serialConnected;
+  const connected = wsConnected && (serialConnected || bridgeActive);
+  const isRunning = mode === 'd-cc' || mode === 'd-cp' || mode === 'c-cv';
+
+  async function toggleBridge() {
+    setBridgeLoading(true);
+    try {
+      if (bridgeActive) {
+        await disableBridge();
+      } else {
+        await enableBridge();
+      }
+    } catch (err) {
+      console.error('Bridge toggle failed:', err);
+    } finally {
+      setBridgeLoading(false);
+    }
+  }
 
   return (
     <>
       <header className="top-bar">
         <div className="top-bar-left">
           <span className={`conn-dot ${connected ? 'conn-ok' : 'conn-off'}`} />
-          <span className={`mode-badge ${MODE_CLASSES[mode]}`}>
-            {pendingCommand ? `${pendingCommand.command}...` : MODE_LABELS[mode]}
-          </span>
+          {bridgeActive ? (
+            <span className="mode-badge badge-bridge">Bridge Mode</span>
+          ) : (
+            <span className={`mode-badge ${MODE_CLASSES[mode]}`}>
+              {pendingCommand ? `${pendingCommand.command}...` : MODE_LABELS[mode]}
+            </span>
+          )}
         </div>
 
-        {reading && (
+        {!bridgeActive && reading && (
           <div className="top-bar-readings">
             <span className="reading-val">
               <span className="reading-num">{reading.voltage.toFixed(3)}</span>
@@ -59,14 +82,32 @@ export function TopBar() {
             )}
           </div>
         )}
+
+        <button
+          className={`bridge-toggle ${bridgeActive ? 'bridge-active' : ''}`}
+          onClick={toggleBridge}
+          disabled={bridgeLoading || isRunning}
+          title={
+            isRunning ? 'Cannot enable bridge while a test is running'
+              : bridgeActive ? 'Disable bridge mode — return serial to this app'
+              : 'Enable bridge mode — proxy serial to EB Tester via TCP'
+          }
+        >
+          {bridgeLoading ? '...' : bridgeActive ? 'EB' : 'EB'}
+        </button>
       </header>
 
+      {bridgeActive && (
+        <div className="disconnect-banner disconnect-bridge">
+          Bridge mode — serial port proxied to EB Tester (TCP {49600})
+        </div>
+      )}
       {!wsConnected && (
         <div className="disconnect-banner">
           Server disconnected — reconnecting...
         </div>
       )}
-      {wsConnected && !serialConnected && (
+      {wsConnected && !serialConnected && !bridgeActive && (
         <div className="disconnect-banner disconnect-serial">
           Serial port disconnected — device not responding
         </div>

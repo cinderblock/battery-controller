@@ -12,7 +12,7 @@ import homepage from '../frontend/index.html';
 import { logger } from '../utils/logger.ts';
 import { shutdown } from '../utils/shutdown.ts';
 import { SerialManager } from './serial.ts';
-import { startTcpBridge } from './tcp-bridge.ts';
+import { startTcpBridge, startTcpBridgeStandalone, type TcpBridge } from './tcp-bridge.ts';
 import { DeviceSession, type DecodedReading, type SessionEvent } from './device-session.ts';
 import { TestRecorder, type TestSetpoints } from './test-recorder.ts';
 import { SettingsLock } from './settings-lock.ts';
@@ -71,7 +71,7 @@ async function parseBody<T = Record<string, unknown>>(req: Request): Promise<T |
 async function main() {
   // Bridge mode: transparent TCP-serial byte pipe (no WebSocket server)
   if (process.argv.includes('--bridge') || process.env.MODE === 'bridge') {
-    await startTcpBridge();
+    await startTcpBridgeStandalone();
     return;
   }
 
@@ -146,6 +146,41 @@ async function main() {
     broadcast({ type: 'cycleState', data: state });
   });
 
+  // ── Bridge mode toggle ────────────────────────────────────────
+  let activeBridge: TcpBridge | null = null;
+
+  async function enableBridge(): Promise<void> {
+    if (activeBridge) return;
+
+    // Tear down device pipeline — release the serial port
+    cycleRunner.stop();
+    recorder.stop();
+    session.destroy();
+    await serialManager.disconnect();
+
+    // Start the TCP bridge (opens serial port itself)
+    activeBridge = await startTcpBridge();
+    broadcast({ type: 'bridgeState', data: { active: true } });
+    logger.info('Bridge mode enabled — serial port handed to TCP bridge');
+  }
+
+  async function disableBridge(): Promise<void> {
+    if (!activeBridge) return;
+
+    // Stop the TCP bridge — closes serial port and TCP listener
+    await activeBridge.stop();
+    activeBridge = null;
+
+    // Reconnect the device pipeline
+    await serialManager.connect();
+    session.start();
+    recorder.start();
+    cycleRunner.start();
+
+    broadcast({ type: 'bridgeState', data: { active: false } });
+    logger.info('Bridge mode disabled — serial port returned to device session');
+  }
+
   // ── Guard: reject commands when locked ────────────────────────
   function requireUnlocked(): Response | null {
     if (settingsLock.isLocked()) {
@@ -160,6 +195,7 @@ async function main() {
 
     // ── Test control ──────────────────────────────────────────
     if (pathname === '/api/test/start' && method === 'POST') {
+      if (activeBridge) return errorResponse('Cannot start test while bridge mode is active', 409);
       const locked = requireUnlocked();
       if (locked) return locked;
 
@@ -274,6 +310,7 @@ async function main() {
         activeRunId: recorder.getActiveRunId(),
         deviceInfo: session.getDeviceInfo(),
         serialConnected: serialManager.isPortOpen(),
+        bridgeActive: activeBridge !== null,
       });
     }
 
@@ -527,6 +564,35 @@ async function main() {
       });
     }
 
+    // ── Bridge mode ──────────────────────────────────────────
+    if (pathname === '/api/bridge/status' && method === 'GET') {
+      return jsonResponse({
+        active: activeBridge !== null,
+        hasClient: activeBridge?.hasClient() ?? false,
+      });
+    }
+
+    if (pathname === '/api/bridge/start' && method === 'POST') {
+      if (activeBridge) return errorResponse('Bridge already active', 409);
+      if (session.isRunning()) return errorResponse('Cannot enable bridge while a test is running', 409);
+      try {
+        await enableBridge();
+        return jsonResponse({ ok: true });
+      } catch (err) {
+        return errorResponse(`Failed to start bridge: ${err instanceof Error ? err.message : String(err)}`, 500);
+      }
+    }
+
+    if (pathname === '/api/bridge/stop' && method === 'POST') {
+      if (!activeBridge) return errorResponse('Bridge not active', 409);
+      try {
+        await disableBridge();
+        return jsonResponse({ ok: true });
+      } catch (err) {
+        return errorResponse(`Failed to stop bridge: ${err instanceof Error ? err.message : String(err)}`, 500);
+      }
+    }
+
     // Full SQLite database download
     if (pathname === '/api/export/db' && method === 'GET') {
       const dbPath = process.env.DB_PATH || '/opt/battery-controller/data/battery.db';
@@ -569,6 +635,7 @@ async function main() {
             serialConnected: serialManager.isPortOpen(),
             locked: settingsLock.isLocked(),
             cycleState: cycleRunner.getState(),
+            bridgeActive: activeBridge !== null,
           },
         }));
       },
@@ -599,15 +666,15 @@ async function main() {
         return new Response('WebSocket upgrade failed', { status: 400 });
       }
 
-      // Static files (zbar.wasm barcode scanner)
+      // Static files (zbar.wasm barcode scanner — deployed alongside the bundle)
       if (url.pathname === '/static/zbar.js') {
-        const file = Bun.file(new URL(import.meta.resolve('zbar.wasm/dist/zbar.js')).pathname);
+        const file = Bun.file('./zbar.js');
         return new Response(file, {
           headers: { 'Content-Type': 'application/javascript', 'Cache-Control': 'public, max-age=86400' },
         });
       }
       if (url.pathname === '/static/zbar.wasm') {
-        const file = Bun.file(new URL(import.meta.resolve('zbar.wasm/dist/zbar.wasm.bin')).pathname);
+        const file = Bun.file('./zbar.wasm.bin');
         return new Response(file, {
           headers: { 'Content-Type': 'application/wasm', 'Cache-Control': 'public, max-age=86400' },
         });
@@ -622,9 +689,7 @@ async function main() {
 
       // SPA fallback: serve index.html for unrecognized paths
       // (handles direct navigation / page refresh on client-side routes)
-      return new Response(Bun.file(new URL(import.meta.resolve('../frontend/index.html')).pathname), {
-        headers: { 'Content-Type': 'text/html' },
-      });
+      return new Response(homepage);
     },
   });
 
@@ -635,10 +700,15 @@ async function main() {
   // ── Graceful shutdown ──────────────────────────────────────────
   async function gracefulShutdown() {
     logger.info('Shutting down...');
-    cycleRunner.stop();
-    recorder.stop();
-    session.destroy();
-    await serialManager.disconnect();
+    if (activeBridge) {
+      await activeBridge.stop();
+      activeBridge = null;
+    } else {
+      cycleRunner.stop();
+      recorder.stop();
+      session.destroy();
+      await serialManager.disconnect();
+    }
     closeDb();
     server.stop();
     shutdown(0);
