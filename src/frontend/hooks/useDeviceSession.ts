@@ -37,6 +37,7 @@ export interface LivePoint {
 export interface SessionState {
   wsConnected: boolean;
   serialConnected: boolean;
+  deviceResponsive: boolean;
   mode: DeviceMode;
   reading: DecodedReading | null;
   stats: TestStats | null;
@@ -51,6 +52,7 @@ export interface SessionState {
 const INITIAL_STATE: SessionState = {
   wsConnected: false,
   serialConnected: false,
+  deviceResponsive: false,
   mode: 'idle',
   reading: null,
   stats: null,
@@ -157,6 +159,7 @@ export function useDeviceSessionManager(): SessionContextValue {
             deviceInfo: msg.data.deviceInfo,
             activeRunId: msg.data.activeRunId,
             serialConnected: msg.data.serialConnected,
+            deviceResponsive: msg.data.deviceResponsive ?? false,
             locked: msg.data.locked,
             bridgeActive: msg.data.bridgeActive ?? false,
             livePoints: [],
@@ -234,6 +237,10 @@ export function useDeviceSessionManager(): SessionContextValue {
 
         case 'bridgeState':
           setState(s => ({ ...s, bridgeActive: msg.data.active }));
+          break;
+
+        case 'deviceResponsive':
+          setState(s => ({ ...s, deviceResponsive: msg.data.responsive }));
           break;
       }
     };

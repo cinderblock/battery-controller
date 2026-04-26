@@ -146,6 +146,12 @@ async function main() {
       case 'commandTimeout':
         broadcast({ type: 'commandTimeout', data: event.data });
         break;
+      case 'deviceUnresponsive':
+        broadcast({ type: 'deviceResponsive', data: { responsive: false } });
+        break;
+      case 'deviceResponsive':
+        broadcast({ type: 'deviceResponsive', data: { responsive: true } });
+        break;
     }
   });
 
@@ -695,6 +701,7 @@ async function main() {
             deviceInfo: session.getDeviceInfo(),
             activeRunId: recorder.getActiveRunId(),
             serialConnected: serialManager.isPortOpen(),
+            deviceResponsive: session.isDeviceResponsive(),
             locked: settingsLock.isLocked(),
             cycleState: cycleRunner.getState(),
             bridgeActive: activeBridge !== null,

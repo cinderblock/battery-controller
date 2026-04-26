@@ -29,11 +29,15 @@ const MODE_CLASSES: Record<DeviceMode, string> = {
 
 export function TopBar() {
   const { state, enableBridge, disableBridge } = useSession();
-  const { wsConnected, serialConnected, mode, reading, pendingCommand, bridgeActive } = state;
+  const { wsConnected, serialConnected, deviceResponsive, mode, reading, pendingCommand, bridgeActive } = state;
   const [bridgeLoading, setBridgeLoading] = useState(false);
 
-  const connected = wsConnected && (serialConnected || bridgeActive);
   const isRunning = mode === 'd-cc' || mode === 'd-cp' || mode === 'c-cv';
+  // Three-state connection: green = all good, amber = backend ok but hardware silent, red = backend down
+  const connClass = !wsConnected ? 'conn-off'
+    : !serialConnected && !bridgeActive ? 'conn-off'
+    : !deviceResponsive && !bridgeActive ? 'conn-warn'
+    : 'conn-ok';
 
   async function toggleBridge() {
     setBridgeLoading(true);
@@ -54,7 +58,7 @@ export function TopBar() {
     <>
       <header className="top-bar">
         <div className="top-bar-left">
-          <span className={`conn-dot ${connected ? 'conn-ok' : 'conn-off'}`} />
+          <span className={`conn-dot ${connClass}`} />
           {bridgeActive ? (
             <span className="mode-badge badge-bridge">Bridge Mode</span>
           ) : (
@@ -114,6 +118,11 @@ export function TopBar() {
       {wsConnected && !serialConnected && !bridgeActive && (
         <div className="disconnect-banner disconnect-serial">
           Serial port disconnected — device not responding
+        </div>
+      )}
+      {wsConnected && serialConnected && !deviceResponsive && !bridgeActive && (
+        <div className="disconnect-banner disconnect-hardware">
+          Server connected — hardware not responding
         </div>
       )}
     </>

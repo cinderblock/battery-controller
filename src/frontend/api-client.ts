@@ -48,6 +48,7 @@ export interface WsSnapshot {
     deviceInfo: DeviceInfo | null;
     activeRunId: number | null;
     serialConnected: boolean;
+    deviceResponsive: boolean;
     locked: boolean;
     bridgeActive?: boolean;
   };
@@ -108,6 +109,11 @@ export interface WsBridgeState {
   data: { active: boolean };
 }
 
+export interface WsDeviceResponsive {
+  type: 'deviceResponsive';
+  data: { responsive: boolean };
+}
+
 export type WsMessage =
   | WsSnapshot
   | WsReading
@@ -119,7 +125,8 @@ export type WsMessage =
   | WsCommandConfirmed
   | WsCommandTimeout
   | WsLockState
-  | WsBridgeState;
+  | WsBridgeState
+  | WsDeviceResponsive;
 
 // ── REST entity types ──────────────────────────────────────────────
 

@@ -69,7 +69,9 @@ export type SessionEvent =
   | { type: 'deviceInfo'; data: DeviceInfo }
   | { type: 'commandPending'; data: PendingCommand }
   | { type: 'commandConfirmed'; data: { command: string; mode: DeviceMode } }
-  | { type: 'commandTimeout'; data: { command: string } };
+  | { type: 'commandTimeout'; data: { command: string } }
+  | { type: 'deviceUnresponsive' }
+  | { type: 'deviceResponsive' };
 
 type SessionListener = (event: SessionEvent) => void;
 
@@ -136,6 +138,11 @@ export class DeviceSession {
   private commandTimeoutTimer: Timer | null = null;
   private readonly COMMAND_TIMEOUT_MS = 5_000;
 
+  // Device-responsive watchdog — fires if no packet within threshold
+  private watchdogTimer: Timer | null = null;
+  private deviceResponsive = false;
+  private readonly WATCHDOG_TIMEOUT_MS = 10_000; // 10s ≈ 5 missed packets
+
   // Track peak/min for test run stats
   private peakVoltage = 0;
   private minVoltage = Infinity;
@@ -152,6 +159,8 @@ export class DeviceSession {
       } else {
         this.emit({ type: 'disconnected' });
         this.stopHeartbeat();
+        this.stopWatchdog();
+        this.deviceResponsive = false;
       }
     });
 
@@ -164,6 +173,7 @@ export class DeviceSession {
     this.unsubPacket?.();
     this.unsubConnection?.();
     this.stopHeartbeat();
+    this.stopWatchdog();
     this.clearCommandTimeout();
     this.clearInitTimer();
   }
@@ -185,6 +195,7 @@ export class DeviceSession {
 
   getMode(): DeviceMode { return this.mode; }
   getDeviceInfo(): DeviceInfo | null { return this.deviceInfo; }
+  isDeviceResponsive(): boolean { return this.deviceResponsive; }
 
   getReading(): DecodedReading {
     const elapsedS = this.mode !== 'idle' && this.testStartTime > 0
@@ -263,6 +274,8 @@ export class DeviceSession {
       this.emit({ type: 'deviceInfo', data: this.deviceInfo });
       // Still update voltage from info packets (it's valid)
       this.voltage = voltage;
+      this.resetHeartbeat();
+      this.resetWatchdog();
       return;
     }
 
@@ -328,6 +341,7 @@ export class DeviceSession {
 
     this.emit({ type: 'reading', data: reading });
     this.resetHeartbeat();
+    this.resetWatchdog();
   }
 
   private setMode(newMode: DeviceMode): void {
@@ -495,6 +509,31 @@ export class DeviceSession {
     if (this.heartbeatTimer) {
       clearTimeout(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+  }
+
+  // ── Device-responsive watchdog ─────────────────────────────────
+
+  private resetWatchdog(): void {
+    this.stopWatchdog();
+    if (!this.deviceResponsive) {
+      this.deviceResponsive = true;
+      this.emit({ type: 'deviceResponsive' });
+    }
+    this.watchdogTimer = setTimeout(() => {
+      if (this.deviceResponsive) {
+        this.deviceResponsive = false;
+        logger.warn('Device watchdog: no packets received in '
+          + `${this.WATCHDOG_TIMEOUT_MS / 1000}s — marking unresponsive`);
+        this.emit({ type: 'deviceUnresponsive' });
+      }
+    }, this.WATCHDOG_TIMEOUT_MS);
+  }
+
+  private stopWatchdog(): void {
+    if (this.watchdogTimer) {
+      clearTimeout(this.watchdogTimer);
+      this.watchdogTimer = null;
     }
   }
 

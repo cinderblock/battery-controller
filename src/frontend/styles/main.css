@@ -100,7 +100,13 @@ html, body {
 }
 
 .conn-ok { background: var(--success); box-shadow: 0 0 4px var(--success); }
+.conn-warn { background: #ffa726; box-shadow: 0 0 4px #ffa726; animation: pulse-warn 2s ease-in-out infinite; }
 .conn-off { background: var(--error); }
+
+@keyframes pulse-warn {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 
 .mode-badge {
   font-size: 12px;
@@ -145,6 +151,10 @@ html, body {
 }
 
 .disconnect-serial {
+  background: #e65100;
+}
+
+.disconnect-hardware {
   background: #e65100;
 }
 
