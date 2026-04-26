@@ -74,6 +74,10 @@ export function TopBar() {
               <span className="reading-num">{reading.current.toFixed(2)}</span>
               <span className="reading-unit">A</span>
             </span>
+            <span className="reading-val">
+              <span className="reading-num">{(reading.voltage * reading.current).toFixed(1)}</span>
+              <span className="reading-unit">W</span>
+            </span>
             {mode !== 'idle' && (
               <span className="reading-val">
                 <span className="reading-num">{reading.capacityAh.toFixed(3)}</span>
