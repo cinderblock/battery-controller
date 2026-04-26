@@ -331,19 +331,28 @@ export function simulateStep(
       case 'c-cv': {
         // CC-CV charge: CC phase raises voltage to target, CV phase holds
         // voltage flat while current tapers to cutoff.
-        const ccFraction = 0.55; // fraction of time spent in CC phase
+        // Derive CC/CV split from the same model as estimateDurationH so
+        // the visual curve matches the estimated time.
         const maxCurrent = resolveCurrentA(step, capacityAh);
+        const cutoff = Math.max(step.cutoffCurrentA, 0.01);
+        const ccTime = 0.8; // CC fills ~80% of capacity → relative time units
+        const tau = 0.3;    // CV time constant (same as estimateDurationH)
+        const cvTime = tau * Math.log(maxCurrent / cutoff);
+        const totalTime = ccTime + Math.max(0, cvTime);
+        const ccFraction = ccTime / totalTime;
+
         if (f < ccFraction) {
           // CC phase: constant current, voltage rises to targetV
           const ccProgress = f / ccFraction;
-          // Slight curve (not perfectly linear) — voltage accelerates near the end
           v = startV + (step.targetV - startV) * (1 - Math.pow(1 - ccProgress, 1.3));
           current = maxCurrent;
         } else {
-          // CV phase: voltage held at targetV, current tapers exponentially
+          // CV phase: voltage flat at targetV, current decays to cutoff
           v = step.targetV;
           const cvProgress = (f - ccFraction) / (1 - ccFraction);
-          current = maxCurrent * Math.exp(-3.5 * cvProgress);
+          // Decay rate = ln(max/cutoff) so current reaches cutoff at cvProgress=1
+          const decayRate = Math.log(maxCurrent / cutoff);
+          current = maxCurrent * Math.exp(-decayRate * cvProgress);
           current = Math.max(current, step.cutoffCurrentA);
         }
         break;
