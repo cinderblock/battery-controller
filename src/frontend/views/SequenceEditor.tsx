@@ -1,24 +1,41 @@
 /**
  * SequenceEditor — visual sequence programming page.
  *
- * Users build multi-step test sequences by adding discharge, charge,
- * wait, and loop steps. A canvas timeline shows the expected voltage
- * curve. Sequences can be saved to the DB and run on the device.
+ * Users build multi-step test sequences by adding, reordering, and
+ * editing discharge, charge, wait, and loop steps. A canvas timeline
+ * shows the expected voltage curve. Sequences can be saved and run.
+ *
+ * Layout (top to bottom):
+ * - Header (back, title, save)
+ * - Name + cell group
+ * - Presets / saved sequences
+ * - Canvas timeline (voltage preview)
+ * - Horizontal pill bar (step chips, drag-to-reorder)
+ * - Properties panel (selected step's parameters)
+ * - Step palette (add new steps)
  */
 
 import { useState, useCallback, useEffect } from 'react';
 import { api, apiPost, type CellGroup, type Sequence } from '../api-client.ts';
-import type { SequenceStep } from '../lib/sequence-types.ts';
+import type { SequenceStep, StepPath } from '../lib/sequence-types.ts';
 import {
   defaultDCC,
-  defaultDCP,
   defaultCCV,
   defaultWait,
   totalEstimatedDurationH,
+  getStepAtPath,
+  updateStepAtPath,
+  removeStepAtPath,
+  insertStepAtPath,
+  moveStep,
+  migrateV1Steps,
   PRESETS,
 } from '../lib/sequence-types.ts';
 import { SequenceTimeline } from '../components/SequenceTimeline.tsx';
-import { StepCard } from '../components/StepCard.tsx';
+import { StepPillBar } from '../components/StepPillBar.tsx';
+import { StepProperties } from '../components/StepProperties.tsx';
+import { StepPalette } from '../components/StepPalette.tsx';
+import { useDragReorder } from '../hooks/useDragReorder.ts';
 
 // ── Component ──────────────────────────────────────────────────────
 
@@ -26,9 +43,7 @@ export function SequenceEditor() {
   // ── Sequence state ────────────────────────────────────────────
   const [steps, setSteps] = useState<SequenceStep[]>(PRESETS[0].steps);
   const [name, setName] = useState(PRESETS[0].name);
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(0);
-  const [expandedIndex, setExpandedIndex] = useState<number | null>(0);
-  const [useCRate, setUseCRate] = useState(false);
+  const [selectedPath, setSelectedPath] = useState<StepPath | null>([0]);
   const [activePreset, setActivePreset] = useState<string>(PRESETS[0].name);
 
   // ── Cell groups + sequences ───────────────────────────────────
@@ -58,53 +73,73 @@ export function SequenceEditor() {
     ? `~${Math.round(totalH * 60)}m`
     : `~${Math.floor(totalH)}h ${Math.round((totalH % 1) * 60)}m`;
 
-  // ── Step management ───────────────────────────────────────────
+  // ── Selected step ─────────────────────────────────────────────
+  const selectedStep = selectedPath ? getStepAtPath(steps, selectedPath) : null;
+
+  // ── Step management (path-based) ──────────────────────────────
+
   const addStep = useCallback((step: SequenceStep) => {
     setSteps(prev => [...prev, step]);
-    setSelectedIndex(steps.length);
-    setExpandedIndex(steps.length);
+    const newPath: StepPath = [steps.length];
+    setSelectedPath(newPath);
     setActivePreset('');
   }, [steps.length]);
 
-  const updateStep = useCallback((index: number, step: SequenceStep) => {
-    setSteps(prev => prev.map((s, i) => i === index ? step : s));
+  const handleUpdate = useCallback((path: StepPath, step: SequenceStep) => {
+    setSteps(prev => updateStepAtPath(prev, path, step));
     setActivePreset('');
   }, []);
 
-  const removeStep = useCallback((index: number) => {
-    setSteps(prev => {
-      const next = prev.filter((_, i) => i !== index);
-      // Fix loop indices after removal
-      return next.map(s => {
-        if (s.type !== 'loop') return s;
-        let { startIndex, endIndex } = s;
-        if (index <= startIndex) startIndex = Math.max(0, startIndex - 1);
-        if (index <= endIndex) endIndex = Math.max(0, endIndex - 1);
-        if (endIndex >= next.length) endIndex = next.length - 1;
-        return { ...s, startIndex, endIndex };
-      });
-    });
-    if (selectedIndex === index) {
-      setSelectedIndex(null);
-      setExpandedIndex(null);
-    }
+  const handleRemove = useCallback((path: StepPath) => {
+    setSteps(prev => removeStepAtPath(prev, path));
+    setSelectedPath(null);
     setActivePreset('');
-  }, [selectedIndex]);
-
-  const handleSelect = useCallback((index: number) => {
-    setSelectedIndex(index);
   }, []);
 
-  const handleToggleExpand = useCallback((index: number) => {
-    setExpandedIndex(prev => prev === index ? null : index);
+  const handleDuplicate = useCallback((path: StepPath) => {
+    const step = getStepAtPath(steps, path);
+    if (!step) return;
+    const clone = JSON.parse(JSON.stringify(step)) as SequenceStep;
+    // Insert after the current step
+    const insertPath = [...path];
+    insertPath[insertPath.length - 1]++;
+    setSteps(prev => insertStepAtPath(prev, insertPath, clone));
+    setSelectedPath(insertPath);
+    setActivePreset('');
+  }, [steps]);
+
+  const handleSelect = useCallback((path: StepPath) => {
+    setSelectedPath(path);
   }, []);
+
+  // For timeline click (uses flat index)
+  const handleTimelineSelect = useCallback((index: number) => {
+    // Timeline shows flattened executable steps — map index back to path
+    // For now, use simple top-level indexing
+    setSelectedPath([index]);
+  }, []);
+
+  // ── Drag-and-drop ─────────────────────────────────────────────
+
+  const handleReorder = useCallback((fromPath: StepPath, toPath: StepPath) => {
+    setSteps(prev => moveStep(prev, fromPath, toPath));
+    setActivePreset('');
+  }, []);
+
+  const handleInsertNew = useCallback((step: SequenceStep, atPath: StepPath) => {
+    setSteps(prev => insertStepAtPath(prev, atPath, step));
+    setSelectedPath(atPath);
+    setActivePreset('');
+  }, []);
+
+  const { dragState, dragPropsForPath, startPaletteDrag, barProps } =
+    useDragReorder(steps, handleReorder, handleInsertNew);
 
   // ── Presets ───────────────────────────────────────────────────
   const loadPreset = useCallback((preset: typeof PRESETS[number]) => {
     setSteps([...preset.steps]);
     setName(preset.name);
-    setSelectedIndex(0);
-    setExpandedIndex(0);
+    setSelectedPath([0]);
     setActivePreset(preset.name);
     setEditingId(null);
   }, []);
@@ -112,12 +147,12 @@ export function SequenceEditor() {
   // ── Load saved sequence ───────────────────────────────────────
   const loadSaved = useCallback((seq: Sequence) => {
     try {
-      const parsed = JSON.parse(seq.steps_json) as SequenceStep[];
+      const raw = JSON.parse(seq.steps_json);
+      const parsed = migrateV1Steps(raw);
       setSteps(parsed);
       setName(seq.name);
       setEditingId(seq.id);
-      setSelectedIndex(0);
-      setExpandedIndex(0);
+      setSelectedPath([0]);
       setActivePreset('');
     } catch {
       setError('Failed to parse saved sequence');
@@ -144,7 +179,6 @@ export function SequenceEditor() {
         });
         setEditingId(seq.id);
       }
-      // Reload saved sequences
       const seqs = await api<Sequence[]>('/api/sequences');
       setSavedSequences(seqs);
     } catch (e) {
@@ -153,14 +187,6 @@ export function SequenceEditor() {
       setSaving(false);
     }
   }, [name, steps, editingId, selectedGroupId]);
-
-  // ── Add loop step ─────────────────────────────────────────────
-  const addLoop = useCallback(() => {
-    const execStepCount = steps.filter(s => s.type !== 'loop').length;
-    if (execStepCount === 0) return;
-    const lastExecIndex = steps.reduce((last, s, i) => s.type !== 'loop' ? i : last, 0);
-    addStep({ type: 'loop', count: 3, startIndex: 0, endIndex: lastExecIndex });
-  }, [steps, addStep]);
 
   return (
     <div className="seq-editor">
@@ -173,7 +199,7 @@ export function SequenceEditor() {
         </button>
       </div>
 
-      {/* Name + cell group + unit toggle */}
+      {/* Name + cell group */}
       <div className="seq-info">
         <input
           className="seq-name-input"
@@ -196,16 +222,6 @@ export function SequenceEditor() {
               </select>
             </>
           )}
-          <div className="unit-toggle">
-            <button
-              className={`unit-btn ${!useCRate ? 'active' : ''}`}
-              onClick={() => setUseCRate(false)}
-            >Amps</button>
-            <button
-              className={`unit-btn ${useCRate ? 'active' : ''}`}
-              onClick={() => setUseCRate(true)}
-            >C-rate</button>
-          </div>
         </div>
       </div>
 
@@ -234,9 +250,9 @@ export function SequenceEditor() {
       {/* Visual timeline */}
       <SequenceTimeline
         steps={steps}
-        selectedIndex={selectedIndex}
+        selectedIndex={selectedPath?.[0] ?? null}
         capacityAh={capacityAh}
-        onSelectStep={handleSelect}
+        onSelectStep={handleTimelineSelect}
       />
 
       {/* Estimated duration */}
@@ -245,47 +261,36 @@ export function SequenceEditor() {
         <span className="seq-est-time">{durationStr}</span>
       </div>
 
-      {/* Step list */}
-      <div className="seq-step-list">
-        {steps.map((step, i) => (
-          <StepCard
-            key={i}
-            step={step}
-            index={i}
-            selected={selectedIndex === i}
-            expanded={expandedIndex === i}
-            capacityAh={capacityAh}
-            useCRate={useCRate}
-            totalSteps={steps.length}
-            onSelect={handleSelect}
-            onToggleExpand={handleToggleExpand}
-            onUpdate={updateStep}
-            onRemove={removeStep}
-          />
-        ))}
-      </div>
+      {/* Horizontal pill bar */}
+      <StepPillBar
+        steps={steps}
+        selectedPath={selectedPath}
+        capacityAh={capacityAh}
+        onSelect={handleSelect}
+        dragState={dragState}
+        dragPropsForPath={dragPropsForPath}
+        barProps={barProps}
+      />
+
+      {/* Properties panel for selected step */}
+      {selectedStep && selectedPath && (
+        <StepProperties
+          step={selectedStep}
+          path={selectedPath}
+          capacityAh={capacityAh}
+          onUpdate={handleUpdate}
+          onRemove={handleRemove}
+          onDuplicate={handleDuplicate}
+        />
+      )}
 
       {error && <div className="seq-error">{error}</div>}
 
-      {/* Add step buttons */}
-      <div className="seq-add-panel">
-        <button className="add-step-btn" onClick={() => addStep(defaultDCC())}>
-          <span className="add-dot" style={{ background: '#fb923c' }} />
-          Discharge
-        </button>
-        <button className="add-step-btn" onClick={() => addStep(defaultCCV())}>
-          <span className="add-dot" style={{ background: '#60a5fa' }} />
-          Charge
-        </button>
-        <button className="add-step-btn" onClick={() => addStep(defaultWait())}>
-          <span className="add-dot" style={{ background: '#777' }} />
-          Wait
-        </button>
-        <button className="add-step-btn" onClick={addLoop}>
-          <span className="add-dot" style={{ background: '#a78bfa' }} />
-          Loop
-        </button>
-      </div>
+      {/* Step palette (add new steps) */}
+      <StepPalette
+        onAdd={addStep}
+        startPaletteDrag={startPaletteDrag}
+      />
     </div>
   );
 }

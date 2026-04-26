@@ -127,6 +127,10 @@ export class DeviceSession {
   private heartbeatCounter = 0;
   private readonly HEARTBEAT_INTERVAL_MS = 55_000;
 
+  // Startup init timer — sends init if no packets arrive within timeout
+  private initTimer: Timer | null = null;
+  private readonly INIT_WAIT_MS = 2_000;
+
   // Command tracking
   private pendingCommand: PendingCommand | null = null;
   private commandTimeoutTimer: Timer | null = null;
@@ -150,6 +154,9 @@ export class DeviceSession {
         this.stopHeartbeat();
       }
     });
+
+    // Wait for device to send data; if nothing arrives, send init to start streaming
+    this.scheduleInitProbe();
   }
 
   /** Stop listening and clean up timers */
@@ -158,6 +165,7 @@ export class DeviceSession {
     this.unsubConnection?.();
     this.stopHeartbeat();
     this.clearCommandTimeout();
+    this.clearInitTimer();
   }
 
   /** Subscribe to session events */
@@ -228,9 +236,10 @@ export class DeviceSession {
     const voltage = decodeBase240(payload[3], payload[4], EbcDivisors.voltage);
     const capacityMah = decodeBase240(payload[5], payload[6], EbcDivisors.capacity);
 
-    // First packet: decide whether to send init
+    // First packet: cancel init probe timer, decide whether to send init
     if (!this.firstPacketReceived) {
       this.firstPacketReceived = true;
+      this.clearInitTimer();
       const mode = stateByteToMode(stateByte);
       if (mode !== 'idle') {
         // Device is mid-test — pick up state without sending init
@@ -486,6 +495,33 @@ export class DeviceSession {
     if (this.heartbeatTimer) {
       clearTimeout(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+  }
+
+  // ── Init probe ────────────────────────────────────────────────
+
+  /**
+   * Schedule an init probe: if no packets arrive within INIT_WAIT_MS,
+   * send init (0x05) to wake the device and start its data stream.
+   */
+  private scheduleInitProbe(): void {
+    this.clearInitTimer();
+    this.initTimer = setTimeout(async () => {
+      if (!this.firstPacketReceived && !this.initSent) {
+        logger.info(`No packets received after ${this.INIT_WAIT_MS}ms — sending init to start data stream`);
+        try {
+          await this.sendInit();
+        } catch (e) {
+          logger.error('Init probe failed:', e);
+        }
+      }
+    }, this.INIT_WAIT_MS);
+  }
+
+  private clearInitTimer(): void {
+    if (this.initTimer) {
+      clearTimeout(this.initTimer);
+      this.initTimer = null;
     }
   }
 }

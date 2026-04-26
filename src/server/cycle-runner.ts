@@ -15,6 +15,8 @@ import {
   createCycleProgram,
   updateCycleProgram,
   getActiveCycleProgram,
+  getCellById,
+  getCellGroup,
   type CycleProgram,
 } from './db.ts';
 import { logger } from '../utils/logger.ts';
@@ -26,6 +28,7 @@ export interface StepDCC {
   currentA: number;
   cutoffV: number;
   maxTimeMin?: number;
+  useCRate?: boolean;
 }
 
 export interface StepDCP {
@@ -41,6 +44,7 @@ export interface StepCCV {
   targetV: number;
   cutoffCurrentA: number;
   maxTimeMin?: number;
+  useCRate?: boolean;
 }
 
 export interface StepWait {
@@ -51,11 +55,47 @@ export interface StepWait {
 export interface StepLoop {
   type: 'loop';
   count: number;
-  startIndex: number;
-  endIndex: number;
+  children: CycleStep[];
 }
 
 export type CycleStep = StepDCC | StepDCP | StepCCV | StepWait | StepLoop;
+
+// ── V1 migration ──────────────────────────────────────────────────
+
+interface V1Loop { type: 'loop'; count: number; startIndex: number; endIndex: number; }
+
+function isV1Loop(step: any): step is V1Loop {
+  return step?.type === 'loop' && 'startIndex' in step && !('children' in step);
+}
+
+function migrateV1Steps(steps: any[]): CycleStep[] {
+  const hasV1Loops = steps.some(isV1Loop);
+  if (!hasV1Loops) return steps as CycleStep[];
+
+  const execSteps: CycleStep[] = [];
+  const loops: V1Loop[] = [];
+
+  for (const step of steps) {
+    if (isV1Loop(step)) {
+      loops.push(step);
+    } else {
+      execSteps.push(step as CycleStep);
+    }
+  }
+
+  if (loops.length === 0) return execSteps;
+
+  const loop = loops[0];
+  const before = execSteps.slice(0, loop.startIndex);
+  const inside = execSteps.slice(loop.startIndex, loop.endIndex + 1);
+  const after = execSteps.slice(loop.endIndex + 1);
+
+  return [
+    ...before,
+    { type: 'loop', count: loop.count, children: inside },
+    ...after,
+  ];
+}
 
 // ── CycleState ─────────────────────────────────────────────────────
 
@@ -92,6 +132,9 @@ export class CycleRunner {
   private execPlan: { step: StepDCC | StepDCP | StepCCV | StepWait; cycleNum: number }[] = [];
   private execIndex = 0;
   private totalCycles = 1;
+
+  // Cell capacity for C-rate resolution
+  private capacityAh = 200; // default
 
   // Wait timer
   private waitTimer: Timer | null = null;
@@ -140,6 +183,14 @@ export class CycleRunner {
     };
   }
 
+  private emit(): void {
+    const state = this.getState();
+    for (const listener of this.listeners) {
+      try { listener(state); }
+      catch (e) { logger.error('Cycle listener error:', e); }
+    }
+  }
+
   // ── Public commands ──────────────────────────────────────────
 
   /** Start running a sequence */
@@ -156,20 +207,23 @@ export class CycleRunner {
       throw new Error('Device is already running a test');
     }
 
+    // Migrate V1 format if needed
+    const migratedSteps = migrateV1Steps(steps);
+
+    // Look up cell capacity for C-rate resolution
+    this.resolveCapacity(cellId);
+
     // Flatten loops into a linear execution plan
-    this.execPlan = this.flattenSteps(steps);
+    this.execPlan = this.flattenSteps(migratedSteps);
     if (this.execPlan.length === 0) {
       throw new Error('Sequence has no executable steps');
     }
 
     // Compute total cycles from loop steps
-    this.totalCycles = 1;
-    for (const s of steps) {
-      if (s.type === 'loop') this.totalCycles = Math.max(this.totalCycles, s.count);
-    }
+    this.totalCycles = this.computeTotalCycles(migratedSteps);
 
     // Create DB record
-    const program = createCycleProgram(cellId, name, JSON.stringify(steps));
+    const program = createCycleProgram(cellId, name, JSON.stringify(migratedSteps));
     updateCycleProgram(program.id, {
       status: 'running',
       started_at: new Date().toISOString(),
@@ -213,47 +267,58 @@ export class CycleRunner {
 
   // ── Internal ─────────────────────────────────────────────────
 
+  /** Resolve cell capacity for C-rate steps */
+  private resolveCapacity(cellId: number | null): void {
+    if (cellId) {
+      const cell = getCellById(cellId);
+      if (cell) {
+        // Use cell's own capacity, or look up from cell group
+        if (cell.nominal_capacity_mah) {
+          this.capacityAh = cell.nominal_capacity_mah / 1000;
+        } else if (cell.cell_group_id) {
+          const group = getCellGroup(cell.cell_group_id);
+          if (group) this.capacityAh = group.nominal_capacity_mah / 1000;
+        }
+      }
+    }
+    logger.info(`C-rate resolution capacity: ${this.capacityAh} Ah`);
+  }
+
+  /** Resolve a step's currentA to actual amps, handling C-rate */
+  private resolveCurrentA(step: StepDCC | StepCCV): number {
+    return step.useCRate ? step.currentA * this.capacityAh : step.currentA;
+  }
+
+  /** Compute max loop count for display */
+  private computeTotalCycles(steps: CycleStep[]): number {
+    let max = 1;
+    for (const s of steps) {
+      if (s.type === 'loop') {
+        max = Math.max(max, s.count);
+        // Check nested loops too (though unlikely)
+        const nested = this.computeTotalCycles(s.children);
+        max = Math.max(max, nested);
+      }
+    }
+    return max;
+  }
+
+  /** Recursively flatten steps, expanding loops into linear execution plan */
   private flattenSteps(steps: CycleStep[]): { step: StepDCC | StepDCP | StepCCV | StepWait; cycleNum: number }[] {
     const plan: { step: StepDCC | StepDCP | StepCCV | StepWait; cycleNum: number }[] = [];
 
-    // First, identify which steps are covered by loops
-    const loopSteps = steps.filter((s): s is StepLoop => s.type === 'loop');
-
-    // If no loops, just add all executable steps once
-    if (loopSteps.length === 0) {
-      for (const s of steps) {
-        if (s.type !== 'loop') plan.push({ step: s, cycleNum: 1 });
+    for (const s of steps) {
+      if (s.type === 'loop') {
+        for (let cycle = 1; cycle <= s.count; cycle++) {
+          // Recursively flatten children (handles nested loops)
+          const childPlan = this.flattenSteps(s.children);
+          for (const entry of childPlan) {
+            plan.push({ step: entry.step, cycleNum: cycle });
+          }
+        }
+      } else {
+        plan.push({ step: s, cycleNum: 1 });
       }
-      return plan;
-    }
-
-    // With loops: expand. For simplicity, handle the most common case:
-    // one loop that wraps some contiguous range of steps.
-    // The loop repeats those steps N times.
-    const loop = loopSteps[0]; // Use the first loop
-    const loopedIndices = new Set<number>();
-    for (let i = loop.startIndex; i <= loop.endIndex; i++) {
-      loopedIndices.add(i);
-    }
-
-    // Steps before the loop
-    for (let i = 0; i < loop.startIndex; i++) {
-      const s = steps[i];
-      if (s.type !== 'loop') plan.push({ step: s, cycleNum: 1 });
-    }
-
-    // Looped steps × N
-    for (let cycle = 1; cycle <= loop.count; cycle++) {
-      for (let i = loop.startIndex; i <= loop.endIndex && i < steps.length; i++) {
-        const s = steps[i];
-        if (s.type !== 'loop') plan.push({ step: s, cycleNum: cycle });
-      }
-    }
-
-    // Steps after the loop
-    for (let i = loop.endIndex + 1; i < steps.length; i++) {
-      const s = steps[i];
-      if (s.type !== 'loop') plan.push({ step: s, cycleNum: 1 });
     }
 
     return plan;
@@ -303,14 +368,16 @@ export class CycleRunner {
     logger.info(`Cycle step ${this.execIndex + 1}: ${step.type} (cycle ${cycleNum})`);
 
     switch (step.type) {
-      case 'd-cc':
+      case 'd-cc': {
+        const actualCurrentA = this.resolveCurrentA(step);
         this.recorder.setSetpoints({
-          currentA: step.currentA,
+          currentA: actualCurrentA,
           cutoffV: step.cutoffV,
           maxTimeMin: step.maxTimeMin,
         });
-        await this.session.startDCC(step.currentA, step.cutoffV);
+        await this.session.startDCC(actualCurrentA, step.cutoffV);
         break;
+      }
       case 'd-cp':
         this.recorder.setSetpoints({
           powerW: step.powerW,
@@ -319,15 +386,17 @@ export class CycleRunner {
         });
         await this.session.startDCP(step.powerW, step.cutoffV, step.maxTimeMin ?? 0);
         break;
-      case 'c-cv':
+      case 'c-cv': {
+        const actualCurrentA = this.resolveCurrentA(step);
         this.recorder.setSetpoints({
-          currentA: step.currentA,
+          currentA: actualCurrentA,
           voltageV: step.targetV,
           cutoffCurrentA: step.cutoffCurrentA,
           maxTimeMin: step.maxTimeMin,
         });
-        await this.session.startCCV(step.currentA, step.targetV, step.cutoffCurrentA);
+        await this.session.startCCV(actualCurrentA, step.targetV, step.cutoffCurrentA);
         break;
+      }
     }
   }
 
@@ -367,16 +436,17 @@ export class CycleRunner {
 
   private resumeProgram(program: CycleProgram): void {
     try {
-      const steps = JSON.parse(program.steps_json) as CycleStep[];
+      const rawSteps = JSON.parse(program.steps_json);
+      const steps = migrateV1Steps(rawSteps);
       this.execPlan = this.flattenSteps(steps);
       this.programId = program.id;
       this.programName = program.name;
       this.execIndex = program.current_step;
 
-      this.totalCycles = 1;
-      for (const s of steps) {
-        if (s.type === 'loop') this.totalCycles = Math.max(this.totalCycles, s.count);
-      }
+      // Resolve capacity for C-rate steps
+      this.resolveCapacity(program.cell_id);
+
+      this.totalCycles = this.computeTotalCycles(steps);
 
       // If device is running, we're mid-step — wait for completion
       if (this.session.isRunning()) {
@@ -415,13 +485,5 @@ export class CycleRunner {
     this.execIndex = 0;
     this.totalCycles = 1;
     this.clearWaitTimer();
-  }
-
-  private emit(): void {
-    const state = this.getState();
-    for (const listener of this.listeners) {
-      try { listener(state); }
-      catch (e) { logger.error('Cycle listener error:', e); }
-    }
   }
 }

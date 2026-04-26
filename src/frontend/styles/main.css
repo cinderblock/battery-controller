@@ -983,29 +983,6 @@ html, body {
   padding: 5px 8px;
 }
 
-.unit-toggle {
-  display: flex;
-  border-radius: 6px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  margin-left: auto;
-}
-
-.unit-btn {
-  padding: 5px 12px;
-  font-size: 12px;
-  border: none;
-  background: var(--surface-2);
-  color: var(--text-dim);
-  cursor: pointer;
-}
-
-.unit-btn.active {
-  background: var(--accent);
-  color: #000;
-  font-weight: 600;
-}
-
 /* ── Presets ─────────────────────────────────────────────────────── */
 
 .seq-presets {
@@ -1068,13 +1045,7 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
-/* ── Step list ──────────────────────────────────────────────────── */
-
-.seq-step-list {
-  padding: 8px 16px;
-  flex: 1;
-  min-height: 0;
-}
+/* ── Error ──────────────────────────────────────────────────────── */
 
 .seq-error {
   margin: 8px 16px;
@@ -1085,88 +1056,255 @@ html, body {
   font-size: 13px;
 }
 
-/* ── Step card ──────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════
+   PILL BAR — Horizontal step strip
+   ══════════════════════════════════════════════════════════════════ */
 
-.step-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  margin-bottom: 8px;
-  overflow: hidden;
-}
-
-.step-selected { border-color: var(--accent); }
-
-.step-header {
+.pill-bar {
   display: flex;
+  gap: 6px;
+  padding: 10px 16px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  min-height: 52px;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  cursor: pointer;
+  position: relative;
 }
 
-.step-drag {
+.pill-bar-empty {
   color: var(--text-dim);
-  cursor: grab;
-  font-size: 14px;
-  padding: 4px;
-  opacity: 0.4;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
-.step-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  display: flex;
+.pill-slot {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  font-weight: 700;
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* ── Step pill ──────────────────────────────────────────────────── */
+
+.step-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 18px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  cursor: grab;
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  scroll-snap-align: start;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.step-pill-selected {
+  background: rgba(79, 195, 247, 0.08);
+}
+
+.step-pill-dragging {
+  opacity: 0.3;
+}
+
+.step-pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
   flex-shrink: 0;
 }
 
-.step-icon-discharge { background: rgba(251, 146, 60, 0.15); color: #fb923c; }
-.step-icon-charge { background: rgba(96, 165, 250, 0.15); color: #60a5fa; }
-.step-icon-wait { background: rgba(119, 119, 119, 0.15); color: var(--text-dim); }
-.step-icon-loop { background: rgba(167, 139, 250, 0.15); color: #a78bfa; }
-
-.step-info { flex: 1; min-width: 0; }
-.step-title { font-size: 14px; font-weight: 500; }
-.step-subtitle {
-  font-size: 11px;
-  color: var(--text-dim);
-  margin-top: 1px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.step-pill-label {
+  font-variant-numeric: tabular-nums;
 }
 
-.step-duration {
+/* ── Loop container ─────────────────────────────────────────────── */
+
+.loop-container {
+  display: inline-flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border: 2px solid #a78bfa;
+  border-radius: 12px;
+  padding: 4px 6px 6px;
+  background: rgba(167, 139, 250, 0.04);
+  transition: border-color 0.15s;
+}
+
+.loop-container-selected {
+  border-color: #c4b5fd;
+  background: rgba(167, 139, 250, 0.08);
+}
+
+.loop-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #a78bfa;
+  padding: 0 4px 4px;
+  cursor: pointer;
+}
+
+.loop-icon {
+  font-size: 12px;
+}
+
+.loop-children {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 32px;
+}
+
+.loop-child-slot {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.loop-empty {
+  padding: 6px 16px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+/* ── Drop indicator ─────────────────────────────────────────────── */
+
+.drop-indicator {
+  width: 2px;
+  height: 32px;
+  background: var(--accent);
+  border-radius: 1px;
+  flex-shrink: 0;
+  animation: drop-pulse 0.6s ease-in-out infinite alternate;
+}
+
+@keyframes drop-pulse {
+  from { opacity: 0.5; }
+  to { opacity: 1; }
+}
+
+/* ── Drag ghost ─────────────────────────────────────────────────── */
+
+.drag-ghost {
+  position: fixed;
+  pointer-events: none;
+  z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 18px;
+  background: var(--surface);
+  border: 1.5px solid var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  opacity: 0.85;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   STEP PROPERTIES — Parameter editor panel
+   ══════════════════════════════════════════════════════════════════ */
+
+.step-properties {
+  padding: 12px 16px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.step-properties-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.step-properties-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.step-properties-type {
+  font-size: 14px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.step-properties-duration {
   font-size: 11px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
 }
 
-.step-remove {
-  color: var(--text-dim);
-  cursor: pointer;
+.step-properties-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.step-prop-btn {
   padding: 4px 8px;
-  font-size: 16px;
-  opacity: 0.4;
-}
-.step-remove:hover { color: var(--error); opacity: 1; }
-
-/* ── Step params (expanded) ─────────────────────────────────────── */
-
-.step-params {
-  display: none;
-  padding: 0 14px 14px;
-  border-top: 1px solid var(--border);
-  padding-top: 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
 }
 
-.step-expanded .step-params { display: block; }
+.step-prop-btn:hover { color: var(--text); border-color: var(--text-dim); }
+.step-prop-btn-danger:hover { color: var(--error); border-color: var(--error); }
+
+.step-properties-params {
+  /* Inherits sp-row, sp-input, etc. from below */
+}
+
+/* ── Per-step C-rate toggle ─────────────────────────────────────── */
+
+.crate-step-toggle {
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  min-width: 24px;
+  text-align: center;
+}
+
+.crate-step-toggle.crate-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #000;
+}
+
+/* ── Shared parameter row styles ────────────────────────────────── */
 
 .sp-row {
   display: flex;
@@ -1206,20 +1344,18 @@ html, body {
   border-color: var(--accent);
 }
 
-.sp-select { text-align: left !important; }
-
 .sp-unit {
   font-size: 12px;
   color: var(--text-dim);
-  min-width: 28px;
+  min-width: 20px;
   flex-shrink: 0;
 }
 
-.sp-note {
+.sp-hint {
   font-size: 11px;
   color: var(--text-dim);
-  opacity: 0.6;
-  margin-top: 4px;
+  margin: -6px 0 10px 78px;
+  opacity: 0.7;
 }
 
 /* ── Setpoint bar (visual indicator) ────────────────────────────── */
@@ -1251,9 +1387,11 @@ html, body {
   transform: translateX(-50%);
 }
 
-/* ── Add step panel ─────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════
+   STEP PALETTE — Add new steps
+   ══════════════════════════════════════════════════════════════════ */
 
-.seq-add-panel {
+.step-palette {
   padding: 12px 16px;
   border-top: 1px solid var(--border);
   display: flex;
@@ -1265,7 +1403,7 @@ html, body {
   flex-shrink: 0;
 }
 
-.add-step-btn {
+.palette-btn {
   padding: 10px 16px;
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -1277,11 +1415,12 @@ html, body {
   align-items: center;
   gap: 6px;
   font-weight: 500;
+  touch-action: none;
 }
 
-.add-step-btn:hover { border-color: var(--accent); color: var(--text); }
+.palette-btn:hover { border-color: var(--accent); color: var(--text); }
 
-.add-dot {
+.palette-dot {
   width: 8px;
   height: 8px;
   border-radius: 2px;

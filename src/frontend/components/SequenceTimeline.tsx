@@ -2,22 +2,21 @@
  * SequenceTimeline — canvas-rendered visual preview of a sequence.
  *
  * Shows simulated voltage curves for each step flowing left-to-right.
- * Loop steps are rendered as a bracket/arc below the timeline with "×N",
- * NOT as repeated blocks.
+ * Loop steps are rendered as a bracket/arc below the timeline with "xN",
+ * showing one iteration of the loop's children.
  *
  * Setpoint values (current, cutoff V, target V) are annotated on each block.
  * Tap a block to select the corresponding step.
  */
 
 import { useRef, useEffect, useCallback } from 'react';
-import type {
-  SequenceStep,
-  ExecutableStep,
-} from '../lib/sequence-types.ts';
+import type { SequenceStep, ExecutableStep } from '../lib/sequence-types.ts';
 import {
   simulateStep,
   stepEndVoltage,
   estimateDurationH,
+  flattenForTimeline,
+  resolveCurrentA,
 } from '../lib/sequence-types.ts';
 
 // ── Props ──────────────────────────────────────────────────────────
@@ -35,11 +34,11 @@ const COLORS = {
   bg: '#0a0a0a',
   grid: '#1a1a1a',
   gridLabel: '#333',
-  dcc: '#fb923c',     // orange
-  dcp: '#ffb74d',     // lighter orange
-  ccv: '#60a5fa',     // blue
+  dcc: '#fb923c',
+  dcp: '#ffb74d',
+  ccv: '#60a5fa',
   wait: '#666',
-  loop: '#a78bfa',    // purple
+  loop: '#a78bfa',
   separator: '#2a2a2a',
   text: '#888',
   selectedBg: 0.12,
@@ -59,18 +58,20 @@ function stepColor(step: SequenceStep): string {
 // ── Layout calculation ─────────────────────────────────────────────
 
 interface BlockLayout {
-  stepIndex: number;
+  /** Top-level step index (for selection mapping) */
+  topLevelIndex: number;
   x: number;
   width: number;
   durationH: number;
+  step: ExecutableStep;
+  /** If inside a loop, the loop's top-level index */
+  loopIndex?: number;
 }
 
 interface LoopLayout {
-  stepIndex: number;
-  step: SequenceStep & { type: 'loop' };
-  /** X start of the first covered block */
+  topLevelIndex: number;
+  count: number;
   x: number;
-  /** Total width spanning all covered blocks */
   width: number;
 }
 
@@ -82,42 +83,39 @@ function computeLayout(
   const blocks: BlockLayout[] = [];
   const loops: LoopLayout[] = [];
 
-  // Compute durations for executable steps only
-  const durations: number[] = [];
-  for (let i = 0; i < steps.length; i++) {
-    const s = steps[i];
-    durations.push(s.type === 'loop' ? 0 : estimateDurationH(s, capacityAh));
-  }
-
+  // Flatten for display (one iteration of loops)
+  const flat = flattenForTimeline(steps);
+  const durations = flat.map(f => estimateDurationH(f.step, capacityAh));
   const totalDuration = durations.reduce((a, b) => a + b, 0);
   if (totalDuration <= 0) return { blocks, loops };
 
   let x = 0;
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
-    if (step.type === 'loop') {
-      // Don't render a block — compute span later
-      continue;
-    }
+  for (let i = 0; i < flat.length; i++) {
+    const { step, path } = flat[i];
     const width = (durations[i] / totalDuration) * chartWidth;
-    blocks.push({ stepIndex: i, x, width, durationH: durations[i] });
+    const topLevelIndex = path[0];
+    blocks.push({
+      topLevelIndex,
+      x,
+      width,
+      durationH: durations[i],
+      step,
+      loopIndex: path.length > 1 ? path[0] : undefined,
+    });
     x += width;
   }
 
-  // Compute loop layouts
+  // Compute loop layouts from blocks that share a loopIndex
   for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
-    if (step.type !== 'loop') continue;
-    // Find the blocks that this loop covers
-    const coveredBlocks = blocks.filter(
-      b => b.stepIndex >= step.startIndex && b.stepIndex <= step.endIndex
-    );
-    if (coveredBlocks.length === 0) continue;
-    const first = coveredBlocks[0];
-    const last = coveredBlocks[coveredBlocks.length - 1];
+    const s = steps[i];
+    if (s.type !== 'loop') continue;
+    const loopBlocks = blocks.filter(b => b.loopIndex === i);
+    if (loopBlocks.length === 0) continue;
+    const first = loopBlocks[0];
+    const last = loopBlocks[loopBlocks.length - 1];
     loops.push({
-      stepIndex: i,
-      step,
+      topLevelIndex: i,
+      count: s.count,
       x: first.x,
       width: (last.x + last.width) - first.x,
     });
@@ -196,13 +194,13 @@ export function SequenceTimeline({ steps, selectedIndex, capacityAh, onSelectSte
     }
 
     // Draw each step block
-    let currentV = 3.35; // Start at ~full OCV
+    let currentV = 3.35;
     const PTS_PER_STEP = 60;
 
     for (const block of layout.blocks) {
-      const step = steps[block.stepIndex] as ExecutableStep;
+      const step = block.step;
       const color = stepColor(step);
-      const isSelected = block.stepIndex === selectedIndex;
+      const isSelected = block.topLevelIndex === selectedIndex;
 
       // Background shading
       const bgAlpha = isSelected ? COLORS.selectedBg : COLORS.normalBg;
@@ -210,7 +208,7 @@ export function SequenceTimeline({ steps, selectedIndex, capacityAh, onSelectSte
       ctx.fillRect(pad.l + block.x, pad.t, block.width, ch);
 
       // Simulate voltage curve
-      const sim = simulateStep(step, currentV, PTS_PER_STEP);
+      const sim = simulateStep(step, currentV, PTS_PER_STEP, capacityAh);
 
       // Draw voltage curve
       ctx.strokeStyle = color;
@@ -231,7 +229,6 @@ export function SequenceTimeline({ steps, selectedIndex, capacityAh, onSelectSte
         ctx.lineWidth = 1;
         ctx.setLineDash([3, 3]);
 
-        // Scale current to chart range (0–50A mapped to bottom–top)
         const iMax = 50;
         const yI = (a: number) => pad.t + ch - (a / iMax) * ch;
 
@@ -245,29 +242,31 @@ export function SequenceTimeline({ steps, selectedIndex, capacityAh, onSelectSte
         ctx.restore();
       }
 
-      // Setpoint annotations inside the block
+      // Setpoint annotations
       ctx.textAlign = 'center';
       const centerX = pad.l + block.x + block.width / 2;
 
-      // Top label: step type + current/power
       ctx.fillStyle = color;
       ctx.font = 'bold 10px -apple-system, system-ui, sans-serif';
       let topLabel = '';
-      if (step.type === 'd-cc') topLabel = `D-CC ${step.currentA}A`;
-      else if (step.type === 'd-cp') topLabel = `D-CP ${step.powerW}W`;
-      else if (step.type === 'c-cv') topLabel = `C-CV ${step.currentA}A`;
-      else if (step.type === 'wait') topLabel = `Wait ${Math.round(step.durationS / 60)}m`;
+      if (step.type === 'd-cc') {
+        const amps = resolveCurrentA(step, capacityAh);
+        topLabel = `D-CC ${amps.toFixed(0)}A`;
+      } else if (step.type === 'd-cp') topLabel = `D-CP ${step.powerW}W`;
+      else if (step.type === 'c-cv') {
+        const amps = resolveCurrentA(step, capacityAh);
+        topLabel = `C-CV ${amps.toFixed(0)}A`;
+      } else if (step.type === 'wait') topLabel = `Wait ${Math.round(step.durationS / 60)}m`;
 
       if (block.width > 40) {
         ctx.fillText(topLabel, centerX, pad.t + 12);
       }
 
-      // Bottom label: cutoff/target voltage
       ctx.font = '9px -apple-system, system-ui, sans-serif';
       ctx.fillStyle = `${color}99`;
       let bottomLabel = '';
-      if (step.type === 'd-cc' || step.type === 'd-cp') bottomLabel = `→${step.cutoffV.toFixed(2)}V`;
-      else if (step.type === 'c-cv') bottomLabel = `→${step.targetV.toFixed(2)}V`;
+      if (step.type === 'd-cc' || step.type === 'd-cp') bottomLabel = `\u2192${step.cutoffV.toFixed(2)}V`;
+      else if (step.type === 'c-cv') bottomLabel = `\u2192${step.targetV.toFixed(2)}V`;
 
       if (bottomLabel && block.width > 35) {
         ctx.fillText(bottomLabel, centerX, pad.t + ch - 4);
@@ -275,10 +274,8 @@ export function SequenceTimeline({ steps, selectedIndex, capacityAh, onSelectSte
 
       // Dashed setpoint level lines
       if (step.type === 'd-cc' || step.type === 'd-cp') {
-        // Cutoff voltage horizontal line
         drawSetpointLine(ctx, pad.l + block.x, pad.l + block.x + block.width, yV(step.cutoffV), color);
       } else if (step.type === 'c-cv') {
-        // Target voltage horizontal line
         drawSetpointLine(ctx, pad.l + block.x, pad.l + block.x + block.width, yV(step.targetV), color);
       }
 
@@ -312,7 +309,7 @@ export function SequenceTimeline({ steps, selectedIndex, capacityAh, onSelectSte
       const bracketH = 14;
       const lx = pad.l + loop.x;
       const rx = pad.l + loop.x + loop.width;
-      const isSelected = loop.stepIndex === selectedIndex;
+      const isSelected = loop.topLevelIndex === selectedIndex;
 
       ctx.strokeStyle = color;
       ctx.lineWidth = isSelected ? 2.5 : 1.5;
@@ -340,12 +337,12 @@ export function SequenceTimeline({ steps, selectedIndex, capacityAh, onSelectSte
       ctx.lineTo(rx, bracketY + bracketH);
       ctx.stroke();
 
-      // "×N" label centered
+      // "xN" label centered
       ctx.font = 'bold 11px -apple-system, system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(`×${loop.step.count}`, (lx + rx) / 2, bracketY + bracketH - 2);
+      ctx.fillText(`\u00D7${loop.count}`, (lx + rx) / 2, bracketY + bracketH - 2);
 
-      // Return arrow (small curved arrow from right back to left)
+      // Return arrow
       const arrowY = bracketY + bracketH + 2;
       ctx.beginPath();
       ctx.strokeStyle = `${color}88`;
@@ -367,12 +364,8 @@ export function SequenceTimeline({ steps, selectedIndex, capacityAh, onSelectSte
     }
   }, [steps, selectedIndex, capacityAh]);
 
-  // Draw on mount and when data changes
-  useEffect(() => {
-    draw();
-  }, [draw]);
+  useEffect(() => { draw(); }, [draw]);
 
-  // Resize observer
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -381,33 +374,31 @@ export function SequenceTimeline({ steps, selectedIndex, capacityAh, onSelectSte
     return () => observer.disconnect();
   }, [draw]);
 
-  // Click handler — map click position to step index
   const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
-    const pad = { l: 6, r: 6, t: 20 };
+    const pad = { l: 6, t: 20 };
     const localX = clickX - pad.l;
 
     const { blocks, loops } = layoutRef.current;
 
-    // Check if click is on a loop bracket (lower area)
-    const h = rect.height;
-    if (clickY > h - 42) {
+    // Check loop brackets
+    if (clickY > rect.height - 42) {
       for (const loop of loops) {
         if (localX >= loop.x && localX <= loop.x + loop.width) {
-          onSelectStep(loop.stepIndex);
+          onSelectStep(loop.topLevelIndex);
           return;
         }
       }
     }
 
-    // Otherwise, find which block was clicked
+    // Find which block was clicked
     for (const block of blocks) {
       if (localX >= block.x && localX <= block.x + block.width) {
-        onSelectStep(block.stepIndex);
+        onSelectStep(block.topLevelIndex);
         return;
       }
     }
