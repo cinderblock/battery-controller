@@ -27,6 +27,7 @@ import { TopBar } from '../components/TopBar.tsx';
 import { StartModal } from '../components/StartModal.tsx';
 import { LegendPanel } from '../components/LegendPanel.tsx';
 import { LiveOverlay } from '../components/LiveOverlay.tsx';
+import { CameraView } from '../components/CameraView.tsx';
 
 // ── Component ──────────────────────────────────────────────────────
 
@@ -184,6 +185,7 @@ export function ChartView() {
   return (
     <div className="chart-view">
       <TopBar />
+      <CameraView />
 
       <div className="chart-area">
         {loading ? (

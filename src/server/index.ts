@@ -31,6 +31,13 @@ import {
   getGroupFleetSummary,
   getAllCellStats,
 } from './capacity-estimation.ts';
+import {
+  cameraAvailable,
+  cameraRunning,
+  startCamera,
+  stopCamera,
+  getFrame,
+} from './camera.ts';
 
 const Port = Number(process.env.PORT) || 80;
 
@@ -97,6 +104,11 @@ async function main() {
   session.start();
   recorder.start();
   cycleRunner.start();
+
+  // ── Start camera if RTSP_URL is configured ─────────────────────
+  if (cameraAvailable()) {
+    startCamera();
+  }
 
   // ── Wire session events → WebSocket broadcasts ────────────────
   session.on((event: SessionEvent) => {
@@ -593,6 +605,28 @@ async function main() {
       }
     }
 
+    // ── Camera ────────────────────────────────────────────────
+    if (pathname === '/api/camera/frame' && method === 'GET') {
+      if (!cameraAvailable()) return errorResponse('No camera configured', 404);
+      if (!cameraRunning()) return errorResponse('Camera not running', 503);
+      const frame = await getFrame();
+      if (!frame) return errorResponse('No frame available', 503);
+      return new Response(frame, {
+        headers: {
+          'Content-Type': 'image/jpeg',
+          'Cache-Control': 'no-cache, no-store',
+          'X-Frame-Age': '0',
+        },
+      });
+    }
+
+    if (pathname === '/api/camera/status' && method === 'GET') {
+      return jsonResponse({
+        configured: cameraAvailable(),
+        running: cameraRunning(),
+      });
+    }
+
     // Full SQLite database download
     if (pathname === '/api/export/db' && method === 'GET') {
       const dbPath = process.env.DB_PATH || '/opt/battery-controller/data/battery.db';
@@ -700,6 +734,7 @@ async function main() {
   // ── Graceful shutdown ──────────────────────────────────────────
   async function gracefulShutdown() {
     logger.info('Shutting down...');
+    stopCamera();
     if (activeBridge) {
       await activeBridge.stop();
       activeBridge = null;

@@ -162,7 +162,9 @@ async function installDependencies() {
   }
 
   // Install required packages
-  const packages: string[] = [];
+  const packages: string[] = [
+    'ffmpeg', // Camera frame capture from RTSP stream
+  ];
 
   if (packages.length === 0) {
     log('No dependencies to install', '✅');
