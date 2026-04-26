@@ -131,6 +131,8 @@ export function SequenceEditor() {
 
   // ── Load saved sequence ───────────────────────────────────────
   const loadSaved = useCallback((seq: Sequence) => {
+    // Skip reload if already editing this sequence (avoids resetting name edits)
+    if (editingId === seq.id) return;
     try {
       const raw = JSON.parse(seq.steps_json);
       const parsed = migrateV1Steps(raw);
@@ -142,7 +144,7 @@ export function SequenceEditor() {
     } catch {
       setError('Failed to parse saved sequence');
     }
-  }, []);
+  }, [editingId]);
 
   // ── Save ──────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
@@ -210,25 +212,39 @@ export function SequenceEditor() {
     }
   }, [editingId]);
 
+  // ── Duplicate sequence ──────────────────────────────────────
+  const handleDuplicateSequence = useCallback((seq: Sequence) => {
+    try {
+      const raw = JSON.parse(seq.steps_json);
+      const parsed = migrateV1Steps(raw);
+      setSteps(parsed);
+      setName(`${seq.name} (copy)`);
+      setEditingId(null);  // Save will create a new sequence
+      setSelectedPath([0]);
+      setActivePreset('');
+    } catch {
+      setError('Failed to duplicate sequence');
+    }
+  }, []);
+
   return (
     <div className="seq-editor">
       {/* Header */}
       <div className="seq-header">
         <a className="btn btn-back" href="/">{'\u2190'} Back</a>
-        <span className="seq-header-title">Sequence Editor</span>
+        <input
+          className="seq-header-name"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="Sequence name..."
+        />
         <button className="btn btn-save" onClick={handleSave} disabled={saving}>
           {saving ? 'Saving...' : 'Save'}
         </button>
       </div>
 
-      {/* Name + cell group */}
+      {/* Cell group selector */}
       <div className="seq-info">
-        <input
-          className="seq-name-input"
-          value={name}
-          onChange={e => setName(e.target.value)}
-          placeholder="Sequence name..."
-        />
         <div className="seq-meta">
           <span className="seq-meta-label">Cell:</span>
           <select
@@ -307,6 +323,13 @@ export function SequenceEditor() {
               onClick={() => loadSaved(s)}
             >
               {s.name}
+            </button>
+            <button
+              className="saved-seq-dup"
+              onClick={e => { e.stopPropagation(); handleDuplicateSequence(s); }}
+              title="Duplicate sequence"
+            >
+              {'\u2398'}
             </button>
             <button
               className="saved-seq-delete"

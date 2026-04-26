@@ -954,6 +954,21 @@ html, body {
   flex: 1;
 }
 
+.seq-header-name {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+  padding: 4px 2px;
+  outline: none;
+  min-width: 0;
+}
+.seq-header-name:focus { border-bottom-color: var(--accent); }
+.seq-header-name::placeholder { color: var(--text-dim); font-weight: 400; }
+
 .btn-back {
   padding: 6px 12px;
   font-size: 12px;
@@ -970,31 +985,14 @@ html, body {
 /* ── Seq info ───────────────────────────────────────────────────── */
 
 .seq-info {
-  padding: 16px;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-}
-
-.seq-name-input {
-  width: 100%;
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  color: var(--text);
-  font-size: 20px;
-  font-weight: 600;
-  padding: 4px 0;
-  outline: none;
-}
-
-.seq-name-input:focus {
-  border-color: var(--accent);
 }
 
 .seq-meta {
   display: flex;
   gap: 12px;
-  margin-top: 10px;
   align-items: center;
   flex-wrap: wrap;
 }
@@ -1103,19 +1101,24 @@ html, body {
   border-right: none;
 }
 
+.saved-seq-dup,
 .saved-seq-delete {
-  padding: 0 7px;
+  padding: 0 6px;
   border: 1px solid var(--border);
   border-left: none;
   border-style: dashed;
-  border-top-right-radius: 16px;
-  border-bottom-right-radius: 16px;
+  border-radius: 0;
   background: transparent;
   color: var(--text-dim);
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
   opacity: 0.5;
 }
+.saved-seq-delete {
+  border-top-right-radius: 16px;
+  border-bottom-right-radius: 16px;
+}
+.saved-seq-dup:hover { opacity: 1; color: var(--accent); }
 .saved-seq-delete:hover { opacity: 1; color: var(--error); }
 
 /* ── Timeline ───────────────────────────────────────────────────── */

@@ -342,9 +342,12 @@ export function simulateStep(
         const ccFraction = ccTime / totalTime;
 
         if (f < ccFraction) {
-          // CC phase: constant current, voltage rises to targetV
+          // CC phase: constant current, voltage rises to targetV.
+          // Concave-up curve (x^1.3): voltage accelerates toward target and
+          // has nonzero slope at the CC→CV boundary — no visual lag between
+          // voltage flattening and current starting to drop.
           const ccProgress = f / ccFraction;
-          v = startV + (step.targetV - startV) * (1 - Math.pow(1 - ccProgress, 1.3));
+          v = startV + (step.targetV - startV) * Math.pow(ccProgress, 1.3);
           current = maxCurrent;
         } else {
           // CV phase: voltage flat at targetV, current decays to cutoff
