@@ -23,7 +23,8 @@ import {
   getTestRunsForCell, getTestRun, getRecentTestRuns,
   getDataPointsForRun, getDataPointCount,
   getCellGroups, getCellsInGroup,
-  getSequences, getSequence, createSequence, updateSequence,
+  getSequences, getSequence, createSequence, updateSequence, deleteSequence,
+  createCellGroup,
   getSetting, setSetting,
 } from './db.ts';
 import {
@@ -415,6 +416,25 @@ async function main() {
       return jsonResponse(getCellGroups());
     }
 
+    if (pathname === '/api/cell-groups' && method === 'POST') {
+      const body = await parseBody<{
+        name: string;
+        nominalCapacityMah: number;
+        chemistry: string;
+        chargeVoltageV?: number | null;
+        dischargeCutoffV?: number | null;
+        chargeCutoffCurrentA?: number | null;
+      }>(req);
+      if (!body?.name || !body?.nominalCapacityMah || !body?.chemistry) {
+        return errorResponse('Missing name, nominalCapacityMah, or chemistry');
+      }
+      const group = createCellGroup(
+        body.name, body.nominalCapacityMah, body.chemistry,
+        body.chargeVoltageV, body.dischargeCutoffV, body.chargeCutoffCurrentA,
+      );
+      return jsonResponse(group, 201);
+    }
+
     // /api/cell-groups/:id/cells
     const groupCellsMatch = pathname.match(/^\/api\/cell-groups\/(\d+)\/cells$/);
     if (groupCellsMatch && method === 'GET') {
@@ -483,6 +503,14 @@ async function main() {
       const body = await parseBody<{ name: string; stepsJson: string }>(req);
       if (!body?.name || !body?.stepsJson) return errorResponse('Missing name or stepsJson');
       updateSequence(id, body.name, body.stepsJson);
+      return jsonResponse({ ok: true });
+    }
+
+    if (seqByIdMatch && method === 'DELETE') {
+      const id = parseInt(seqByIdMatch[1], 10);
+      const seq = getSequence(id);
+      if (!seq) return errorResponse('Sequence not found', 404);
+      deleteSequence(id);
       return jsonResponse({ ok: true });
     }
 

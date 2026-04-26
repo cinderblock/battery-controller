@@ -416,6 +416,10 @@ export function updateSequence(id: number, name: string, stepsJson: string): voi
   );
 }
 
+export function deleteSequence(id: number): void {
+  getDb().run('DELETE FROM sequences WHERE id = ?', [id]);
+}
+
 // ── Cycle program operations ────────────────────────────────────────
 
 export interface CycleProgram {
@@ -542,6 +546,25 @@ export function ensureDefaultCellGroup(): CellGroup {
   const result = db.run(
     `INSERT INTO cell_groups (name, nominal_capacity_mah, chemistry, charge_voltage_v, discharge_cutoff_v, charge_cutoff_current_a)
      VALUES ('TS-LFP200AHA', 200000, 'LiFePO4', 3.65, 2.50, 2.00)`
+  );
+  return db.query<CellGroup, [number]>('SELECT * FROM cell_groups WHERE id = ?').get(
+    result.lastInsertRowid as number
+  )!;
+}
+
+export function createCellGroup(
+  name: string,
+  nominalCapacityMah: number,
+  chemistry: string,
+  chargeVoltageV?: number | null,
+  dischargeCutoffV?: number | null,
+  chargeCutoffCurrentA?: number | null,
+): CellGroup {
+  const db = getDb();
+  const result = db.run(
+    `INSERT INTO cell_groups (name, nominal_capacity_mah, chemistry, charge_voltage_v, discharge_cutoff_v, charge_cutoff_current_a)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [name, nominalCapacityMah, chemistry, chargeVoltageV ?? null, dischargeCutoffV ?? null, chargeCutoffCurrentA ?? null]
   );
   return db.query<CellGroup, [number]>('SELECT * FROM cell_groups WHERE id = ?').get(
     result.lastInsertRowid as number
