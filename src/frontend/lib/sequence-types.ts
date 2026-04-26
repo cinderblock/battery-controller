@@ -244,8 +244,17 @@ export function estimateDurationH(step: SequenceStep, capacityAh: number): numbe
     case 'd-cp':
       return step.powerW > 0 ? (capacityAh * LFP_NOMINAL_V / step.powerW) * 0.95 : 0;
     case 'c-cv': {
+      // CC phase: bulk charge at constant current
       const amps = resolveCurrentA(step, capacityAh);
-      return amps > 0 ? (capacityAh / amps) * 1.3 : 0;
+      if (amps <= 0) return 0;
+      const ccHours = (capacityAh / amps) * 0.8; // CC fills ~80% of capacity
+      // CV phase: current tapers exponentially from amps to cutoffCurrentA.
+      // Model as exponential decay with time constant tau.
+      // Duration ≈ tau * ln(amps / cutoff), tau ≈ capacityAh / amps.
+      const cutoff = Math.max(step.cutoffCurrentA, 0.01);
+      const tau = capacityAh / amps * 0.3; // empirical time constant
+      const cvHours = tau * Math.log(amps / cutoff);
+      return ccHours + Math.max(0, cvHours);
     }
     case 'wait':
       return step.durationS / 3600;
