@@ -9,19 +9,16 @@
  * - Header (back, title, save)
  * - Name + cell group
  * - Presets / saved sequences
- * - Canvas timeline (voltage preview)
- * - Horizontal pill bar (step chips, drag-to-reorder)
+ * - Canvas timeline (interactive — click blocks to select, pill badges for setpoints)
+ * - Estimated duration bar
  * - Properties panel (selected step's parameters)
  * - Step palette (add new steps)
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { api, apiPost, type CellGroup, type Sequence } from '../api-client.ts';
 import type { SequenceStep, StepPath } from '../lib/sequence-types.ts';
 import {
-  defaultDCC,
-  defaultCCV,
-  defaultWait,
   totalEstimatedDurationH,
   getStepAtPath,
   updateStepAtPath,
@@ -32,10 +29,8 @@ import {
   PRESETS,
 } from '../lib/sequence-types.ts';
 import { SequenceTimeline } from '../components/SequenceTimeline.tsx';
-import { StepPillBar } from '../components/StepPillBar.tsx';
 import { StepProperties } from '../components/StepProperties.tsx';
 import { StepPalette } from '../components/StepPalette.tsx';
-import { useDragReorder } from '../hooks/useDragReorder.ts';
 
 // ── Component ──────────────────────────────────────────────────────
 
@@ -53,6 +48,13 @@ export function SequenceEditor() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // ── Cell group creation ──────────────────────────────────────
+  const [showNewGroup, setShowNewGroup] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupCapacity, setNewGroupCapacity] = useState('200');
+  const [newGroupChemistry, setNewGroupChemistry] = useState('LiFePO4');
+  const newGroupNameRef = useRef<HTMLInputElement>(null);
 
   const selectedGroup = cellGroups.find(g => g.id === selectedGroupId) ?? cellGroups[0];
   const capacityAh = selectedGroup ? selectedGroup.nominal_capacity_mah / 1000 : 200;
@@ -108,32 +110,15 @@ export function SequenceEditor() {
     setActivePreset('');
   }, [steps]);
 
-  const handleSelect = useCallback((path: StepPath) => {
+  const handleTimelineSelect = useCallback((path: number[]) => {
     setSelectedPath(path);
   }, []);
 
-  // For timeline click (uses flat index)
-  const handleTimelineSelect = useCallback((index: number) => {
-    // Timeline shows flattened executable steps — map index back to path
-    // For now, use simple top-level indexing
-    setSelectedPath([index]);
-  }, []);
-
-  // ── Drag-and-drop ─────────────────────────────────────────────
-
-  const handleReorder = useCallback((fromPath: StepPath, toPath: StepPath) => {
+  const handleReorder = useCallback((fromPath: number[], toPath: number[]) => {
     setSteps(prev => moveStep(prev, fromPath, toPath));
+    setSelectedPath(null);
     setActivePreset('');
   }, []);
-
-  const handleInsertNew = useCallback((step: SequenceStep, atPath: StepPath) => {
-    setSteps(prev => insertStepAtPath(prev, atPath, step));
-    setSelectedPath(atPath);
-    setActivePreset('');
-  }, []);
-
-  const { dragState, dragPropsForPath, startPaletteDrag, barProps } =
-    useDragReorder(steps, handleReorder, handleInsertNew);
 
   // ── Presets ───────────────────────────────────────────────────
   const loadPreset = useCallback((preset: typeof PRESETS[number]) => {
@@ -188,6 +173,43 @@ export function SequenceEditor() {
     }
   }, [name, steps, editingId, selectedGroupId]);
 
+  // ── Create cell group ────────────────────────────────────────
+  const handleCreateGroup = useCallback(async () => {
+    const trimmed = newGroupName.trim();
+    if (!trimmed) { setError('Enter a cell group name'); return; }
+    const capAh = parseFloat(newGroupCapacity);
+    if (!capAh || capAh <= 0) { setError('Enter a valid capacity'); return; }
+    setError(null);
+    try {
+      const group = await apiPost<CellGroup>('/api/cell-groups', {
+        name: trimmed,
+        nominalCapacityMah: Math.round(capAh * 1000),
+        chemistry: newGroupChemistry,
+      });
+      setCellGroups(prev => [...prev, group]);
+      setSelectedGroupId(group.id);
+      setShowNewGroup(false);
+      setNewGroupName('');
+      setNewGroupCapacity('200');
+      setNewGroupChemistry('LiFePO4');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create cell group');
+    }
+  }, [newGroupName, newGroupCapacity, newGroupChemistry]);
+
+  // ── Delete sequence ──────────────────────────────────────────
+  const handleDeleteSequence = useCallback(async (seqId: number) => {
+    try {
+      await api(`/api/sequences/${seqId}`, { method: 'DELETE' });
+      setSavedSequences(prev => prev.filter(s => s.id !== seqId));
+      if (editingId === seqId) {
+        setEditingId(null);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed');
+    }
+  }, [editingId]);
+
   return (
     <div className="seq-editor">
       {/* Header */}
@@ -208,21 +230,63 @@ export function SequenceEditor() {
           placeholder="Sequence name..."
         />
         <div className="seq-meta">
-          {cellGroups.length > 0 && (
-            <>
-              <span className="seq-meta-label">Cell:</span>
-              <select
-                className="seq-meta-select"
-                value={selectedGroupId ?? ''}
-                onChange={e => setSelectedGroupId(parseInt(e.target.value, 10) || null)}
-              >
-                {cellGroups.map(g => (
-                  <option key={g.id} value={g.id}>{g.name} — {g.nominal_capacity_mah / 1000} Ah</option>
-                ))}
-              </select>
-            </>
-          )}
+          <span className="seq-meta-label">Cell:</span>
+          <select
+            className="seq-meta-select"
+            value={selectedGroupId ?? ''}
+            onChange={e => setSelectedGroupId(parseInt(e.target.value, 10) || null)}
+          >
+            {cellGroups.map(g => (
+              <option key={g.id} value={g.id}>{g.name} — {g.nominal_capacity_mah / 1000} Ah</option>
+            ))}
+          </select>
+          <button
+            className="btn btn-add-group"
+            onClick={() => {
+              setShowNewGroup(v => !v);
+              setTimeout(() => newGroupNameRef.current?.focus(), 50);
+            }}
+            title="Add cell type"
+          >
+            +
+          </button>
         </div>
+        {showNewGroup && (
+          <div className="new-group-form">
+            <input
+              ref={newGroupNameRef}
+              className="new-group-input"
+              value={newGroupName}
+              onChange={e => setNewGroupName(e.target.value)}
+              placeholder="Name (e.g. EVE LF280K)"
+              onKeyDown={e => e.key === 'Enter' && handleCreateGroup()}
+            />
+            <input
+              className="new-group-input new-group-capacity"
+              type="number"
+              value={newGroupCapacity}
+              onChange={e => setNewGroupCapacity(e.target.value)}
+              placeholder="Ah"
+              min="0.1"
+              step="0.1"
+              onKeyDown={e => e.key === 'Enter' && handleCreateGroup()}
+            />
+            <span className="new-group-unit">Ah</span>
+            <select
+              className="new-group-input new-group-chem"
+              value={newGroupChemistry}
+              onChange={e => setNewGroupChemistry(e.target.value)}
+            >
+              <option value="LiFePO4">LiFePO4</option>
+              <option value="Li-ion">Li-ion</option>
+              <option value="LiPo">LiPo</option>
+              <option value="NiMH">NiMH</option>
+              <option value="Lead-acid">Lead-acid</option>
+            </select>
+            <button className="btn btn-confirm-group" onClick={handleCreateGroup}>Add</button>
+            <button className="btn btn-cancel-group" onClick={() => setShowNewGroup(false)}>Cancel</button>
+          </div>
+        )}
       </div>
 
       {/* Presets + saved sequences */}
@@ -237,22 +301,32 @@ export function SequenceEditor() {
           </button>
         ))}
         {savedSequences.map(s => (
-          <button
-            key={s.id}
-            className={`preset-btn preset-saved ${editingId === s.id ? 'preset-active' : ''}`}
-            onClick={() => loadSaved(s)}
-          >
-            {s.name}
-          </button>
+          <span key={s.id} className="saved-seq-pill">
+            <button
+              className={`preset-btn preset-saved ${editingId === s.id ? 'preset-active' : ''}`}
+              onClick={() => loadSaved(s)}
+            >
+              {s.name}
+            </button>
+            <button
+              className="saved-seq-delete"
+              onClick={e => { e.stopPropagation(); handleDeleteSequence(s.id); }}
+              title="Delete sequence"
+            >
+              {'\u00D7'}
+            </button>
+          </span>
         ))}
       </div>
 
       {/* Visual timeline */}
       <SequenceTimeline
         steps={steps}
-        selectedIndex={selectedPath?.[0] ?? null}
+        selectedPath={selectedPath}
         capacityAh={capacityAh}
         onSelectStep={handleTimelineSelect}
+        onReorder={handleReorder}
+        onUpdate={handleUpdate}
       />
 
       {/* Estimated duration */}
@@ -260,17 +334,6 @@ export function SequenceEditor() {
         <span>Estimated duration</span>
         <span className="seq-est-time">{durationStr}</span>
       </div>
-
-      {/* Horizontal pill bar */}
-      <StepPillBar
-        steps={steps}
-        selectedPath={selectedPath}
-        capacityAh={capacityAh}
-        onSelect={handleSelect}
-        dragState={dragState}
-        dragPropsForPath={dragPropsForPath}
-        barProps={barProps}
-      />
 
       {/* Properties panel for selected step */}
       {selectedStep && selectedPath && (
@@ -287,10 +350,7 @@ export function SequenceEditor() {
       {error && <div className="seq-error">{error}</div>}
 
       {/* Step palette (add new steps) */}
-      <StepPalette
-        onAdd={addStep}
-        startPaletteDrag={startPaletteDrag}
-      />
+      <StepPalette onAdd={addStep} />
     </div>
   );
 }

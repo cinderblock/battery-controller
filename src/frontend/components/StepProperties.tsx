@@ -5,9 +5,9 @@
  * Each current-bearing step has a per-step Amps/C-rate toggle.
  */
 
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import type { SequenceStep, StepPath } from '../lib/sequence-types.ts';
-import { estimateDurationH, resolveCurrentA } from '../lib/sequence-types.ts';
+import { estimateDurationH, resolveCurrentA, parseDurationInput, formatMinutes } from '../lib/sequence-types.ts';
 
 // ── Props ──────────────────────────────────────────────────────────
 
@@ -101,7 +101,43 @@ function ParamRow({
   );
 }
 
-// ── C-rate toggle ──────────────────────────────────────────────────
+/** Time input row — accepts human-readable durations like "8h", "30m", "8h 30m" */
+function TimeRow({ label, minutes, onChange }: { label: string; minutes: number; onChange: (min: number) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const commit = useCallback((raw: string) => {
+    const parsed = parseDurationInput(raw);
+    if (parsed !== null) {
+      onChange(parsed);
+      if (inputRef.current) inputRef.current.value = formatMinutes(parsed);
+    } else {
+      // Reset to current value on invalid input
+      if (inputRef.current) inputRef.current.value = formatMinutes(minutes);
+    }
+  }, [minutes, onChange]);
+
+  return (
+    <div className="sp-row">
+      <span className="sp-label">{label}</span>
+      <div className="sp-input-group">
+        <input
+          ref={inputRef}
+          className="sp-input"
+          type="text"
+          defaultValue={formatMinutes(minutes)}
+          key={minutes}
+          placeholder="e.g. 8h 30m"
+          onBlur={e => commit(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); commit((e.target as HTMLInputElement).value); }
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── C-rate toggle ─────────────���────────────────────────────────────
 
 function CRateToggle({ useCRate, onToggle }: { useCRate: boolean; onToggle: () => void }) {
   return (
@@ -206,14 +242,10 @@ export function StepProperties({
               color={color}
               onChange={v => handleFieldChange('cutoffV', v)}
             />
-            <ParamRow
+            <TimeRow
               label="Max time"
-              value={step.maxTimeMin ?? 0}
-              unit="min"
-              step={1}
-              min={0}
-              max={9999}
-              onChange={v => handleFieldChange('maxTimeMin', v)}
+              minutes={step.maxTimeMin ?? 0}
+              onChange={v => handleFieldChange('maxTimeMin', v || undefined as any)}
             />
           </>
         )}
@@ -240,14 +272,10 @@ export function StepProperties({
               color={color}
               onChange={v => handleFieldChange('cutoffV', v)}
             />
-            <ParamRow
+            <TimeRow
               label="Max time"
-              value={step.maxTimeMin ?? 0}
-              unit="min"
-              step={1}
-              min={0}
-              max={9999}
-              onChange={v => handleFieldChange('maxTimeMin', v)}
+              minutes={step.maxTimeMin ?? 0}
+              onChange={v => handleFieldChange('maxTimeMin', v || undefined as any)}
             />
           </>
         )}
@@ -288,27 +316,19 @@ export function StepProperties({
               color={color}
               onChange={v => handleFieldChange('cutoffCurrentA', v)}
             />
-            <ParamRow
+            <TimeRow
               label="Max time"
-              value={step.maxTimeMin ?? 0}
-              unit="min"
-              step={1}
-              min={0}
-              max={9999}
-              onChange={v => handleFieldChange('maxTimeMin', v)}
+              minutes={step.maxTimeMin ?? 0}
+              onChange={v => handleFieldChange('maxTimeMin', v || undefined as any)}
             />
           </>
         )}
 
         {step.type === 'wait' && (
-          <ParamRow
+          <TimeRow
             label="Duration"
-            value={Math.round(step.durationS / 60)}
-            unit="min"
-            step={1}
-            min={1}
-            max={9999}
-            onChange={v => handleFieldChange('durationS', v * 60)}
+            minutes={Math.round(step.durationS / 60)}
+            onChange={v => handleFieldChange('durationS', Math.max(1, v) * 60)}
           />
         )}
 
@@ -323,6 +343,17 @@ export function StepProperties({
             color={color}
             onChange={v => handleFieldChange('count', v)}
           />
+        )}
+
+        {step.type !== 'loop' && (
+          <label className="sp-exclude">
+            <input
+              type="checkbox"
+              checked={!!('excludeFromCount' in step && step.excludeFromCount)}
+              onChange={e => handleFieldChange('excludeFromCount', e.target.checked)}
+            />
+            <span>Don't count this step</span>
+          </label>
         )}
       </div>
     </div>

@@ -1039,11 +1039,90 @@ html, body {
 .preset-active { border-color: var(--accent); color: var(--accent) !important; }
 .preset-saved { border-style: dashed; }
 
+/* ── Add cell group ───────────────────────────────────────────── */
+
+.btn-add-group {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.btn-add-group:hover { color: var(--accent); border-color: var(--accent); }
+
+.new-group-form {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px 0;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.new-group-input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 5px 8px;
+}
+.new-group-input:focus { border-color: var(--accent); outline: none; }
+.new-group-capacity { width: 70px; }
+.new-group-chem { width: 110px; }
+.new-group-unit { font-size: 12px; color: var(--text-dim); margin-left: -4px; }
+
+.btn-confirm-group,
+.btn-cancel-group {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-confirm-group { background: var(--accent); color: #000; border-color: var(--accent); }
+.btn-cancel-group { background: transparent; color: var(--text-dim); }
+
+/* ── Saved sequence pills ─────────────────────────────────────── */
+
+.saved-seq-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.saved-seq-pill .preset-btn {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: none;
+}
+
+.saved-seq-delete {
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-left: none;
+  border-style: dashed;
+  border-top-right-radius: 16px;
+  border-bottom-right-radius: 16px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0.5;
+}
+.saved-seq-delete:hover { opacity: 1; color: var(--error); }
+
 /* ── Timeline ───────────────────────────────────────────────────── */
 
 .seq-timeline-wrap {
   position: relative;
-  height: 160px;
+  height: 180px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -1053,6 +1132,115 @@ html, body {
   width: 100%;
   height: 100%;
   cursor: pointer;
+}
+
+/* ── Timeline block overlays ────────────────────────────────────── */
+
+.tl-block {
+  position: absolute;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.tl-block-dragging {
+  opacity: 0.3;
+}
+
+.tl-block-excluded::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 4px,
+    rgba(255,255,255,0.04) 4px,
+    rgba(255,255,255,0.04) 8px
+  );
+  pointer-events: none;
+}
+
+/* ── Editable pills ─────────────────────────────────────────────── */
+
+.tl-pill {
+  position: absolute;
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  font: bold 9px/1 'SF Mono', Consolas, 'Courier New', monospace;
+  white-space: nowrap;
+  cursor: pointer;
+  border: 1px solid transparent;
+  touch-action: manipulation;
+  z-index: 1;
+  transition: border-color 0.15s;
+}
+
+.tl-pill:active {
+  border-color: var(--accent);
+}
+
+.tl-pill-readonly {
+  pointer-events: none;
+  cursor: default;
+  background: none !important;
+  border: none !important;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* Pill positions within block overlay */
+.tl-pill-tl { top: 3px; left: 3px; }
+.tl-pill-tr { top: 3px; right: 3px; }
+.tl-pill-bl { bottom: 3px; left: 3px; }
+.tl-pill-br { bottom: 3px; right: 3px; }
+.tl-pill-center {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* Editing mode */
+.tl-pill-editing {
+  background: var(--surface-2) !important;
+  border: 1px solid var(--accent) !important;
+  pointer-events: auto;
+  padding: 1px 3px;
+  z-index: 10;
+}
+
+.tl-pill-input {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font: bold 10px/1 'SF Mono', Consolas, 'Courier New', monospace;
+  width: 36px;
+  text-align: center;
+  outline: none;
+  padding: 0;
+}
+
+.tl-pill-input[type='text'] {
+  width: 56px;
+}
+
+/* Remove number input spinners */
+.tl-pill-input::-webkit-inner-spin-button,
+.tl-pill-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.tl-pill-input[type='number'] {
+  -moz-appearance: textfield;
+}
+
+.tl-pill-unit {
+  opacity: 0.6;
+  font-size: 8px;
+  font-weight: 600;
 }
 
 /* ── Estimated duration ─────────────────────────────────────────── */
@@ -1084,173 +1272,6 @@ html, body {
   border-radius: 6px;
   color: var(--error);
   font-size: 13px;
-}
-
-/* ══════════════════════════════════════════════════════════════════
-   PILL BAR — Horizontal step strip
-   ══════════════════════════════════════════════════════════════════ */
-
-.pill-bar {
-  display: flex;
-  gap: 6px;
-  padding: 10px 16px;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scroll-snap-type: x proximity;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-  min-height: 52px;
-  align-items: center;
-  position: relative;
-}
-
-.pill-bar-empty {
-  color: var(--text-dim);
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.pill-slot {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  position: relative;
-}
-
-/* ── Step pill ──────────────────────────────────────────────────── */
-
-.step-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 18px;
-  background: var(--surface);
-  border: 1.5px solid var(--border);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-  white-space: nowrap;
-  cursor: grab;
-  flex-shrink: 0;
-  user-select: none;
-  -webkit-user-select: none;
-  touch-action: none;
-  scroll-snap-align: start;
-  transition: border-color 0.15s, background 0.15s;
-}
-
-.step-pill-selected {
-  background: rgba(79, 195, 247, 0.08);
-}
-
-.step-pill-dragging {
-  opacity: 0.3;
-}
-
-.step-pill-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-
-.step-pill-label {
-  font-variant-numeric: tabular-nums;
-}
-
-/* ── Loop container ─────────────────────────────────────────────── */
-
-.loop-container {
-  display: inline-flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  border: 2px solid #a78bfa;
-  border-radius: 12px;
-  padding: 4px 6px 6px;
-  background: rgba(167, 139, 250, 0.04);
-  transition: border-color 0.15s;
-}
-
-.loop-container-selected {
-  border-color: #c4b5fd;
-  background: rgba(167, 139, 250, 0.08);
-}
-
-.loop-header {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  font-weight: 600;
-  color: #a78bfa;
-  padding: 0 4px 4px;
-  cursor: pointer;
-}
-
-.loop-icon {
-  font-size: 12px;
-}
-
-.loop-children {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  min-height: 32px;
-}
-
-.loop-child-slot {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  position: relative;
-}
-
-.loop-empty {
-  padding: 6px 16px;
-  font-size: 11px;
-  color: var(--text-dim);
-  border: 1px dashed var(--border);
-  border-radius: 12px;
-  white-space: nowrap;
-}
-
-/* ── Drop indicator ─────────────────────────────────────────────── */
-
-.drop-indicator {
-  width: 2px;
-  height: 32px;
-  background: var(--accent);
-  border-radius: 1px;
-  flex-shrink: 0;
-  animation: drop-pulse 0.6s ease-in-out infinite alternate;
-}
-
-@keyframes drop-pulse {
-  from { opacity: 0.5; }
-  to { opacity: 1; }
-}
-
-/* ── Drag ghost ─────────────────────────────────────────────────── */
-
-.drag-ghost {
-  position: fixed;
-  pointer-events: none;
-  z-index: 1000;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 18px;
-  background: var(--surface);
-  border: 1.5px solid var(--accent);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-  white-space: nowrap;
-  opacity: 0.85;
-  transform: translate(-50%, -50%);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1415,6 +1436,27 @@ html, body {
   border-radius: 2px;
   background: var(--bg);
   transform: translateX(-50%);
+}
+
+/* ── Exclude from count checkbox ──────────────────────────────── */
+
+.sp-exclude {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.sp-exclude input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 /* ══════════════════════════════════════════════════════════════════

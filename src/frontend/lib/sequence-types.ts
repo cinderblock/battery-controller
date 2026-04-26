@@ -15,6 +15,8 @@ export interface StepDCC {
   maxTimeMin?: number;
   /** When true, currentA stores C-rate (e.g. 0.2 = 0.2C). Actual amps = currentA * capacityAh */
   useCRate?: boolean;
+  /** When true, this step's measurements are excluded from cycle results (setup/teardown step) */
+  excludeFromCount?: boolean;
 }
 
 export interface StepDCP {
@@ -22,6 +24,8 @@ export interface StepDCP {
   powerW: number;
   cutoffV: number;
   maxTimeMin?: number;
+  /** When true, this step's measurements are excluded from cycle results (setup/teardown step) */
+  excludeFromCount?: boolean;
 }
 
 export interface StepCCV {
@@ -32,11 +36,15 @@ export interface StepCCV {
   maxTimeMin?: number;
   /** When true, currentA stores C-rate (e.g. 0.2 = 0.2C). Actual amps = currentA * capacityAh */
   useCRate?: boolean;
+  /** When true, this step's measurements are excluded from cycle results (setup/teardown step) */
+  excludeFromCount?: boolean;
 }
 
 export interface StepWait {
   type: 'wait';
   durationS: number;
+  /** When true, this step's measurements are excluded from cycle results (setup/teardown step) */
+  excludeFromCount?: boolean;
 }
 
 export interface StepLoop {
@@ -50,6 +58,40 @@ export type SequenceStep = StepDCC | StepDCP | StepCCV | StepWait | StepLoop;
 
 /** A step that actually runs on the device (not a loop) */
 export type ExecutableStep = StepDCC | StepDCP | StepCCV | StepWait;
+
+// ── Duration parsing / formatting ────────────────────────────────
+
+/** Parse a human-readable duration string into minutes.
+ *  Accepts: "480" (plain number = minutes), "8h", "30m", "8h3m", "8h 30m", "8h 30" */
+export function parseDurationInput(input: string): number | null {
+  const s = input.trim();
+  if (!s) return null;
+
+  // Plain number → minutes
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const v = parseFloat(s);
+    return isNaN(v) ? null : v;
+  }
+
+  // h/m pattern: optional hours, optional minutes (m suffix optional after h component)
+  const match = s.match(/^(?:(\d+(?:\.\d+)?)\s*h)?\s*(?:(\d+(?:\.\d+)?)\s*m?)?$/i);
+  if (!match || (!match[1] && !match[2])) return null;
+
+  const hours = match[1] ? parseFloat(match[1]) : 0;
+  const minutes = match[2] ? parseFloat(match[2]) : 0;
+  const total = hours * 60 + minutes;
+  return isNaN(total) ? null : total;
+}
+
+/** Format minutes as a human-readable duration string for display and editing.
+ *  Returns "" for 0/falsy, "30m" for < 60, "8h" or "8h 3m" for larger values. */
+export function formatMinutes(minutes: number): string {
+  if (!minutes || minutes <= 0) return '';
+  if (minutes < 60) return `${Math.round(minutes)}m`;
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
 
 // ── Path-based addressing ─────────────────────────────────────────
 
@@ -278,16 +320,21 @@ export function simulateStep(
       }
 
       case 'c-cv': {
-        const ccFraction = 0.6;
+        // CC-CV charge: CC phase raises voltage to target, CV phase holds
+        // voltage flat while current tapers to cutoff.
+        const ccFraction = 0.55; // fraction of time spent in CC phase
         const maxCurrent = resolveCurrentA(step, capacityAh);
         if (f < ccFraction) {
+          // CC phase: constant current, voltage rises to targetV
           const ccProgress = f / ccFraction;
-          v = startV + (step.targetV - 0.15 - startV) * ccProgress;
+          // Slight curve (not perfectly linear) — voltage accelerates near the end
+          v = startV + (step.targetV - startV) * (1 - Math.pow(1 - ccProgress, 1.3));
           current = maxCurrent;
         } else {
+          // CV phase: voltage held at targetV, current tapers exponentially
+          v = step.targetV;
           const cvProgress = (f - ccFraction) / (1 - ccFraction);
-          v = (step.targetV - 0.15) + 0.15 * (1 - Math.exp(-4 * cvProgress));
-          current = maxCurrent * Math.exp(-3 * cvProgress);
+          current = maxCurrent * Math.exp(-3.5 * cvProgress);
           current = Math.max(current, step.cutoffCurrentA);
         }
         break;
