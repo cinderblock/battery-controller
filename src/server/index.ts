@@ -709,6 +709,7 @@ async function main() {
             stats: session.getTestStats(),
             deviceInfo: session.getDeviceInfo(),
             activeRunId: recorder.getActiveRunId(),
+            activeRunMaxTimeMin: recorder.getActiveRunMaxTimeMin(),
             serialConnected: serialManager.isPortOpen(),
             deviceResponsive: session.isDeviceResponsive(),
             locked: settingsLock.isLocked(),

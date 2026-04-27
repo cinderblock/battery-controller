@@ -47,6 +47,7 @@ export interface WsSnapshot {
     stats: TestStats;
     deviceInfo: DeviceInfo | null;
     activeRunId: number | null;
+    activeRunMaxTimeMin: number | null;
     serialConnected: boolean;
     deviceResponsive: boolean;
     locked: boolean;

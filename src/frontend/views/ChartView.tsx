@@ -19,10 +19,12 @@ import {
 import {
   mergeRunsForChart,
   mergeCapacityChart,
+  mergeActiveRunWithLive,
   dataPointsToChartRun,
   runToCapacityDomain,
   type ChartRun,
   type MetricKey,
+  type ThresholdLine,
 } from '../lib/chart-data.ts';
 import { getDefaultReferenceCurves } from '../lib/lfp-reference-curves.ts';
 import { Chart } from '../components/Chart.tsx';
@@ -177,8 +179,9 @@ export function ChartView() {
       visibleRuns,
       visibleMetrics,
       isTestActive,
+      state.activeRunId,
     ),
-    [runs, state.livePoints, visibleRuns, visibleMetrics, isTestActive]
+    [runs, state.livePoints, visibleRuns, visibleMetrics, isTestActive, state.activeRunId]
   );
 
   // ── Capacity chart data ───────────────────────────────────────
@@ -186,9 +189,15 @@ export function ChartView() {
   const nominalMah = selectedGroup?.nominal_capacity_mah ?? 200000;
   const nominalAh = nominalMah / 1000;
 
+  // Merge live points into the active run so the capacity chart stays current
+  const runsWithLive = useMemo(
+    () => mergeActiveRunWithLive(runs, state.activeRunId, state.livePoints),
+    [runs, state.activeRunId, state.livePoints]
+  );
+
   const capacityRuns = useMemo(
-    () => runs.map(run => runToCapacityDomain(run, nominalMah)),
-    [runs, nominalMah]
+    () => runsWithLive.map(run => runToCapacityDomain(run, nominalMah)),
+    [runsWithLive, nominalMah]
   );
 
   const referenceCurves = useMemo(
@@ -200,6 +209,42 @@ export function ChartView() {
     () => mergeCapacityChart(capacityRuns, referenceCurves, visibleRuns),
     [capacityRuns, referenceCurves, visibleRuns]
   );
+
+  // ── Threshold lines from active run setpoints ──────────────────
+  const thresholds = useMemo((): ThresholdLine[] => {
+    const activeRun = runs.find(r => r.id === state.activeRunId);
+    if (!activeRun?.meta) return [];
+
+    const meta = activeRun.meta;
+    const lines: ThresholdLine[] = [];
+
+    if (meta.setpoint_cutoff_v != null) {
+      lines.push({
+        value: meta.setpoint_cutoff_v,
+        scale: 'V',
+        label: `Cutoff ${meta.setpoint_cutoff_v.toFixed(2)}V`,
+        color: 'rgba(244, 67, 54, 0.5)',
+      });
+    }
+    if (meta.setpoint_voltage_v != null && meta.mode === 'c-cv') {
+      lines.push({
+        value: meta.setpoint_voltage_v,
+        scale: 'V',
+        label: `Target ${meta.setpoint_voltage_v.toFixed(2)}V`,
+        color: 'rgba(79, 195, 247, 0.5)',
+      });
+    }
+    if (meta.setpoint_cutoff_current_a != null) {
+      lines.push({
+        value: meta.setpoint_cutoff_current_a,
+        scale: 'A',
+        label: `Cutoff ${meta.setpoint_cutoff_current_a.toFixed(1)}A`,
+        color: 'rgba(129, 199, 132, 0.5)',
+      });
+    }
+
+    return lines;
+  }, [runs, state.activeRunId]);
 
   // ── Toggle handlers ──────────────────────────────────────────
   const toggleMetric = useCallback((metric: MetricKey) => {
@@ -243,7 +288,7 @@ export function ChartView() {
           <div className="chart-loading">Loading runs...</div>
         ) : chartMode === 'time' ? (
           chartData.data[0]?.length ? (
-            <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} />
+            <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} thresholds={thresholds} />
           ) : (
             <div className="chart-empty">
               {runs.length === 0
@@ -253,7 +298,7 @@ export function ChartView() {
           )
         ) : (
           capacityChartData.data[0]?.length ? (
-            <CapacityChart data={capacityChartData.data} seriesInfo={capacityChartData.seriesInfo} />
+            <CapacityChart data={capacityChartData.data} seriesInfo={capacityChartData.seriesInfo} thresholds={thresholds} />
           ) : (
             <div className="chart-empty">
               {runs.length === 0

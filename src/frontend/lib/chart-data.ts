@@ -44,6 +44,15 @@ export interface ChartSeriesInfo {
   isLive: boolean;
 }
 
+/** Horizontal threshold line drawn on the chart (cutoff voltage, target current, etc.) */
+export interface ThresholdLine {
+  value: number;
+  /** uPlot scale key: 'V', 'A', 'W', 'Ah' */
+  scale: string;
+  label: string;
+  color: string;
+}
+
 export interface MergedChartData {
   /** Aligned data for uPlot: [xValues, ...seriesValues] */
   data: (number | null | undefined)[][];
@@ -139,6 +148,56 @@ export function livePointsToArrays(points: LivePoint[]): {
   return { elapsed, voltage, current, power, capacity };
 }
 
+// ── Active run + live point merging ──────────────────────────────────
+
+/**
+ * Merge a run's REST-loaded data with live WebSocket points into one
+ * contiguous dataset. Takes all REST points before the first live point's
+ * timestamp, then appends all live points — so the boundary is seamless.
+ */
+function mergeActiveRunAndLivePoints(
+  run: ChartRun,
+  livePoints: LivePoint[],
+): { elapsed: number[]; voltage: number[]; current: number[]; power: number[]; capacity: number[] } {
+  const liveData = livePointsToArrays(livePoints);
+  const firstLiveT = liveData.elapsed[0] ?? Infinity;
+
+  // Find cutoff: last REST point before the first live point
+  let cutoff = run.elapsed.length;
+  for (let i = 0; i < run.elapsed.length; i++) {
+    if (run.elapsed[i] >= firstLiveT) {
+      cutoff = i;
+      break;
+    }
+  }
+
+  return {
+    elapsed: [...run.elapsed.slice(0, cutoff), ...liveData.elapsed],
+    voltage: [...run.voltage.slice(0, cutoff), ...liveData.voltage],
+    current: [...run.current.slice(0, cutoff), ...liveData.current],
+    power: [...run.power.slice(0, cutoff), ...liveData.power],
+    capacity: [...run.capacity.slice(0, cutoff), ...liveData.capacity],
+  };
+}
+
+/**
+ * Return a copy of `runs` where the active run (if present) has live
+ * WS points merged in.  Useful for charts that don't distinguish
+ * live vs historical styling but still need up-to-date data.
+ */
+export function mergeActiveRunWithLive(
+  runs: ChartRun[],
+  activeRunId: number | null | undefined,
+  livePoints: LivePoint[],
+): ChartRun[] {
+  if (!activeRunId || livePoints.length === 0) return runs;
+  return runs.map(run => {
+    if (run.id !== activeRunId) return run;
+    const merged = mergeActiveRunAndLivePoints(run, livePoints);
+    return { ...run, ...merged };
+  });
+}
+
 // ── Merge logic ────────────────────────────────────────────────────
 
 /**
@@ -149,7 +208,8 @@ export function livePointsToArrays(points: LivePoint[]): {
  * @param visibleRuns Set of run IDs to include (null = all)
  * @param visibleMetrics Which metrics to include as series
  * @param isTestActive Whether a live test is currently running
- * @param desaturateHistory When true, historical runs use lower alpha
+ * @param activeRunId The currently-running test's run ID (so its REST
+ *   data merges with live WS points into a single live series)
  */
 export function mergeRunsForChart(
   runs: ChartRun[],
@@ -157,18 +217,49 @@ export function mergeRunsForChart(
   visibleRuns: Set<number> | null,
   visibleMetrics: Set<MetricKey>,
   isTestActive: boolean,
+  activeRunId?: number | null,
 ): MergedChartData {
   // Filter to visible runs
-  const activeRuns = visibleRuns
+  const allVisible = visibleRuns
     ? runs.filter(r => visibleRuns.has(r.id))
     : runs;
 
-  const hasLive = isTestActive && livePoints.length > 0;
-  const live = hasLive ? livePointsToArrays(livePoints) : null;
+  // Separate the active run from historical runs so it gets live styling
+  let historicalRuns = allVisible;
+  let activeRun: ChartRun | null = null;
+  if (activeRunId != null) {
+    activeRun = allVisible.find(r => r.id === activeRunId) ?? null;
+    if (activeRun) {
+      historicalRuns = allVisible.filter(r => r.id !== activeRunId);
+    }
+  }
+
+  // Build the live dataset: merge active run's stored data with WS live points
+  const hasLive = isTestActive && (livePoints.length > 0 || activeRun != null);
+  let live: ReturnType<typeof livePointsToArrays> | null = null;
+
+  if (hasLive) {
+    if (activeRun && livePoints.length > 0) {
+      // Merge REST data + WS points, deduplicating at the boundary
+      live = mergeActiveRunAndLivePoints(activeRun, livePoints);
+    } else if (activeRun) {
+      // WS hasn't sent points yet — show REST data with live styling
+      live = {
+        elapsed: activeRun.elapsed,
+        voltage: activeRun.voltage,
+        current: activeRun.current,
+        power: activeRun.power,
+        capacity: activeRun.capacity,
+      };
+    } else {
+      // No REST data for the active run — just WS points
+      live = livePointsToArrays(livePoints);
+    }
+  }
 
   // Collect all unique time points
   const timeSet = new Set<number>();
-  for (const run of activeRuns) {
+  for (const run of historicalRuns) {
     for (const t of run.elapsed) timeSet.add(t);
   }
   if (live) {
@@ -194,8 +285,8 @@ export function mergeRunsForChart(
   const desatAlpha = isTestActive ? 0.20 : 1.0;
 
   // Add series for each historical run
-  for (let ri = 0; ri < activeRuns.length; ri++) {
-    const run = activeRuns[ri];
+  for (let ri = 0; ri < historicalRuns.length; ri++) {
+    const run = historicalRuns[ri];
     const baseColor = getRunColor(ri);
 
     for (const metric of metricsArr) {

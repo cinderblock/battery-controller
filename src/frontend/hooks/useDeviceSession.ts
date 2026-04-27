@@ -45,6 +45,7 @@ export interface SessionState {
   deviceInfo: DeviceInfo | null;
   pendingCommand: PendingCommand | null;
   activeRunId: number | null;
+  activeRunMaxTimeMin: number | null;
   locked: boolean;
   bridgeActive: boolean;
   cycleState: CycleState | null;
@@ -61,6 +62,7 @@ const INITIAL_STATE: SessionState = {
   deviceInfo: null,
   pendingCommand: null,
   activeRunId: null,
+  activeRunMaxTimeMin: null,
   locked: false,
   bridgeActive: false,
   cycleState: null,
@@ -161,6 +163,7 @@ export function useDeviceSessionManager(): SessionContextValue {
             stats: msg.data.stats,
             deviceInfo: msg.data.deviceInfo,
             activeRunId: msg.data.activeRunId,
+            activeRunMaxTimeMin: msg.data.activeRunMaxTimeMin ?? null,
             serialConnected: msg.data.serialConnected,
             deviceResponsive: msg.data.deviceResponsive ?? false,
             locked: msg.data.locked,

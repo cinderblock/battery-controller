@@ -100,8 +100,11 @@ html, body {
 }
 
 .conn-ok { background: var(--success); box-shadow: 0 0 4px var(--success); }
+.conn-ok.conn-flash { box-shadow: 0 0 10px var(--success); transform: scale(1.4); }
 .conn-warn { background: #ffa726; box-shadow: 0 0 4px #ffa726; animation: pulse-warn 2s ease-in-out infinite; }
 .conn-off { background: var(--error); }
+
+.conn-dot { transition: box-shadow 0.2s ease, transform 0.2s ease; }
 
 @keyframes pulse-warn {
   0%, 100% { opacity: 1; }
@@ -127,6 +130,11 @@ html, body {
   display: flex;
   gap: 12px;
   align-items: baseline;
+  margin-left: 12px;
+}
+
+.reading-time {
+  color: var(--text-dim);
 }
 
 .reading-val {

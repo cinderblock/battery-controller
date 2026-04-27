@@ -1,11 +1,12 @@
 /**
  * TopBar — minimal status strip at the top of the chart view.
  *
- * Shows: connection dot, device state badge, condensed live readings,
+ * Shows: connection dot (pulses on each packet, dims when stale),
+ * device state badge, condensed live readings with run timer,
  * and a bridge mode toggle for proxying the serial port to EB Tester.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSession } from '../hooks/useDeviceSession.ts';
 import type { DeviceMode } from '../api-client.ts';
 
@@ -15,6 +16,14 @@ function formatCountdown(ms: number): string {
   const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function formatElapsed(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 const MODE_LABELS: Record<DeviceMode, string> = {
@@ -37,12 +46,37 @@ const MODE_CLASSES: Record<DeviceMode, string> = {
 
 export function TopBar() {
   const { state, enableBridge, disableBridge } = useSession();
-  const { wsConnected, serialConnected, deviceResponsive, mode, reading, pendingCommand, bridgeActive, cycleState } = state;
+  const { wsConnected, serialConnected, deviceResponsive, mode, reading, pendingCommand, bridgeActive, cycleState, activeRunMaxTimeMin } = state;
   const [bridgeLoading, setBridgeLoading] = useState(false);
   const [waitRemaining, setWaitRemaining] = useState<number | null>(null);
 
   const isRunning = mode === 'd-cc' || mode === 'd-cp' || mode === 'c-cv';
   const cycleActive = cycleState && (cycleState.status === 'running' || cycleState.status === 'waiting');
+
+  // ── Packet freshness tracking ──────────────────────────────────
+  const lastReadingTimeRef = useRef(Date.now());
+  const [readingStale, setReadingStale] = useState(false);
+  const [readingFlash, setReadingFlash] = useState(false);
+
+  // Flash briefly on each new reading
+  useEffect(() => {
+    if (!reading) return;
+    lastReadingTimeRef.current = Date.now();
+    setReadingStale(false);
+    setReadingFlash(true);
+    const id = setTimeout(() => setReadingFlash(false), 200);
+    return () => clearTimeout(id);
+  }, [reading]);
+
+  // Detect stale data (no packet for >4s)
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (Date.now() - lastReadingTimeRef.current > 4000) {
+        setReadingStale(true);
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   // Tick the wait countdown every second
   useEffect(() => {
@@ -53,11 +87,12 @@ export function TopBar() {
     return () => clearInterval(id);
   }, [cycleState?.waitEndTime]);
 
-  // Three-state connection: green = all good, amber = backend ok but hardware silent, red = backend down
+  // Connection dot class: off → warn (stale) → ok, plus flash on packet
   const connClass = !wsConnected ? 'conn-off'
     : !serialConnected && !bridgeActive ? 'conn-off'
-    : !deviceResponsive && !bridgeActive ? 'conn-warn'
+    : readingStale || (!deviceResponsive && !bridgeActive) ? 'conn-warn'
     : 'conn-ok';
+  const flashClass = readingFlash && connClass === 'conn-ok' ? ' conn-flash' : '';
 
   async function toggleBridge() {
     setBridgeLoading(true);
@@ -78,7 +113,7 @@ export function TopBar() {
     <>
       <header className="top-bar">
         <div className="top-bar-left">
-          <span className={`conn-dot ${connClass}`} />
+          <span className={`conn-dot ${connClass}${flashClass}`} />
           {bridgeActive ? (
             <span className="mode-badge badge-bridge">Bridge Mode</span>
           ) : (
@@ -102,10 +137,18 @@ export function TopBar() {
               <span className="reading-num">{(reading.voltage * reading.current).toFixed(1)}</span>
               <span className="reading-unit">W</span>
             </span>
-            {mode !== 'idle' && (
+            {isRunning && (
               <span className="reading-val">
                 <span className="reading-num">{reading.capacityAh.toFixed(3)}</span>
                 <span className="reading-unit">Ah</span>
+              </span>
+            )}
+            {isRunning && (
+              <span className="reading-val reading-time">
+                <span className="reading-num">{formatElapsed(reading.elapsedS)}</span>
+                {activeRunMaxTimeMin != null && activeRunMaxTimeMin > 0 && (
+                  <span className="reading-unit">/ {activeRunMaxTimeMin}m</span>
+                )}
               </span>
             )}
           </div>

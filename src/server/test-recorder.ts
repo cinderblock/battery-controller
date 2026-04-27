@@ -37,6 +37,7 @@ export class TestRecorder {
   // Active run state
   private activeRunId: number | null = null;
   private activeRunMode: DeviceMode | null = null;
+  private activeRunMaxTimeMin: number | null = null;
   private dataPointCount = 0;
 
   // Pending association: set before or during a test
@@ -106,6 +107,11 @@ export class TestRecorder {
   /** Get the data point count for the active run */
   getActiveDataPointCount(): number {
     return this.dataPointCount;
+  }
+
+  /** Get the active run's max time limit (minutes), if any */
+  getActiveRunMaxTimeMin(): number | null {
+    return this.activeRunMaxTimeMin;
   }
 
   // ── Event handling ────────────────────────────────────────────
@@ -189,6 +195,7 @@ export class TestRecorder {
     const run = createTestRun(params);
     this.activeRunId = run.id;
     this.activeRunMode = mode;
+    this.activeRunMaxTimeMin = this.pendingSetpoints?.maxTimeMin ?? null;
     this.dataPointCount = 0;
 
     // Clear pending setpoints after use (cell ID persists for
@@ -241,6 +248,7 @@ export class TestRecorder {
 
     this.activeRunId = null;
     this.activeRunMode = null;
+    this.activeRunMaxTimeMin = null;
     this.dataPointCount = 0;
   }
 

@@ -8,13 +8,14 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import uPlot from 'uplot';
-import type { CapacitySeriesInfo } from '../lib/chart-data.ts';
+import type { CapacitySeriesInfo, ThresholdLine } from '../lib/chart-data.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface CapacityChartProps {
   data: (number | null | undefined)[][];
   seriesInfo: CapacitySeriesInfo[];
+  thresholds?: ThresholdLine[];
   className?: string;
 }
 
@@ -36,11 +37,15 @@ function createTooltipEl(): HTMLDivElement {
 
 // ── Component ──────────────────────────────────────────────────────
 
-export function CapacityChart({ data, seriesInfo, className }: CapacityChartProps) {
+export function CapacityChart({ data, seriesInfo, thresholds = [], className }: CapacityChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const uplotRef = useRef<uPlot | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const prevSeriesKeyRef = useRef<string>('');
+
+  // Keep thresholds in a ref so the draw hook reads them without causing rebuild
+  const thresholdsRef = useRef(thresholds);
+  thresholdsRef.current = thresholds;
 
   const seriesKey = seriesInfo.map(s => `${s.runId}:${s.metric}:${s.direction}:${s.isReference}`).join('|');
 
@@ -148,6 +153,35 @@ export function CapacityChart({ data, seriesInfo, className }: CapacityChartProp
       series,
       legend: { show: false },
       hooks: {
+        draw: [
+          (u: uPlot) => {
+            const lines = thresholdsRef.current;
+            if (lines.length === 0) return;
+
+            const ctx = u.ctx;
+            const { left, top, width, height } = u.bbox;
+
+            for (const t of lines) {
+              const yPos = u.valToPos(t.value, t.scale, true);
+              if (yPos < top || yPos > top + height) continue;
+
+              ctx.save();
+              ctx.strokeStyle = t.color;
+              ctx.lineWidth = 1 * devicePixelRatio;
+              ctx.setLineDash([6 * devicePixelRatio, 4 * devicePixelRatio]);
+              ctx.beginPath();
+              ctx.moveTo(left, yPos);
+              ctx.lineTo(left + width, yPos);
+              ctx.stroke();
+
+              ctx.fillStyle = t.color;
+              ctx.font = `${10 * devicePixelRatio}px sans-serif`;
+              ctx.textAlign = 'right';
+              ctx.fillText(t.label, left + width - 4 * devicePixelRatio, yPos - 4 * devicePixelRatio);
+              ctx.restore();
+            }
+          },
+        ],
         setCursor: [
           (u: uPlot) => {
             if (!tooltip) return;

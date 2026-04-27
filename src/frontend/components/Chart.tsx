@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import uPlot from 'uplot';
-import type { ChartSeriesInfo, MetricKey } from '../lib/chart-data.ts';
+import type { ChartSeriesInfo, MetricKey, ThresholdLine } from '../lib/chart-data.ts';
 import { formatElapsedShort } from '../lib/chart-data.ts';
 
 function createTooltipEl(): HTMLDivElement {
@@ -23,6 +23,7 @@ function createTooltipEl(): HTMLDivElement {
 export interface ChartProps {
   data: (number | null | undefined)[][];
   seriesInfo: ChartSeriesInfo[];
+  thresholds?: ThresholdLine[];
   className?: string;
 }
 
@@ -44,7 +45,7 @@ const METRIC_UNIT: Record<MetricKey, string> = {
 
 // ── Component ──────────────────────────────────────────────────────
 
-export function Chart({ data, seriesInfo, className }: ChartProps) {
+export function Chart({ data, seriesInfo, thresholds = [], className }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const uplotRef = useRef<uPlot | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
@@ -53,6 +54,10 @@ export function Chart({ data, seriesInfo, className }: ChartProps) {
   // Keep seriesInfo in a ref so the cursor hook reads it without causing rebuild
   const seriesInfoRef = useRef(seriesInfo);
   seriesInfoRef.current = seriesInfo;
+
+  // Keep thresholds in a ref so the draw hook reads them without causing rebuild
+  const thresholdsRef = useRef(thresholds);
+  thresholdsRef.current = thresholds;
 
   // Build a stable key from series info to detect when series structure changes
   const seriesKey = seriesInfo.map(s => `${s.runId}:${s.metric}:${s.isLive}`).join('|');
@@ -164,6 +169,36 @@ export function Chart({ data, seriesInfo, className }: ChartProps) {
       series,
       legend: { show: false }, // We build our own legend panel
       hooks: {
+        draw: [
+          (u: uPlot) => {
+            const lines = thresholdsRef.current;
+            if (lines.length === 0) return;
+
+            const ctx = u.ctx;
+            const { left, top, width, height } = u.bbox;
+
+            for (const t of lines) {
+              const yPos = u.valToPos(t.value, t.scale, true);
+              if (yPos < top || yPos > top + height) continue;
+
+              ctx.save();
+              ctx.strokeStyle = t.color;
+              ctx.lineWidth = 1 * devicePixelRatio;
+              ctx.setLineDash([6 * devicePixelRatio, 4 * devicePixelRatio]);
+              ctx.beginPath();
+              ctx.moveTo(left, yPos);
+              ctx.lineTo(left + width, yPos);
+              ctx.stroke();
+
+              // Label
+              ctx.fillStyle = t.color;
+              ctx.font = `${10 * devicePixelRatio}px sans-serif`;
+              ctx.textAlign = 'right';
+              ctx.fillText(t.label, left + width - 4 * devicePixelRatio, yPos - 4 * devicePixelRatio);
+              ctx.restore();
+            }
+          },
+        ],
         setCursor: [
           (u: uPlot) => {
             if (!tooltip) return;
