@@ -201,6 +201,8 @@ export class TestRecorder {
   private startRecoveredRun(mode: DeviceMode): void {
     const params: CreateTestRunParams = {
       cellId: this.pendingCellId,
+      cycleProgramId: this.pendingCycleProgramId,
+      cycleStepIndex: this.pendingCycleStepIndex,
       mode,
       startReason: 'recovered',
     };

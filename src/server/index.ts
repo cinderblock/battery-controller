@@ -105,8 +105,8 @@ async function main() {
   const cycleRunner = new CycleRunner(session, recorder);
 
   session.start();
+  cycleRunner.start();   // Restore cycle context before recorder (so recovered runs get linked)
   recorder.start();
-  cycleRunner.start();
 
   // ── Start camera if RTSP_URL is configured ─────────────────────
   if (cameraAvailable()) {
@@ -195,8 +195,8 @@ async function main() {
     // Reconnect the device pipeline
     await serialManager.connect();
     session.start();
-    recorder.start();
     cycleRunner.start();
+    recorder.start();
 
     broadcast({ type: 'bridgeState', data: { active: false } });
     logger.info('Bridge mode disabled — serial port returned to device session');
