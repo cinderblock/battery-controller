@@ -448,7 +448,10 @@ export class CycleRunner {
 
       this.totalCycles = this.computeTotalCycles(steps);
 
-      // Restore recorder's cycle context so any recovered run gets linked
+      // Restore recorder state so any recovered run gets linked
+      if (program.cell_id != null) {
+        this.recorder.setCellId(program.cell_id);
+      }
       this.recorder.setCycleContext(program.id, this.execIndex);
 
       // If device is running, we're mid-step — wait for completion
