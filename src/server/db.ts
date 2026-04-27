@@ -209,6 +209,27 @@ export function getCellByBarcode(barcode: string): Cell | null {
   return getDb().query<Cell, [string]>('SELECT * FROM cells WHERE barcode = ?').get(barcode) ?? null;
 }
 
+export function updateCell(id: number, updates: { label?: string | null; notes?: string | null }): Cell | null {
+  const db = getDb();
+  const sets: string[] = [];
+  const vals: (string | number | null)[] = [];
+
+  if (updates.label !== undefined) {
+    sets.push('label = ?');
+    vals.push(updates.label);
+  }
+  if (updates.notes !== undefined) {
+    sets.push('notes = ?');
+    vals.push(updates.notes);
+  }
+  if (sets.length === 0) return getCellById(id);
+
+  sets.push("updated_at = datetime('now')");
+  vals.push(id);
+  db.run(`UPDATE cells SET ${sets.join(', ')} WHERE id = ?`, vals);
+  return getCellById(id);
+}
+
 // ── Test run operations ─────────────────────────────────────────────
 
 export interface TestRun {

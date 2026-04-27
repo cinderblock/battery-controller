@@ -19,7 +19,7 @@ import { SettingsLock } from './settings-lock.ts';
 import { CycleRunner } from './cycle-runner.ts';
 import {
   initDb, closeDb, markIncompleteRuns, ensureDefaultCellGroup,
-  getCells, getCellById, getCellByBarcode, upsertCell, setCellGroup,
+  getCells, getCellById, getCellByBarcode, upsertCell, updateCell, setCellGroup,
   getTestRunsForCell, getTestRun, getRecentTestRuns,
   getDataPointsForRun, getDataPointCount,
   getCellGroups, getCellsInGroup,
@@ -41,6 +41,8 @@ import {
 } from './camera.ts';
 
 const Port = Number(process.env.PORT) || 80;
+const CANONICAL_HOST = 'coulomb.tomsawyerlabs.com';
+const TRUSTED_PROXY = '10.255.0.5';
 
 // ── WebSocket client tracking ──────────────────────────────────────
 
@@ -367,6 +369,13 @@ async function main() {
     if (cellByIdMatch && method === 'GET') {
       const cellId = parseInt(cellByIdMatch[1], 10);
       const cell = getCellById(cellId);
+      if (!cell) return errorResponse('Cell not found', 404);
+      return jsonResponse(cell);
+    }
+    if (cellByIdMatch && method === 'PATCH') {
+      const cellId = parseInt(cellByIdMatch[1], 10);
+      const body = await parseBody<{ label?: string | null; notes?: string | null }>(req);
+      const cell = updateCell(cellId, body ?? {});
       if (!cell) return errorResponse('Cell not found', 404);
       return jsonResponse(cell);
     }
@@ -727,6 +736,26 @@ async function main() {
 
     async fetch(req, server) {
       const url = new URL(req.url);
+
+      // ── Trusted proxy: real client IP from X-Forwarded-* ──────
+      const connectingIp = server.requestIP(req)?.address;
+      const isTrustedProxy = connectingIp === TRUSTED_PROXY;
+      const clientIp = isTrustedProxy
+        ? (req.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? connectingIp)
+        : connectingIp;
+
+      // ── Host redirect: canonical hostname enforcement ─────────
+      const host = req.headers.get('host')?.replace(/:\d+$/, '');
+      if (host && host !== CANONICAL_HOST && host !== 'localhost' && host !== '127.0.0.1') {
+        const proto = isTrustedProxy
+          ? (req.headers.get('x-forwarded-proto') ?? 'http')
+          : 'http';
+        const target = `${proto}://${CANONICAL_HOST}${url.pathname}${url.search}`;
+        return new Response(null, {
+          status: 301,
+          headers: { Location: target },
+        });
+      }
 
       // WebSocket upgrade
       if (url.pathname === '/ws') {

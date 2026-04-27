@@ -3,12 +3,20 @@
  *
  * Creates a uPlot instance, handles resizing, and efficiently updates
  * data without recreating the chart on every render.
+ * Includes a crosshair cursor with tooltip showing all series values.
  */
 
 import { useEffect, useRef, useCallback } from 'react';
 import uPlot from 'uplot';
 import type { ChartSeriesInfo, MetricKey } from '../lib/chart-data.ts';
 import { formatElapsedShort } from '../lib/chart-data.ts';
+
+function createTooltipEl(): HTMLDivElement {
+  const el = document.createElement('div');
+  el.className = 'cap-chart-tooltip'; // reuse capacity chart tooltip styling
+  el.style.display = 'none';
+  return el;
+}
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -39,7 +47,12 @@ const METRIC_UNIT: Record<MetricKey, string> = {
 export function Chart({ data, seriesInfo, className }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const uplotRef = useRef<uPlot | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
   const prevSeriesKeyRef = useRef<string>('');
+
+  // Keep seriesInfo in a ref so the cursor hook reads it without causing rebuild
+  const seriesInfoRef = useRef(seriesInfo);
+  seriesInfoRef.current = seriesInfo;
 
   // Build a stable key from series info to detect when series structure changes
   const seriesKey = seriesInfo.map(s => `${s.runId}:${s.metric}:${s.isLive}`).join('|');
@@ -125,17 +138,20 @@ export function Chart({ data, seriesInfo, className }: ChartProps) {
         label: info.label,
         scale: METRIC_SCALE[info.metric],
         stroke: info.color,
-        width: info.isLive ? 2 : 1,
+        width: info.isLive ? 2.5 : 1,
         spanGaps: false,
         points: { show: false },
       });
     }
+
+    const tooltip = tooltipRef.current;
 
     return {
       width,
       height,
       cursor: {
         drag: { x: true, y: false, setScale: true },
+        points: { size: 6, fill: '#fff' },
       },
       scales: {
         x: { time: false },
@@ -147,8 +163,89 @@ export function Chart({ data, seriesInfo, className }: ChartProps) {
       axes,
       series,
       legend: { show: false }, // We build our own legend panel
+      hooks: {
+        setCursor: [
+          (u: uPlot) => {
+            if (!tooltip) return;
+            const { idx } = u.cursor;
+
+            if (idx == null || idx < 0) {
+              tooltip.style.display = 'none';
+              return;
+            }
+
+            const info = seriesInfoRef.current;
+            const xVal = u.data[0][idx];
+            if (xVal == null) {
+              tooltip.style.display = 'none';
+              return;
+            }
+
+            const entries: { label: string; value: string; color: string }[] = [];
+            for (let si = 0; si < info.length; si++) {
+              const s = info[si];
+              const val = u.data[si + 1]?.[idx];
+              if (val == null) continue;
+
+              const unit = METRIC_UNIT[s.metric];
+              const decimals = s.metric === 'voltage' ? 3 : s.metric === 'current' ? 2 : 1;
+              entries.push({
+                label: s.label,
+                value: `${(val as number).toFixed(decimals)} ${unit}`,
+                color: s.color,
+              });
+            }
+
+            if (entries.length === 0) {
+              tooltip.style.display = 'none';
+              return;
+            }
+
+            const cx = u.cursor.left ?? 0;
+            const cy = u.cursor.top ?? 0;
+            const plotLeft = u.bbox.left / devicePixelRatio;
+            const plotTop = u.bbox.top / devicePixelRatio;
+
+            tooltip.style.display = 'block';
+            tooltip.style.left = `${plotLeft + cx + 12}px`;
+            tooltip.style.top = `${plotTop + cy - 10}px`;
+
+            let html = `<div class="cap-tt-header">${formatElapsedShort(xVal as number)}</div>`;
+            for (const e of entries) {
+              html += `<div class="cap-tt-row"><span class="cap-tt-swatch" style="background:${e.color}"></span><span class="cap-tt-label">${e.label}</span><span class="cap-tt-val">${e.value}</span></div>`;
+            }
+            tooltip.innerHTML = html;
+
+            // Keep tooltip within container bounds
+            const container = u.root.parentElement;
+            if (container) {
+              const containerRect = container.getBoundingClientRect();
+              const tooltipRect = tooltip.getBoundingClientRect();
+              if (tooltipRect.right > containerRect.right - 4) {
+                tooltip.style.left = `${plotLeft + cx - tooltipRect.width - 12}px`;
+              }
+              if (tooltipRect.bottom > containerRect.bottom - 4) {
+                tooltip.style.top = `${plotTop + cy - tooltipRect.height + 10}px`;
+              }
+            }
+          },
+        ],
+      },
     };
   }, [seriesInfo]);
+
+  // Create tooltip element on mount
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const tt = createTooltipEl();
+    container.appendChild(tt);
+    tooltipRef.current = tt;
+    return () => {
+      tt.remove();
+      tooltipRef.current = null;
+    };
+  }, []);
 
   // Create or recreate chart when series structure changes
   useEffect(() => {
@@ -213,7 +310,7 @@ export function Chart({ data, seriesInfo, className }: ChartProps) {
   return (
     <div
       ref={containerRef}
-      className={`chart-container ${className ?? ''}`}
+      className={`chart-container cap-chart ${className ?? ''}`}
     />
   );
 }

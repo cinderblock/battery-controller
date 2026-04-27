@@ -162,6 +162,38 @@ html, body {
   background: #1565c0;
 }
 
+/* ── Cycle status banner ──────────────────────────────────────── */
+
+.cycle-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  justify-content: center;
+  padding: 4px 12px;
+  flex-shrink: 0;
+  color: #fff;
+  animation: banner-slide-in 0.3s ease;
+}
+
+.cycle-running { background: #1b5e20; }
+.cycle-waiting { background: #e65100; }
+
+.cycle-name { font-weight: 700; }
+
+.cycle-wait-countdown {
+  font-family: "SF Mono", "Consolas", "Courier New", monospace;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.cycle-progress {
+  opacity: 0.8;
+  font-size: 11px;
+}
+
 @keyframes banner-slide-in {
   from { transform: translateY(-100%); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
@@ -399,6 +431,312 @@ html, body {
   gap: 8px;
   justify-content: flex-end;
   margin-top: 20px;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   START WIZARD — two-step mobile modal
+   ══════════════════════════════════════════════════════════════════ */
+
+.wizard-overlay {
+  padding: 0;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.wizard-panel {
+  background: var(--surface);
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Step 1: Scan ────────────────────────────────────────────────── */
+
+.wizard-scan-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.wizard-scan-header h2 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.wizard-scan-camera {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Make the scanner fill the available space */
+.wizard-scan-camera .scanner-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border: none;
+  border-radius: 0;
+}
+
+.wizard-scan-camera .scanner-header {
+  display: none; /* hide scanner's own header, we have ours */
+}
+
+.wizard-scan-camera .scanner-viewport {
+  flex: 1;
+  aspect-ratio: unset;
+}
+
+.wizard-scan-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+  background: var(--surface);
+}
+
+.wizard-scan-manual {
+  display: flex;
+  gap: 8px;
+}
+
+.wizard-barcode-input {
+  flex: 1;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 16px;
+  font-family: "SF Mono", "Consolas", "Courier New", monospace;
+}
+
+.wizard-barcode-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.wizard-skip-btn {
+  width: 100%;
+  color: var(--text-dim) !important;
+  border-style: dashed !important;
+}
+
+/* ── Step 2: Configure ───────────────────────────────────────────── */
+
+.wizard-configure {
+  max-width: 480px;
+  margin: 0 auto;
+  height: auto;
+  max-height: 100%;
+  border-radius: 0;
+}
+
+@media (min-width: 481px) {
+  .wizard-configure {
+    height: auto;
+    max-height: 90vh;
+    border-radius: 12px;
+    margin: auto;
+  }
+  .wizard-overlay:has(.wizard-configure) {
+    padding: 16px;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+.wizard-config-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.wizard-config-header h2 {
+  flex: 1;
+  font-size: 18px;
+  margin: 0;
+}
+
+.wizard-back-btn {
+  padding: 4px 10px !important;
+  font-size: 18px !important;
+  min-width: 36px;
+}
+
+.wizard-config-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.wizard-config-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* ── Cell info bar ───────────────────────────────────────────────── */
+
+.wizard-cell-info {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.wizard-cell-barcode {
+  font-family: "SF Mono", "Consolas", "Courier New", monospace;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.wizard-cell-group {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.wizard-cell-notes {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 36px;
+}
+
+.wizard-cell-notes:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.wizard-cell-notes::placeholder {
+  color: var(--text-dim);
+}
+
+/* ── Config tabs ─────────────────────────────────────────────────── */
+
+.wizard-tabs {
+  display: flex;
+  gap: 1px;
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 3px;
+  margin-bottom: 12px;
+}
+
+.wizard-tab {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.wizard-tab:hover { background: var(--surface-2); color: var(--text); }
+.wizard-tab.active { background: var(--accent); color: #000; }
+
+/* ── Sequence cards ──────────────────────────────────────────────── */
+
+.wizard-sequences {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wizard-seq-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s;
+  color: var(--text);
+}
+
+.wizard-seq-card:hover { border-color: var(--text-dim); }
+.wizard-seq-card.selected { border-color: var(--accent); background: rgba(79, 195, 247, 0.06); }
+
+.wizard-seq-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ── Sequence step preview ───────────────────────────────────────── */
+
+.seq-preview {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.seq-preview-block {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  min-width: 36px;
+  text-align: center;
+}
+
+.seq-preview-loop-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* ── Manual mode section ─────────────────────────────────────────── */
+
+.wizard-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wizard-manual .mode-selector {
+  margin-bottom: 4px;
 }
 
 /* ── Form elements ──────────────────────────────────────────────── */
@@ -901,6 +1239,88 @@ html, body {
   height: 100%;
   border-radius: 1.5px;
   transition: width 0.3s ease;
+}
+
+/* ── Chart mode toggle ───────────────────────────────────────────── */
+
+.chart-mode-toggle {
+  display: flex;
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 1px;
+}
+
+.chart-mode-btn {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.chart-mode-btn:hover { background: var(--surface-2); color: var(--text); }
+.chart-mode-btn.active { background: var(--accent); color: #000; }
+
+/* ── Capacity chart tooltip ───────────────────────────────────────── */
+
+.cap-chart {
+  position: relative;
+}
+
+.cap-chart-tooltip {
+  position: absolute;
+  z-index: 20;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  pointer-events: none;
+  font-size: 12px;
+  white-space: nowrap;
+  min-width: 120px;
+}
+
+.cap-tt-header {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+  font-family: "SF Mono", "Consolas", "Courier New", monospace;
+  font-size: 13px;
+}
+
+.cap-tt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 0;
+}
+
+.cap-tt-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.cap-tt-label {
+  color: var(--text-dim);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+.cap-tt-val {
+  font-family: "SF Mono", "Consolas", "Courier New", monospace;
+  font-weight: 500;
+  color: var(--text);
 }
 
 /* ── Group selector with badge ────────────────────────────────────── */

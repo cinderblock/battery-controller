@@ -51,6 +51,7 @@ export interface WsSnapshot {
     deviceResponsive: boolean;
     locked: boolean;
     bridgeActive?: boolean;
+    cycleState?: CycleState;
   };
 }
 
@@ -109,6 +110,24 @@ export interface WsBridgeState {
   data: { active: boolean };
 }
 
+export type CycleStatus = 'idle' | 'running' | 'waiting' | 'completed' | 'aborted' | 'error';
+
+export interface CycleState {
+  status: CycleStatus;
+  programId: number | null;
+  programName: string | null;
+  currentExecIndex: number;
+  totalExecSteps: number;
+  currentCycle: number;
+  totalCycles: number;
+  waitEndTime: number | null;
+}
+
+export interface WsCycleState {
+  type: 'cycleState';
+  data: CycleState;
+}
+
 export interface WsDeviceResponsive {
   type: 'deviceResponsive';
   data: { responsive: boolean };
@@ -126,7 +145,8 @@ export type WsMessage =
   | WsCommandTimeout
   | WsLockState
   | WsBridgeState
-  | WsDeviceResponsive;
+  | WsDeviceResponsive
+  | WsCycleState;
 
 // ── REST entity types ──────────────────────────────────────────────
 

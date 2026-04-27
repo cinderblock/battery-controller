@@ -12,6 +12,7 @@
 
 import type { DataPoint, TestRun } from '../api-client.ts';
 import type { LivePoint } from '../hooks/useDeviceSession.ts';
+import { ocvToSoc, type ReferenceCurve } from './lfp-reference-curves.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -69,7 +70,7 @@ export function getRunColor(index: number): string {
   return RUN_COLORS[index % RUN_COLORS.length];
 }
 
-const LIVE_COLOR = '#ffffff';
+const LIVE_COLOR = '#00e676'; // bright green — clearly distinct from historical palette
 
 const METRIC_ALPHA: Record<MetricKey, number> = {
   voltage: 1.0,
@@ -190,7 +191,7 @@ export function mergeRunsForChart(
   const data: (number | null | undefined)[][] = [xValues];
   const seriesInfo: ChartSeriesInfo[] = [];
   const metricsArr = Array.from(visibleMetrics);
-  const desatAlpha = isTestActive ? 0.35 : 1.0;
+  const desatAlpha = isTestActive ? 0.20 : 1.0;
 
   // Add series for each historical run
   for (let ri = 0; ri < activeRuns.length; ri++) {
@@ -266,4 +267,268 @@ export function formatElapsedShort(seconds: number): string {
   const s = Math.floor(seconds % 60);
   if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Capacity-domain chart data
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * A run converted to the capacity domain: voltage vs capacity%.
+ * Downsampled to a fixed grid for efficient chart alignment.
+ */
+export interface CapacityRun {
+  id: number;
+  meta: TestRun;
+  label: string;
+  /** Whether this is a charge or discharge run */
+  direction: 'charge' | 'discharge';
+  /** Capacity % values on the fixed grid */
+  capacityPct: number[];
+  /** Voltage at each grid point (null where no data) */
+  voltage: (number | null)[];
+  /** Current at each grid point (null where no data) */
+  current: (number | null)[];
+  /** Whether the start offset was estimated from OCV */
+  offsetEstimated: boolean;
+  /** Estimated SoC offset in % (0 if run started at full/empty) */
+  offsetPct: number;
+}
+
+export interface CapacityChartData {
+  /** Aligned data for uPlot: [xValues, ...seriesValues] */
+  data: (number | null | undefined)[][];
+  /** Metadata for each series */
+  seriesInfo: CapacitySeriesInfo[];
+}
+
+export interface CapacitySeriesInfo {
+  /** Which run this series belongs to (-1 for reference curves) */
+  runId: number;
+  /** Display label */
+  label: string;
+  /** CSS color */
+  color: string;
+  /** Which metric this series shows */
+  metric: 'voltage' | 'current';
+  /** Whether this is a reference curve */
+  isReference: boolean;
+  /** Reference curve style (for dash patterns) */
+  refStyle?: 'datasheet' | 'computed';
+  /** Charge or discharge */
+  direction: 'charge' | 'discharge';
+}
+
+// ── Fixed capacity grid ───────────────────────────────────────────
+// All runs are interpolated onto this grid for alignment.
+// 0.5% steps = 201 points — plenty for smooth curves.
+
+const CAPACITY_GRID_STEP = 0.5;
+const CAPACITY_GRID: number[] = [];
+for (let p = 0; p <= 100; p += CAPACITY_GRID_STEP) {
+  CAPACITY_GRID.push(Math.round(p * 10) / 10); // avoid float drift
+}
+
+/**
+ * Linearly interpolate a value from parallel x/y arrays at target x.
+ * Returns null if target is outside the data range.
+ */
+function lerpAt(xs: number[], ys: number[], target: number): number | null {
+  if (xs.length === 0) return null;
+  if (target < xs[0] || target > xs[xs.length - 1]) return null;
+
+  // Binary search for the bracketing interval
+  let lo = 0;
+  let hi = xs.length - 1;
+  while (lo < hi - 1) {
+    const mid = (lo + hi) >> 1;
+    if (xs[mid] <= target) lo = mid;
+    else hi = mid;
+  }
+
+  if (xs[lo] === target) return ys[lo];
+  if (lo === hi) return ys[lo];
+
+  const t = (target - xs[lo]) / (xs[hi] - xs[lo]);
+  return ys[lo] + t * (ys[hi] - ys[lo]);
+}
+
+/**
+ * Convert a time-domain ChartRun to a capacity-domain CapacityRun.
+ *
+ * @param run The time-domain run data
+ * @param nominalCapacityMah Nominal cell capacity in mAh
+ */
+export function runToCapacityDomain(
+  run: ChartRun,
+  nominalCapacityMah: number,
+): CapacityRun {
+  const isCharge = run.meta.mode === 'c-cv';
+  const direction: 'charge' | 'discharge' = isCharge ? 'charge' : 'discharge';
+
+  // Convert cumulative capacity (Ah, already divided by 1000) to % of nominal
+  const nominalAh = nominalCapacityMah / 1000;
+  const rawPct = run.capacity.map(ah => (ah / nominalAh) * 100);
+
+  // Estimate SoC offset from initial voltage
+  const initialV = run.voltage[0];
+  let offsetPct = 0;
+  let offsetEstimated = false;
+
+  if (initialV !== undefined) {
+    const estimatedSoc = ocvToSoc(initialV);
+
+    if (isCharge && estimatedSoc > 8) {
+      // Charge didn't start at empty — offset the capacity axis
+      offsetPct = estimatedSoc;
+      offsetEstimated = true;
+    } else if (!isCharge && estimatedSoc < 92) {
+      // Discharge didn't start at full — offset from 100%
+      offsetPct = 100 - estimatedSoc;
+      offsetEstimated = true;
+    }
+  }
+
+  // Apply offset: capacity% = offset + raw%
+  const adjustedPct = rawPct.map(p => offsetPct + p);
+
+  // Interpolate onto fixed grid
+  const voltage: (number | null)[] = CAPACITY_GRID.map(gridPct =>
+    lerpAt(adjustedPct, run.voltage, gridPct)
+  );
+  const current: (number | null)[] = CAPACITY_GRID.map(gridPct =>
+    lerpAt(adjustedPct, run.current, gridPct)
+  );
+
+  return {
+    id: run.id,
+    meta: run.meta,
+    label: run.label,
+    direction,
+    capacityPct: CAPACITY_GRID,
+    voltage,
+    current,
+    offsetEstimated,
+    offsetPct,
+  };
+}
+
+// ── Merge capacity runs for uPlot ─────────────────────────────────
+
+const REF_COLORS: Record<string, string> = {
+  'datasheet-discharge': 'rgba(255, 152, 0, 0.50)',
+  'datasheet-charge': 'rgba(79, 195, 247, 0.50)',
+  'computed-discharge': 'rgba(255, 183, 77, 0.65)',
+  'computed-charge': 'rgba(129, 212, 250, 0.65)',
+};
+
+const DISCHARGE_COLORS = [
+  '#ff9800', // orange
+  '#ffb74d', // light orange
+  '#ff7043', // deep orange
+  '#ffa726', // amber
+  '#e65100', // dark orange
+  '#ef6c00', // orange variant
+  '#f57c00', // orange 700
+  '#fb8c00', // orange 600
+  '#ff6e40', // deep orange accent
+  '#ffab40', // orange accent
+];
+
+const CHARGE_COLORS = [
+  '#4fc3f7', // light blue
+  '#29b6f6', // blue
+  '#03a9f4', // blue
+  '#0288d1', // dark blue
+  '#81d4fa', // lighter blue
+  '#4dd0e1', // cyan
+  '#26c6da', // cyan
+  '#00bcd4', // cyan
+  '#0097a7', // dark cyan
+  '#80deea', // light cyan
+];
+
+/** Reduce alpha for current series so they don't overpower voltage */
+const CURRENT_ALPHA = 0.45;
+
+function applyAlpha(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/**
+ * Merge capacity-domain runs and reference curves into a uPlot-ready dataset.
+ */
+export function mergeCapacityChart(
+  runs: CapacityRun[],
+  referenceCurves: ReferenceCurve[],
+  visibleRuns: Set<number> | null,
+): CapacityChartData {
+  const xValues = CAPACITY_GRID;
+
+  const data: (number | null | undefined)[][] = [[...xValues]];
+  const seriesInfo: CapacitySeriesInfo[] = [];
+
+  // Add reference curves first (drawn behind data) — voltage only
+  for (const ref of referenceCurves) {
+    const isDischarge = ref.label.toLowerCase().includes('discharge');
+    const colorKey = `${ref.style}-${isDischarge ? 'discharge' : 'charge'}`;
+
+    const values: (number | null | undefined)[] = xValues.map(pct =>
+      lerpAt(ref.capacityPct, ref.voltage, pct) ?? undefined
+    );
+
+    data.push(values);
+    seriesInfo.push({
+      runId: -1,
+      label: ref.label,
+      color: REF_COLORS[colorKey] ?? 'rgba(255,255,255,0.25)',
+      metric: 'voltage',
+      isReference: true,
+      refStyle: ref.style,
+      direction: isDischarge ? 'discharge' : 'charge',
+    });
+  }
+
+  // Add visible runs — both voltage and current series per run
+  const activeRuns = visibleRuns
+    ? runs.filter(r => visibleRuns.has(r.id))
+    : runs;
+
+  let dischargeIdx = 0;
+  let chargeIdx = 0;
+
+  for (const run of activeRuns) {
+    const colors = run.direction === 'discharge' ? DISCHARGE_COLORS : CHARGE_COLORS;
+    const idx = run.direction === 'discharge' ? dischargeIdx++ : chargeIdx++;
+    const color = colors[idx % colors.length];
+
+    // Voltage series
+    const vValues: (number | null | undefined)[] = run.voltage.map(v => v ?? undefined);
+    data.push(vValues);
+    seriesInfo.push({
+      runId: run.id,
+      label: `${run.label} V`,
+      color,
+      metric: 'voltage',
+      isReference: false,
+      direction: run.direction,
+    });
+
+    // Current series (reduced alpha)
+    const iValues: (number | null | undefined)[] = run.current.map(v => v ?? undefined);
+    data.push(iValues);
+    seriesInfo.push({
+      runId: run.id,
+      label: `${run.label} A`,
+      color: applyAlpha(color, CURRENT_ALPHA),
+      metric: 'current',
+      isReference: false,
+      direction: run.direction,
+    });
+  }
+
+  return { data, seriesInfo };
 }

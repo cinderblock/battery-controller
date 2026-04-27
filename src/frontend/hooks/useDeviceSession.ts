@@ -12,6 +12,7 @@
 
 import { createContext, useContext, useCallback, useEffect, useRef, useState } from 'react';
 import type {
+  CycleState,
   DecodedReading,
   DeviceInfo,
   DeviceMode,
@@ -46,6 +47,7 @@ export interface SessionState {
   activeRunId: number | null;
   locked: boolean;
   bridgeActive: boolean;
+  cycleState: CycleState | null;
   livePoints: LivePoint[];
 }
 
@@ -61,6 +63,7 @@ const INITIAL_STATE: SessionState = {
   activeRunId: null,
   locked: false,
   bridgeActive: false,
+  cycleState: null,
   livePoints: [],
 };
 
@@ -162,6 +165,7 @@ export function useDeviceSessionManager(): SessionContextValue {
             deviceResponsive: msg.data.deviceResponsive ?? false,
             locked: msg.data.locked,
             bridgeActive: msg.data.bridgeActive ?? false,
+            cycleState: msg.data.cycleState ?? null,
             livePoints: [],
           }));
           prevModeRef.current = msg.data.mode;
@@ -241,6 +245,10 @@ export function useDeviceSessionManager(): SessionContextValue {
 
         case 'deviceResponsive':
           setState(s => ({ ...s, deviceResponsive: msg.data.responsive }));
+          break;
+
+        case 'cycleState':
+          setState(s => ({ ...s, cycleState: msg.data }));
           break;
       }
     };

@@ -7,7 +7,7 @@
  * and legend toggle.
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSession } from '../hooks/useDeviceSession.ts';
 import {
   api,
@@ -18,11 +18,15 @@ import {
 } from '../api-client.ts';
 import {
   mergeRunsForChart,
+  mergeCapacityChart,
   dataPointsToChartRun,
+  runToCapacityDomain,
   type ChartRun,
   type MetricKey,
 } from '../lib/chart-data.ts';
+import { getDefaultReferenceCurves } from '../lib/lfp-reference-curves.ts';
 import { Chart } from '../components/Chart.tsx';
+import { CapacityChart } from '../components/CapacityChart.tsx';
 import { TopBar } from '../components/TopBar.tsx';
 import { StartModal } from '../components/StartModal.tsx';
 import { LegendPanel } from '../components/LegendPanel.tsx';
@@ -47,10 +51,37 @@ export function ChartView() {
   // ── UI state ─────────────────────────────────────────────────
   const [legendOpen, setLegendOpen] = useState(false);
   const [startModalOpen, setStartModalOpen] = useState(false);
+  const [chartMode, setChartMode] = useState<'time' | 'capacity'>('capacity');
   const [visibleMetrics, setVisibleMetrics] = useState<Set<MetricKey>>(
     () => new Set(['voltage', 'current'])
   );
   const [visibleRuns, setVisibleRuns] = useState<Set<number>>(() => new Set());
+
+  // ── Auto-detect cell insertion ────────────────────────────────
+  // When the device is idle and voltage jumps from near-zero to cell range,
+  // a new cell was probably inserted → auto-open the start modal.
+  const prevVoltageRef = useRef<number>(0);
+  const hasInitializedRef = useRef(false);
+
+  useEffect(() => {
+    const voltage = state.reading?.voltage ?? 0;
+    const isIdle = state.mode === 'idle';
+    const prev = prevVoltageRef.current;
+
+    // Skip the first reading (don't trigger on app load)
+    if (!hasInitializedRef.current) {
+      hasInitializedRef.current = true;
+      prevVoltageRef.current = voltage;
+      return;
+    }
+
+    // Detect voltage transition: low → cell range, while idle
+    if (isIdle && prev < 1.5 && voltage > 2.0 && !startModalOpen) {
+      setStartModalOpen(true);
+    }
+
+    prevVoltageRef.current = voltage;
+  }, [state.reading?.voltage, state.mode, startModalOpen]);
 
   // ── Load cell groups ──────────────────────────────────────────
   useEffect(() => {
@@ -150,6 +181,26 @@ export function ChartView() {
     [runs, state.livePoints, visibleRuns, visibleMetrics, isTestActive]
   );
 
+  // ── Capacity chart data ───────────────────────────────────────
+  const selectedGroup = cellGroups.find(g => g.id === selectedGroupId) ?? null;
+  const nominalMah = selectedGroup?.nominal_capacity_mah ?? 200000;
+  const nominalAh = nominalMah / 1000;
+
+  const capacityRuns = useMemo(
+    () => runs.map(run => runToCapacityDomain(run, nominalMah)),
+    [runs, nominalMah]
+  );
+
+  const referenceCurves = useMemo(
+    () => getDefaultReferenceCurves(nominalAh),
+    [nominalAh]
+  );
+
+  const capacityChartData = useMemo(
+    () => mergeCapacityChart(capacityRuns, referenceCurves, visibleRuns),
+    [capacityRuns, referenceCurves, visibleRuns]
+  );
+
   // ── Toggle handlers ──────────────────────────────────────────
   const toggleMetric = useCallback((metric: MetricKey) => {
     setVisibleMetrics(prev => {
@@ -190,16 +241,28 @@ export function ChartView() {
       <div className="chart-area">
         {loading ? (
           <div className="chart-loading">Loading runs...</div>
-        ) : chartData.data[0]?.length ? (
-          <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} />
+        ) : chartMode === 'time' ? (
+          chartData.data[0]?.length ? (
+            <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} />
+          ) : (
+            <div className="chart-empty">
+              {runs.length === 0
+                ? 'No test runs yet. Start a new test to begin.'
+                : 'No visible series. Open the legend to toggle metrics and runs.'}
+            </div>
+          )
         ) : (
-          <div className="chart-empty">
-            {runs.length === 0
-              ? 'No test runs yet. Start a new test to begin.'
-              : 'No visible series. Open the legend to toggle metrics and runs.'}
-          </div>
+          capacityChartData.data[0]?.length ? (
+            <CapacityChart data={capacityChartData.data} seriesInfo={capacityChartData.seriesInfo} />
+          ) : (
+            <div className="chart-empty">
+              {runs.length === 0
+                ? 'No test runs yet. Start a new test to begin.'
+                : 'No visible runs. Open the legend to toggle runs.'}
+            </div>
+          )
         )}
-        <LiveOverlay />
+        {chartMode === 'time' && <LiveOverlay />}
       </div>
 
       {/* Bottom bar */}
@@ -207,6 +270,21 @@ export function ChartView() {
         <button className="btn btn-legend" onClick={() => setLegendOpen(!legendOpen)}>
           Legend
         </button>
+
+        <div className="chart-mode-toggle">
+          <button
+            className={`chart-mode-btn ${chartMode === 'time' ? 'active' : ''}`}
+            onClick={() => setChartMode('time')}
+          >
+            Time
+          </button>
+          <button
+            className={`chart-mode-btn ${chartMode === 'capacity' ? 'active' : ''}`}
+            onClick={() => setChartMode('capacity')}
+          >
+            V-Ah
+          </button>
+        </div>
 
         {cellGroups.length > 0 && (
           <div className="group-select-wrapper">

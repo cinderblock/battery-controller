@@ -5,9 +5,17 @@
  * and a bridge mode toggle for proxying the serial port to EB Tester.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSession } from '../hooks/useDeviceSession.ts';
 import type { DeviceMode } from '../api-client.ts';
+
+function formatCountdown(ms: number): string {
+  if (ms <= 0) return '0:00';
+  const totalSec = Math.ceil(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
 
 const MODE_LABELS: Record<DeviceMode, string> = {
   'idle': 'Idle',
@@ -29,10 +37,22 @@ const MODE_CLASSES: Record<DeviceMode, string> = {
 
 export function TopBar() {
   const { state, enableBridge, disableBridge } = useSession();
-  const { wsConnected, serialConnected, deviceResponsive, mode, reading, pendingCommand, bridgeActive } = state;
+  const { wsConnected, serialConnected, deviceResponsive, mode, reading, pendingCommand, bridgeActive, cycleState } = state;
   const [bridgeLoading, setBridgeLoading] = useState(false);
+  const [waitRemaining, setWaitRemaining] = useState<number | null>(null);
 
   const isRunning = mode === 'd-cc' || mode === 'd-cp' || mode === 'c-cv';
+  const cycleActive = cycleState && (cycleState.status === 'running' || cycleState.status === 'waiting');
+
+  // Tick the wait countdown every second
+  useEffect(() => {
+    if (!cycleState?.waitEndTime) { setWaitRemaining(null); return; }
+    const tick = () => setWaitRemaining(cycleState.waitEndTime! - Date.now());
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [cycleState?.waitEndTime]);
+
   // Three-state connection: green = all good, amber = backend ok but hardware silent, red = backend down
   const connClass = !wsConnected ? 'conn-off'
     : !serialConnected && !bridgeActive ? 'conn-off'
@@ -123,6 +143,20 @@ export function TopBar() {
       {wsConnected && serialConnected && !deviceResponsive && !bridgeActive && (
         <div className="disconnect-banner disconnect-hardware">
           Server connected — hardware not responding
+        </div>
+      )}
+      {cycleActive && cycleState && (
+        <div className={`cycle-banner ${cycleState.status === 'waiting' ? 'cycle-waiting' : 'cycle-running'}`}>
+          <span className="cycle-name">{cycleState.programName ?? 'Sequence'}</span>
+          {cycleState.status === 'waiting' && waitRemaining !== null && (
+            <span className="cycle-wait-countdown">
+              Wait {formatCountdown(waitRemaining)}
+            </span>
+          )}
+          <span className="cycle-progress">
+            Step {cycleState.currentExecIndex + 1}/{cycleState.totalExecSteps}
+            {cycleState.totalCycles > 1 && ` \u00b7 Cycle ${cycleState.currentCycle}/${cycleState.totalCycles}`}
+          </span>
         </div>
       )}
     </>
