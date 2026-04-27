@@ -29,6 +29,7 @@ export interface StepDCC {
   cutoffV: number;
   maxTimeMin?: number;
   useCRate?: boolean;
+  excludeFromCount?: boolean;
 }
 
 export interface StepDCP {
@@ -36,6 +37,7 @@ export interface StepDCP {
   powerW: number;
   cutoffV: number;
   maxTimeMin?: number;
+  excludeFromCount?: boolean;
 }
 
 export interface StepCCV {
@@ -45,11 +47,13 @@ export interface StepCCV {
   cutoffCurrentA: number;
   maxTimeMin?: number;
   useCRate?: boolean;
+  excludeFromCount?: boolean;
 }
 
 export interface StepWait {
   type: 'wait';
   durationS: number;
+  excludeFromCount?: boolean;
 }
 
 export interface StepLoop {
@@ -246,6 +250,7 @@ export class CycleRunner {
     if (this.status !== 'running' && this.status !== 'waiting') return;
 
     this.clearWaitTimer();
+    this.recorder.stopWaitRun(); // no-op if no wait run active
 
     if (this.session.isRunning()) {
       await this.session.stop();
@@ -340,14 +345,23 @@ export class CycleRunner {
       });
     }
 
+    // Set cycle metadata on the recorder for this step
+    if (this.programId) {
+      this.recorder.setCycleContext(this.programId, this.execIndex);
+    }
+    this.recorder.setExcludeFromCapacity(step.excludeFromCount ?? false);
+    this.recorder.setCycleIteration(cycleNum);
+
     if (step.type === 'wait') {
-      // Wait step: set a timer
+      // Wait step: start recording readings, then set a timer
       this.status = 'waiting';
       this.waitEndTime = Date.now() + step.durationS * 1000;
+      this.recorder.startWaitRun(step.durationS);
       logger.info(`Cycle step ${this.execIndex + 1}: waiting ${step.durationS}s`);
       this.emit();
 
       this.waitTimer = setTimeout(() => {
+        this.recorder.stopWaitRun();
         this.waitEndTime = null;
         this.execIndex++;
         this.status = 'running';
@@ -360,10 +374,6 @@ export class CycleRunner {
     // Executable step: set up recorder and send command
     this.status = 'running';
     this.emit();
-
-    if (this.programId) {
-      this.recorder.setCycleContext(this.programId, this.execIndex);
-    }
 
     logger.info(`Cycle step ${this.execIndex + 1}: ${step.type} (cycle ${cycleNum})`);
 

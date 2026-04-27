@@ -149,6 +149,13 @@ function runMigrations(db: Database): void {
         ALTER TABLE cells ADD COLUMN cell_group_id INTEGER REFERENCES cell_groups(id);
       `,
     },
+    {
+      version: 3,
+      sql: `
+        ALTER TABLE test_runs ADD COLUMN exclude_from_capacity BOOLEAN DEFAULT 0;
+        ALTER TABLE test_runs ADD COLUMN cycle_iteration INTEGER;
+      `,
+    },
   ];
 
   for (const migration of migrations) {
@@ -255,6 +262,8 @@ export interface TestRun {
   peak_current_a: number | null;
   duration_s: number | null;
   data_point_count: number;
+  exclude_from_capacity: number;
+  cycle_iteration: number | null;
 }
 
 export interface CreateTestRunParams {
@@ -269,6 +278,8 @@ export interface CreateTestRunParams {
   setpointCutoffCurrentA?: number | null;
   setpointMaxTimeMin?: number | null;
   startReason?: string;
+  excludeFromCapacity?: boolean;
+  cycleIteration?: number | null;
 }
 
 export function createTestRun(params: CreateTestRunParams): TestRun {
@@ -277,8 +288,8 @@ export function createTestRun(params: CreateTestRunParams): TestRun {
     `INSERT INTO test_runs (cell_id, cycle_program_id, cycle_step_index, mode,
        setpoint_current_a, setpoint_voltage_v, setpoint_power_w,
        setpoint_cutoff_v, setpoint_cutoff_current_a, setpoint_max_time_min,
-       start_reason)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       start_reason, exclude_from_capacity, cycle_iteration)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       params.cellId ?? null,
       params.cycleProgramId ?? null,
@@ -291,6 +302,8 @@ export function createTestRun(params: CreateTestRunParams): TestRun {
       params.setpointCutoffCurrentA ?? null,
       params.setpointMaxTimeMin ?? null,
       params.startReason ?? 'manual',
+      params.excludeFromCapacity ? 1 : 0,
+      params.cycleIteration ?? null,
     ]
   );
   return db.query<TestRun, [number]>('SELECT * FROM test_runs WHERE id = ?').get(
@@ -485,6 +498,19 @@ export function getActiveCycleProgram(): CycleProgram | null {
   ).get() ?? null;
 }
 
+export function getCycleProgram(id: number): CycleProgram | null {
+  return getDb().query<CycleProgram, [number]>(
+    'SELECT * FROM cycle_programs WHERE id = ?'
+  ).get(id) ?? null;
+}
+
+/** All test runs for a cycle program, ordered by start time */
+export function getRunsForCycleProgram(programId: number): TestRun[] {
+  return getDb().query<TestRun, [number]>(
+    'SELECT * FROM test_runs WHERE cycle_program_id = ? ORDER BY started_at ASC'
+  ).all(programId);
+}
+
 // ── Settings operations ─────────────────────────────────────────────
 
 export function getSetting(key: string): string | null {
@@ -534,24 +560,26 @@ export function setCellGroup(cellId: number, groupId: number | null): void {
   );
 }
 
-/** Completed discharge runs for a cell, ordered by date */
+/** Completed discharge runs for a cell, ordered by date (excludes setup/teardown) */
 export function getCompletedDischargeRuns(cellId: number): TestRun[] {
   return getDb().query<TestRun, [number]>(
     `SELECT * FROM test_runs
      WHERE cell_id = ? AND mode = 'd-cc'
        AND final_capacity_mah IS NOT NULL AND final_capacity_mah > 0
        AND ended_at IS NOT NULL
+       AND (exclude_from_capacity IS NULL OR exclude_from_capacity = 0)
      ORDER BY started_at ASC`
   ).all(cellId);
 }
 
-/** All completed discharge runs (for fleet analysis) */
+/** All completed discharge runs (for fleet analysis, excludes setup/teardown) */
 export function getAllCompletedDischargeRuns(): TestRun[] {
   return getDb().query<TestRun, []>(
     `SELECT * FROM test_runs
      WHERE mode = 'd-cc'
        AND final_capacity_mah IS NOT NULL AND final_capacity_mah > 0
        AND ended_at IS NOT NULL
+       AND (exclude_from_capacity IS NULL OR exclude_from_capacity = 0)
      ORDER BY started_at ASC`
   ).all();
 }

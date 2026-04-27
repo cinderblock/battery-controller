@@ -25,6 +25,7 @@ import {
   getCellGroups, getCellsInGroup,
   getSequences, getSequence, createSequence, updateSequence, deleteSequence,
   createCellGroup,
+  getCycleProgram, getRunsForCycleProgram,
   getSetting, setSetting,
 } from './db.ts';
 import {
@@ -586,6 +587,27 @@ async function main() {
 
       await cycleRunner.abort();
       return jsonResponse({ ok: true });
+    }
+
+    // GET /api/cycle-programs/:id/timeline — full sequence timeline
+    const timelineMatch = pathname.match(/^\/api\/cycle-programs\/(\d+)\/timeline$/);
+    if (timelineMatch && method === 'GET') {
+      const programId = parseInt(timelineMatch[1], 10);
+      const program = getCycleProgram(programId);
+      if (!program) return errorResponse('Cycle program not found', 404);
+
+      const runs = getRunsForCycleProgram(programId);
+
+      // Compute cumulative sequence offset for each run
+      let cumulativeOffset = 0;
+      const timeline = runs.map(run => {
+        const sequenceOffsetS = cumulativeOffset;
+        const points = getDataPointsForRun(run.id);
+        cumulativeOffset += run.duration_s ?? 0;
+        return { ...run, sequenceOffsetS, dataPoints: points };
+      });
+
+      return jsonResponse({ program, runs: timeline });
     }
 
     // ── Data export ──────────────────────────────────────────

@@ -46,6 +46,11 @@ export class TestRecorder {
   private pendingCycleProgramId: number | null = null;
   private pendingCycleStepIndex: number | null = null;
   private pendingStartReason: string = 'manual';
+  private pendingExcludeFromCapacity = false;
+  private pendingCycleIteration: number | null = null;
+
+  // Wait run tracking (wall-clock elapsed, since device reports 0 when idle)
+  private waitStartTime: number | null = null;
 
   // Track whether we've seen the initial state transition (for recovery detection)
   private hasSeenFirstTransition = false;
@@ -69,7 +74,11 @@ export class TestRecorder {
     this.unsubscribe = null;
 
     if (this.activeRunId !== null) {
-      this.finalizeRun('service_shutdown');
+      if (this.activeRunMode === ('wait' as DeviceMode)) {
+        this.stopWaitRun();
+      } else {
+        this.finalizeRun('service_shutdown');
+      }
     }
   }
 
@@ -112,6 +121,77 @@ export class TestRecorder {
   /** Get the active run's max time limit (minutes), if any */
   getActiveRunMaxTimeMin(): number | null {
     return this.activeRunMaxTimeMin;
+  }
+
+  /** Set whether the next run should be excluded from capacity calculations */
+  setExcludeFromCapacity(exclude: boolean): void {
+    this.pendingExcludeFromCapacity = exclude;
+  }
+
+  /** Set the cycle iteration number for the next run */
+  setCycleIteration(iteration: number | null): void {
+    this.pendingCycleIteration = iteration;
+  }
+
+  /**
+   * Start recording a wait run. Device is idle but still sending readings;
+   * we use wall-clock time for elapsed_s since the device reports 0.
+   */
+  startWaitRun(durationS: number): void {
+    if (this.activeRunId !== null) {
+      logger.warn('startWaitRun called while a run is already active — ignoring');
+      return;
+    }
+
+    const params: CreateTestRunParams = {
+      cellId: this.pendingCellId,
+      cycleProgramId: this.pendingCycleProgramId,
+      cycleStepIndex: this.pendingCycleStepIndex,
+      mode: 'wait',
+      setpointMaxTimeMin: Math.round(durationS / 60),
+      startReason: this.pendingStartReason,
+      excludeFromCapacity: this.pendingExcludeFromCapacity,
+      cycleIteration: this.pendingCycleIteration,
+    };
+
+    const run = createTestRun(params);
+    this.activeRunId = run.id;
+    this.activeRunMode = 'wait' as DeviceMode;
+    this.activeRunMaxTimeMin = null;
+    this.waitStartTime = Date.now();
+    this.dataPointCount = 0;
+
+    logger.info(`Started wait run #${run.id} (${durationS}s, cell=${this.pendingCellId ?? 'none'})`);
+  }
+
+  /** Stop and finalize the active wait run */
+  stopWaitRun(): void {
+    if (this.activeRunId === null || this.activeRunMode !== ('wait' as DeviceMode)) return;
+
+    const durationS = this.waitStartTime
+      ? (Date.now() - this.waitStartTime) / 1000
+      : 0;
+    const reading = this.session.getReading();
+
+    finalizeTestRun(
+      this.activeRunId,
+      'complete',
+      0,             // no capacity during wait
+      0,             // no energy during wait
+      reading.voltage,
+      reading.voltage,
+      0,             // no current during wait
+      durationS,
+      this.dataPointCount,
+    );
+
+    logger.info(`Finalized wait run #${this.activeRunId}: ${durationS.toFixed(0)}s, ${this.dataPointCount} points`);
+
+    this.activeRunId = null;
+    this.activeRunMode = null;
+    this.activeRunMaxTimeMin = null;
+    this.waitStartTime = null;
+    this.dataPointCount = 0;
   }
 
   // ── Event handling ────────────────────────────────────────────
@@ -162,9 +242,14 @@ export class TestRecorder {
     if (this.activeRunId === null) return;
     if (reading.isInfoPacket) return;
 
+    // For wait runs, use wall-clock elapsed (device reports 0 when idle)
+    const elapsedS = this.activeRunMode === ('wait' as DeviceMode) && this.waitStartTime
+      ? (Date.now() - this.waitStartTime) / 1000
+      : reading.elapsedS;
+
     insertDataPoint(
       this.activeRunId,
-      reading.elapsedS,
+      elapsedS,
       reading.voltage,
       reading.current,
       reading.power,
@@ -190,6 +275,8 @@ export class TestRecorder {
       setpointCutoffCurrentA: this.pendingSetpoints?.cutoffCurrentA,
       setpointMaxTimeMin: this.pendingSetpoints?.maxTimeMin,
       startReason: this.pendingStartReason,
+      excludeFromCapacity: this.pendingExcludeFromCapacity,
+      cycleIteration: this.pendingCycleIteration,
     };
 
     const run = createTestRun(params);
@@ -212,6 +299,8 @@ export class TestRecorder {
       cycleStepIndex: this.pendingCycleStepIndex,
       mode,
       startReason: 'recovered',
+      excludeFromCapacity: this.pendingExcludeFromCapacity,
+      cycleIteration: this.pendingCycleIteration,
     };
 
     const run = createTestRun(params);
