@@ -4,10 +4,9 @@
  * Main server entry point
  *
  * Wires together: SerialManager → DeviceSession → TestRecorder → SQLite
- * Serves REST API + typed WebSocket broadcasts on a single Bun server.
+ * Serves REST API + SSE event stream on a single Bun server.
  */
 
-import type { ServerWebSocket } from 'bun';
 import homepage from '../frontend/index.html';
 import { logger } from '../utils/logger.ts';
 import { shutdown } from '../utils/shutdown.ts';
@@ -50,17 +49,31 @@ const TRUSTED_PROXY = '10.255.0.5';
 /** Unique ID per server process — clients detect restarts and auto-reload */
 const SERVER_BUILD_ID = crypto.randomUUID();
 
-// ── WebSocket client tracking ──────────────────────────────────────
+// ── SSE client tracking ───────────────────────────────────────────
 
-type WsData = { id: number };
-const wsClients = new Set<ServerWebSocket<WsData>>();
-let wsIdCounter = 0;
+interface SseClient {
+  id: number;
+  controller: ReadableStreamDefaultController<Uint8Array>;
+  closed: boolean;
+}
+const sseClients = new Set<SseClient>();
+let sseIdCounter = 0;
+const sseEncoder = new TextEncoder();
 
-function broadcast(msg: object): void {
-  const json = JSON.stringify(msg);
-  for (const client of wsClients) {
-    try { client.send(json); }
-    catch { /* client will be cleaned up on close */ }
+function sseFormat(event: string, data: unknown): Uint8Array {
+  return sseEncoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+function broadcast(event: string, data: unknown): void {
+  const encoded = sseFormat(event, data);
+  for (const client of sseClients) {
+    if (client.closed) continue;
+    try {
+      client.controller.enqueue(encoded);
+    } catch {
+      client.closed = true;
+      sseClients.delete(client);
+    }
   }
 }
 
@@ -85,7 +98,7 @@ async function parseBody<T = Record<string, unknown>>(req: Request): Promise<T |
 // ── Main ───────────────────────────────────────────────────────────
 
 async function main() {
-  // Bridge mode: transparent TCP-serial byte pipe (no WebSocket server)
+  // Bridge mode: transparent TCP-serial byte pipe (no HTTP server)
   if (process.argv.includes('--bridge') || process.env.MODE === 'bridge') {
     await startTcpBridgeStandalone();
     return;
@@ -152,58 +165,55 @@ async function main() {
     startCamera();
   }
 
-  // ── Wire session events → WebSocket broadcasts ────────────────
+  // ── Wire session events → SSE broadcasts ───────────────────────
   session.on((event: SessionEvent) => {
     switch (event.type) {
       case 'reading':
-        broadcast({ type: 'reading', data: event.data });
+        broadcast('reading', event.data);
         break;
       case 'stateChange':
-        broadcast({
-          type: 'state',
-          data: {
-            mode: event.to,
-            previousMode: event.from,
-            activeRunId: recorder.getActiveRunId(),
-            timestamp: Date.now(),
-          },
+        broadcast('state', {
+          mode: event.to,
+          previousMode: event.from,
+          activeRunId: recorder.getActiveRunId(),
+          timestamp: Date.now(),
         });
         break;
       case 'connected':
-        broadcast({ type: 'connected', data: { timestamp: Date.now() } });
+        broadcast('connected', { timestamp: Date.now() });
         break;
       case 'disconnected':
-        broadcast({ type: 'disconnected', data: { timestamp: Date.now() } });
+        broadcast('disconnected', { timestamp: Date.now() });
         break;
       case 'deviceInfo':
-        broadcast({ type: 'deviceInfo', data: event.data });
+        broadcast('deviceInfo', event.data);
         break;
       case 'commandPending':
-        broadcast({ type: 'commandPending', data: event.data });
+        broadcast('commandPending', event.data);
         break;
       case 'commandConfirmed':
-        broadcast({ type: 'commandConfirmed', data: event.data });
+        broadcast('commandConfirmed', event.data);
         break;
       case 'commandTimeout':
-        broadcast({ type: 'commandTimeout', data: event.data });
+        broadcast('commandTimeout', event.data);
         break;
       case 'deviceUnresponsive':
-        broadcast({ type: 'deviceResponsive', data: { responsive: false } });
+        broadcast('deviceResponsive', { responsive: false });
         break;
       case 'deviceResponsive':
-        broadcast({ type: 'deviceResponsive', data: { responsive: true } });
+        broadcast('deviceResponsive', { responsive: true });
         break;
     }
   });
 
-  // ── Wire lock state → WebSocket broadcasts ────────────────────
+  // ── Wire lock state → SSE broadcasts ──────────────────────────
   settingsLock.onLockChange(locked => {
-    broadcast({ type: 'lockState', data: { locked } });
+    broadcast('lockState', { locked });
   });
 
-  // ── Wire cycle state → WebSocket broadcasts ───────────────────
+  // ── Wire cycle state → SSE broadcasts ─────────────────────────
   cycleRunner.onStateChange(state => {
-    broadcast({ type: 'cycleState', data: state });
+    broadcast('cycleState', state);
   });
 
   // ── Bridge mode toggle ────────────────────────────────────────
@@ -220,7 +230,7 @@ async function main() {
 
     // Start the TCP bridge (opens serial port itself)
     activeBridge = await startTcpBridge();
-    broadcast({ type: 'bridgeState', data: { active: true } });
+    broadcast('bridgeState', { active: true });
     logger.info('Bridge mode enabled — serial port handed to TCP bridge');
   }
 
@@ -237,7 +247,7 @@ async function main() {
     cycleRunner.start();
     recorder.start();
 
-    broadcast({ type: 'bridgeState', data: { active: false } });
+    broadcast('bridgeState', { active: false });
     logger.info('Bridge mode disabled — serial port returned to device session');
   }
 
@@ -252,6 +262,52 @@ async function main() {
   // ── REST route handler ────────────────────────────────────────
   async function handleApi(req: Request, pathname: string): Promise<Response | null> {
     const method = req.method;
+
+    // ── SSE event stream ─────────────────────────────────────
+    if (pathname === '/api/events' && method === 'GET') {
+      const clientId = ++sseIdCounter;
+      let client: SseClient;
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          client = { id: clientId, controller, closed: false };
+          sseClients.add(client);
+          logger.info(`SSE client connected (#${clientId}, total: ${sseClients.size})`);
+
+          // Set browser reconnect interval
+          controller.enqueue(sseEncoder.encode('retry: 1000\n\n'));
+
+          // Send initial state snapshot
+          controller.enqueue(sseFormat('snapshot', {
+            buildId: SERVER_BUILD_ID,
+            mode: session.getMode(),
+            reading: session.getReading(),
+            stats: session.getTestStats(),
+            deviceInfo: session.getDeviceInfo(),
+            activeRunId: recorder.getActiveRunId(),
+            activeRunMaxTimeMin: recorder.getActiveRunMaxTimeMin(),
+            serialConnected: serialManager.isPortOpen(),
+            deviceResponsive: session.isDeviceResponsive(),
+            locked: settingsLock.isLocked(),
+            cycleState: cycleRunner.getState(),
+            bridgeActive: activeBridge !== null,
+          }));
+        },
+        cancel() {
+          client.closed = true;
+          sseClients.delete(client);
+          logger.info(`SSE client disconnected (#${clientId}, total: ${sseClients.size})`);
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache, no-store',
+          'X-Accel-Buffering': 'no',
+        },
+      });
+    }
 
     // ── Test control ──────────────────────────────────────────
     if (pathname === '/api/test/start' && method === 'POST') {
@@ -754,49 +810,23 @@ async function main() {
     return null; // Not an API route
   }
 
+  // ── SSE keepalive ──────────────────────────────────────────────
+  const keepaliveInterval = setInterval(() => {
+    const ping = sseEncoder.encode(': keepalive\n\n');
+    for (const client of sseClients) {
+      if (client.closed) continue;
+      try { client.controller.enqueue(ping); }
+      catch { client.closed = true; sseClients.delete(client); }
+    }
+  }, 15_000);
+
   // ── Create server ─────────────────────────────────────────────
-  const server = Bun.serve<WsData>({
+  const server = Bun.serve({
     port: Port,
     development: process.env.NODE_ENV === 'development',
 
     error(error) {
       logger.error('Server error:', error);
-    },
-
-    websocket: {
-      open(ws) {
-        wsClients.add(ws);
-        logger.info(`WebSocket client connected (#${ws.data.id}, total: ${wsClients.size})`);
-
-        // Send current state snapshot
-        ws.send(JSON.stringify({
-          type: 'snapshot',
-          data: {
-            buildId: SERVER_BUILD_ID,
-            mode: session.getMode(),
-            reading: session.getReading(),
-            stats: session.getTestStats(),
-            deviceInfo: session.getDeviceInfo(),
-            activeRunId: recorder.getActiveRunId(),
-            activeRunMaxTimeMin: recorder.getActiveRunMaxTimeMin(),
-            serialConnected: serialManager.isPortOpen(),
-            deviceResponsive: session.isDeviceResponsive(),
-            locked: settingsLock.isLocked(),
-            cycleState: cycleRunner.getState(),
-            bridgeActive: activeBridge !== null,
-          },
-        }));
-      },
-
-      close(ws) {
-        wsClients.delete(ws);
-        logger.info(`WebSocket client disconnected (#${ws.data.id}, total: ${wsClients.size})`);
-      },
-
-      message(_ws, _message) {
-        // All commands go through the REST API — no WebSocket commands.
-        // This keeps the protocol simple and debuggable.
-      },
     },
 
     routes: {
@@ -827,13 +857,6 @@ async function main() {
         });
       }
 
-      // WebSocket upgrade
-      if (url.pathname === '/ws') {
-        const upgraded = server.upgrade(req, { data: { id: ++wsIdCounter } });
-        if (upgraded) return;
-        return new Response('WebSocket upgrade failed', { status: 400 });
-      }
-
       // Static files (zbar.wasm barcode scanner — deployed alongside the bundle)
       if (url.pathname === '/static/zbar.js') {
         const file = Bun.file('./zbar.js');
@@ -862,12 +885,17 @@ async function main() {
   });
 
   logger.info(`Server running at http://localhost:${Port}`);
-  logger.info(`WebSocket at ws://localhost:${Port}/ws`);
+  logger.info(`SSE event stream at http://localhost:${Port}/api/events`);
   logger.info(`Device mode: ${session.getMode()}, serial: ${serialManager.isPortOpen() ? 'connected' : 'disconnected'}`);
 
   // ── Graceful shutdown ──────────────────────────────────────────
   async function gracefulShutdown() {
     logger.info('Shutting down...');
+    clearInterval(keepaliveInterval);
+    for (const client of sseClients) {
+      try { client.controller.close(); } catch { /* already closed */ }
+    }
+    sseClients.clear();
     stopCamera();
     if (activeBridge) {
       await activeBridge.stop();
