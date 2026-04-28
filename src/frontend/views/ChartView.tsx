@@ -55,7 +55,7 @@ export function ChartView() {
   // ── UI state ─────────────────────────────────────────────────
   const [legendOpen, setLegendOpen] = useState(false);
   const [startModalOpen, setStartModalOpen] = useState(false);
-  const [chartMode, setChartMode] = useState<'time' | 'capacity'>('capacity');
+  const [chartMode, setChartMode] = useState<'time' | 'capacity'>('time');
   const [visibleMetrics, setVisibleMetrics] = useState<Set<MetricKey>>(
     () => new Set(['voltage', 'current'])
   );
