@@ -201,7 +201,7 @@ export function TopBar() {
             {reading.rawField7 != null && (
               <span className={`reading-val rv-raw${reading.rawField7 !== 0 ? ' rv-highlight' : ''}`}>
                 <span className="reading-num">0x{reading.rawField7.toString(16).toUpperCase().padStart(4, '0')}</span>
-                <span className="reading-unit">f7</span>
+                <span className="reading-unit">b8-9</span>
               </span>
             )}
           </div>
