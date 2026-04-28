@@ -24,7 +24,6 @@
     "ghostcom": "link:ghostcom",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-use-websocket": "^4.13.0",
     "sharp": "^0.34.5",
     "ssh2": "^1.16.0",
     "tesseract.js": "^7.0.0",
