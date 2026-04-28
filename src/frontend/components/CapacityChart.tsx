@@ -54,6 +54,7 @@ export function CapacityChart({ data, seriesInfo, thresholds = [], className }: 
   seriesInfoRef.current = seriesInfo;
 
   const buildOptions = useCallback((): uPlot.Options => {
+    const seriesInfo = seriesInfoRef.current;
     const container = containerRef.current;
     const width = container?.clientWidth ?? 800;
     const height = container?.clientHeight ?? 400;
@@ -261,7 +262,7 @@ export function CapacityChart({ data, seriesInfo, thresholds = [], className }: 
         ],
       },
     };
-  }, [seriesInfo]);
+  }, []); // reads seriesInfoRef.current, no deps needed
 
   // Create tooltip element on mount
   useEffect(() => {
@@ -302,7 +303,7 @@ export function CapacityChart({ data, seriesInfo, thresholds = [], className }: 
       uplotRef.current = null;
       prevSeriesKeyRef.current = '';
     };
-  }, [seriesKey, buildOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [seriesKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Update data without recreating chart
   useEffect(() => {

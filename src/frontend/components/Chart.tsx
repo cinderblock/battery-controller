@@ -63,6 +63,7 @@ export function Chart({ data, seriesInfo, thresholds = [], className }: ChartPro
   const seriesKey = seriesInfo.map(s => `${s.runId}:${s.metric}:${s.isLive}`).join('|');
 
   const buildOptions = useCallback((): uPlot.Options => {
+    const seriesInfo = seriesInfoRef.current;
     const container = containerRef.current;
     const width = container?.clientWidth ?? 800;
     const height = container?.clientHeight ?? 400;
@@ -267,7 +268,7 @@ export function Chart({ data, seriesInfo, thresholds = [], className }: ChartPro
         ],
       },
     };
-  }, [seriesInfo]);
+  }, []); // reads seriesInfoRef.current, no deps needed
 
   // Create tooltip element on mount
   useEffect(() => {
@@ -310,7 +311,7 @@ export function Chart({ data, seriesInfo, thresholds = [], className }: ChartPro
       uplotRef.current = null;
       prevSeriesKeyRef.current = '';
     };
-  }, [seriesKey, buildOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [seriesKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Update data when it changes (without recreating chart)
   useEffect(() => {

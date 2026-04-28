@@ -85,7 +85,7 @@ export function ChartView() {
     if (isIdle && prev < 1.5 && voltage > 2.0 && !startModalOpen) {
       setStartModalOpen(true);
     }
-  }, [state.reading, state.mode, startModalOpen]);
+  }, [state.reading?.voltage, state.mode, startModalOpen]);
 
   // ── Load cell groups ──────────────────────────────────────────
   useEffect(() => {
@@ -374,9 +374,8 @@ export function ChartView() {
 // ── usePrevious hook ───────────────────────────────────────────────
 
 function usePrevious<T>(value: T): T | undefined {
-  const [prev, setPrev] = useState<T | undefined>(undefined);
-  useEffect(() => {
-    setPrev(value);
-  }, [value]);
+  const ref = useRef<T | undefined>(undefined);
+  const prev = ref.current;
+  ref.current = value;
   return prev;
 }

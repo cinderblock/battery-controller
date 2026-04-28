@@ -179,7 +179,7 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
       })
       .catch(() => {})
       .finally(() => setSequencesLoaded(true));
-  }, [wizardStep, sequencesLoaded, selectedSequenceId]);
+  }, [wizardStep, sequencesLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Look up cell info when barcode changes ───────────────────
   const lookupCell = useCallback(async (bc: string) => {
