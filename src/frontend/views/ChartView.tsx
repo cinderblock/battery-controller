@@ -40,6 +40,22 @@ export function ChartView() {
   const { state, stopTest } = useSession();
   const isTestActive = state.mode === 'd-cc' || state.mode === 'd-cp' || state.mode === 'c-cv';
 
+  // ── Layout refs ─────────────────────────────────────────────
+  const chartViewRef = useRef<HTMLDivElement>(null);
+
+  // On mobile, scroll past the camera to hide it by default
+  const handleCameraVisibility = useCallback((visible: boolean) => {
+    if (!visible) return;
+    requestAnimationFrame(() => {
+      const el = chartViewRef.current;
+      if (!el || window.innerWidth > 480) return;
+      const cam = el.querySelector('.camera-view') as HTMLElement | null;
+      if (cam) {
+        el.scrollTop = cam.offsetHeight;
+      }
+    });
+  }, []);
+
   // ── Historical run data ──────────────────────────────────────
   const [runs, setRuns] = useState<ChartRun[]>([]);
   const [loading, setLoading] = useState(true);
@@ -259,114 +275,117 @@ export function ChartView() {
     : null;
 
   return (
-    <div className="chart-view">
-      <TopBar />
-      <CameraView />
+    <div className="chart-view" ref={chartViewRef}>
+      <CameraView onVisibilityChange={handleCameraVisibility} />
 
-      <div className="chart-area">
-        {loading ? (
-          <div className="chart-loading">Loading runs...</div>
-        ) : chartMode === 'time' ? (
-          chartData.data[0]?.length ? (
-            <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} thresholds={thresholds} />
+      <div className="chart-view-body">
+        <TopBar />
+
+        <div className="chart-area">
+          {loading ? (
+            <div className="chart-loading">Loading runs...</div>
+          ) : chartMode === 'time' ? (
+            chartData.data[0]?.length ? (
+              <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} thresholds={thresholds} />
+            ) : (
+              <div className="chart-empty">
+                {runs.length === 0
+                  ? 'No test runs yet. Start a new test to begin.'
+                  : 'No visible series. Open the legend to toggle metrics and runs.'}
+              </div>
+            )
           ) : (
-            <div className="chart-empty">
-              {runs.length === 0
-                ? 'No test runs yet. Start a new test to begin.'
-                : 'No visible series. Open the legend to toggle metrics and runs.'}
-            </div>
-          )
-        ) : (
-          capacityChartData.data[0]?.length ? (
-            <CapacityChart data={capacityChartData.data} seriesInfo={capacityChartData.seriesInfo} thresholds={thresholds} />
-          ) : (
-            <div className="chart-empty">
-              {runs.length === 0
-                ? 'No test runs yet. Start a new test to begin.'
-                : 'No visible runs. Open the legend to toggle runs.'}
-            </div>
-          )
-        )}
-      </div>
-
-      {/* Bottom bar */}
-      <div className="bottom-bar">
-        <button className="btn btn-legend" onClick={() => setLegendOpen(!legendOpen)}>
-          Legend
-        </button>
-
-        <div className="chart-mode-toggle">
-          <button
-            className={`chart-mode-btn ${chartMode === 'time' ? 'active' : ''}`}
-            onClick={() => setChartMode('time')}
-          >
-            Time
-          </button>
-          <button
-            className={`chart-mode-btn ${chartMode === 'capacity' ? 'active' : ''}`}
-            onClick={() => setChartMode('capacity')}
-          >
-            V-Ah
-          </button>
+            capacityChartData.data[0]?.length ? (
+              <CapacityChart data={capacityChartData.data} seriesInfo={capacityChartData.seriesInfo} thresholds={thresholds} />
+            ) : (
+              <div className="chart-empty">
+                {runs.length === 0
+                  ? 'No test runs yet. Start a new test to begin.'
+                  : 'No visible runs. Open the legend to toggle runs.'}
+              </div>
+            )
+          )}
         </div>
 
-        {cellGroups.length > 0 && (
-          <div className="group-select-wrapper">
-            <select
-              className="group-select"
-              value={selectedGroupId ?? ''}
-              onChange={e => setSelectedGroupId(parseInt(e.target.value, 10) || null)}
+        {/* Bottom bar */}
+        <div className="bottom-bar">
+          <button className="btn btn-legend" onClick={() => setLegendOpen(!legendOpen)}>
+            Legend
+          </button>
+
+          <div className="chart-mode-toggle">
+            <button
+              className={`chart-mode-btn ${chartMode === 'time' ? 'active' : ''}`}
+              onClick={() => setChartMode('time')}
             >
-              {cellGroups.map(g => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-            </select>
-            {groupBadge && (
-              <span className="group-health-badge" style={{
-                color: fleetSummary!.avgHealthPct! >= 90 ? '#4caf50'
-                  : fleetSummary!.avgHealthPct! >= 75 ? '#ff9800'
-                  : '#f44336'
-              }}>
-                {groupBadge}
-              </span>
-            )}
+              Time
+            </button>
+            <button
+              className={`chart-mode-btn ${chartMode === 'capacity' ? 'active' : ''}`}
+              onClick={() => setChartMode('capacity')}
+            >
+              V-Ah
+            </button>
           </div>
-        )}
 
-        <div className="bottom-spacer" />
+          {cellGroups.length > 0 && (
+            <div className="group-select-wrapper">
+              <select
+                className="group-select"
+                value={selectedGroupId ?? ''}
+                onChange={e => setSelectedGroupId(parseInt(e.target.value, 10) || null)}
+              >
+                {cellGroups.map(g => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+              {groupBadge && (
+                <span className="group-health-badge" style={{
+                  color: fleetSummary!.avgHealthPct! >= 90 ? '#4caf50'
+                    : fleetSummary!.avgHealthPct! >= 75 ? '#ff9800'
+                    : '#f44336'
+                }}>
+                  {groupBadge}
+                </span>
+              )}
+            </div>
+          )}
 
-        {isTestActive || state.stopping || (state.cycleState && (state.cycleState.status === 'running' || state.cycleState.status === 'waiting')) ? (
-          <button className="btn btn-stop" onClick={stopTest} disabled={state.stopping}>
-            {state.stopping ? 'Stopping...' : 'Stop'}
-          </button>
-        ) : (
-          <button className="btn btn-new-run" onClick={() => setStartModalOpen(true)}>
-            New Run
-          </button>
-        )}
+          <div className="bottom-spacer" />
 
-        <a href="/sequences" className="btn btn-link">Sequences</a>
+          {isTestActive || state.stopping || (state.cycleState && (state.cycleState.status === 'running' || state.cycleState.status === 'waiting')) ? (
+            <button className="btn btn-stop" onClick={stopTest} disabled={state.stopping}>
+              {state.stopping ? 'Stopping...' : 'Stop'}
+            </button>
+          ) : (
+            <button className="btn btn-new-run" onClick={() => setStartModalOpen(true)}>
+              New Run
+            </button>
+          )}
+
+          <a href="/sequences" className="btn btn-link">Sequences</a>
+        </div>
+
+        <LegendPanel
+          open={legendOpen}
+          onClose={() => setLegendOpen(false)}
+          runs={runs}
+          visibleMetrics={visibleMetrics}
+          visibleRuns={visibleRuns}
+          onToggleMetric={toggleMetric}
+          onToggleRun={toggleRun}
+          onShowAll={showAllRuns}
+          onHideAll={hideAllRuns}
+          fleetSummary={fleetSummary}
+        />
+
+        <StartModal
+          open={startModalOpen}
+          onClose={() => setStartModalOpen(false)}
+          cellGroups={cellGroups}
+          selectedGroupId={selectedGroupId}
+        />
       </div>
-
-      <LegendPanel
-        open={legendOpen}
-        onClose={() => setLegendOpen(false)}
-        runs={runs}
-        visibleMetrics={visibleMetrics}
-        visibleRuns={visibleRuns}
-        onToggleMetric={toggleMetric}
-        onToggleRun={toggleRun}
-        onShowAll={showAllRuns}
-        onHideAll={hideAllRuns}
-        fleetSummary={fleetSummary}
-      />
-
-      <StartModal
-        open={startModalOpen}
-        onClose={() => setStartModalOpen(false)}
-        cellGroups={cellGroups}
-        selectedGroupId={selectedGroupId}
-      />
     </div>
   );
 }

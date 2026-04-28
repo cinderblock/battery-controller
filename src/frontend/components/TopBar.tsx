@@ -133,7 +133,7 @@ export function TopBar() {
   }
 
   return (
-    <>
+    <div className="top-bar-wrapper">
       <header className="top-bar">
         <div className="top-bar-left">
           <span className={`conn-dot ${connClass}${flashClass}`} />
@@ -304,6 +304,6 @@ export function TopBar() {
           </div>
         );
       })()}
-    </>
+    </div>
   );
 }

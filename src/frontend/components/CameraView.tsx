@@ -10,7 +10,11 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 const REFRESH_INTERVAL_MS = 2000;
 
-export function CameraView() {
+interface CameraViewProps {
+  onVisibilityChange?: (visible: boolean) => void;
+}
+
+export function CameraView({ onVisibilityChange }: CameraViewProps) {
   const [visible, setVisible] = useState(false);
   const [error, setError] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -25,6 +29,11 @@ export function CameraView() {
       })
       .catch(() => setVisible(false));
   }, []);
+
+  // Notify parent of visibility changes
+  useEffect(() => {
+    onVisibilityChange?.(visible);
+  }, [visible, onVisibilityChange]);
 
   // Refresh the image periodically
   const refresh = useCallback(() => {

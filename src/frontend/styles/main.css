@@ -39,26 +39,33 @@ html, body {
 
 .chart-view {
   height: 100%;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
 }
 
 /* ── Camera view ───────────────────────────────────────────────── */
 
 .camera-view {
+  grid-column: 1;
+  grid-row: 1;
   position: relative;
   background: #000;
+  border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   text-align: center;
-  flex-shrink: 0;
-  max-height: 80px;
   overflow: hidden;
+  width: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .camera-img {
   display: block;
   width: 100%;
-  max-height: 80px;
+  height: 100%;
   object-fit: contain;
 }
 
@@ -71,6 +78,18 @@ html, body {
   padding: 8px;
   font-size: 11px;
   color: var(--text-dim);
+}
+
+/* ── Chart view body (wraps everything except camera) ──────────── */
+
+.chart-view-body {
+  display: contents;
+}
+
+.top-bar-wrapper {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
 }
 
 /* ── Top bar ────────────────────────────────────────────────────── */
@@ -308,7 +327,8 @@ html, body {
 /* ── Chart area ─────────────────────────────────────────────────── */
 
 .chart-area {
-  flex: 1;
+  grid-column: 1 / -1;
+  grid-row: 2;
   position: relative;
   min-height: 0;
   overflow: hidden;
@@ -338,13 +358,14 @@ html, body {
 /* ── Bottom bar ─────────────────────────────────────────────────── */
 
 .bottom-bar {
+  grid-column: 1 / -1;
+  grid-row: 3;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
   background: var(--surface);
   border-top: 1px solid var(--border);
-  flex-shrink: 0;
 }
 
 .bottom-spacer { flex: 1; }
@@ -1967,6 +1988,52 @@ html, body {
 /* ── Responsive (phone) ─────────────────────────────────────────── */
 
 @media (max-width: 480px) {
+  .chart-view {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .camera-view {
+    width: 100%;
+    max-height: 64px;
+    flex-shrink: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    grid-column: unset;
+    grid-row: unset;
+  }
+
+  .camera-img {
+    height: auto;
+    max-height: 64px;
+  }
+
+  .chart-view-body {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    flex-shrink: 0;
+  }
+
+  .top-bar-wrapper {
+    grid-column: unset;
+    grid-row: unset;
+    flex-shrink: 0;
+  }
+
+  .chart-area {
+    grid-column: unset;
+    grid-row: unset;
+    flex: 1;
+  }
+
+  .bottom-bar {
+    grid-column: unset;
+    grid-row: unset;
+  }
+
   .top-bar { padding: 4px 8px; }
   .top-bar-readings { gap: 8px; }
   .reading-val { font-size: 12px; }
