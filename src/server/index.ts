@@ -855,18 +855,6 @@ async function main() {
         return new Response('Not Found', { status: 404 });
       }
 
-      // Serve bundled assets (JS/CSS chunks from the build)
-      const ext = url.pathname.split('.').pop();
-      if (ext === 'js' || ext === 'css') {
-        const file = Bun.file(`.${url.pathname}`);
-        if (await file.exists()) {
-          const mime = ext === 'js' ? 'application/javascript' : 'text/css';
-          return new Response(file, {
-            headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=31536000, immutable' },
-          });
-        }
-      }
-
       // SPA fallback: serve index.html for unrecognized paths
       // (handles direct navigation / page refresh on client-side routes)
       return new Response(homepage);

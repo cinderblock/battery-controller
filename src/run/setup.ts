@@ -300,12 +300,12 @@ function serviceContent(mode: ServiceMode = 'prod') {
   };
   const execArgs: Record<ServiceMode, string> = {
     prod: `${DeployBunBin} ${DeployAppDir}`,
-    dev: `${DeployBunBin} --watch ${DeployAppDir}`,
+    dev: `${DeployBunBin} ${DeployAppDir}`,
     bridge: `${DeployBunBin} ${DeployAppDir} --bridge`,
   };
   const env: Record<ServiceMode, string> = {
     prod: 'production',
-    dev: 'development',
+    dev: 'production',
     bridge: 'production',
   };
   const restartSec: Record<ServiceMode, string> = {
