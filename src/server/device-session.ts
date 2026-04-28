@@ -110,6 +110,25 @@ function stateByteToMode(state: number): DeviceMode {
   }
 }
 
+// ── Recovery types ─────────────────────────────────────────────────
+
+export interface RecoveryState {
+  runId: number;
+  testStartTime: number;
+  energyMwh: number;
+  capacityWrapOffset: number;
+  peakVoltage: number;
+  minVoltage: number;
+  peakCurrent: number;
+}
+
+/**
+ * Called when the device is detected mid-test on the first packet after restart.
+ * Receives the device mode and raw (unwrapped) capacity from the first packet.
+ * Returns recovery state from the DB, or null if no recovery is possible.
+ */
+export type RecoveryProvider = (mode: DeviceMode, rawCapacityMah: number) => RecoveryState | null;
+
 // ── DeviceSession ──────────────────────────────────────────────────
 
 export class DeviceSession {
@@ -168,7 +187,13 @@ export class DeviceSession {
   private minVoltage = Infinity;
   private peakCurrent = 0;
 
-  constructor(private serial: SerialManager) {}
+  // Recovery: run ID from a reopened service_restart run
+  private recoveredRunId: number | null = null;
+
+  constructor(
+    private serial: SerialManager,
+    private recoveryProvider?: RecoveryProvider,
+  ) {}
 
   /** Start listening to serial packets and managing the session */
   start(): void {
@@ -216,6 +241,7 @@ export class DeviceSession {
   getMode(): DeviceMode { return this.mode; }
   getDeviceInfo(): DeviceInfo | null { return this.deviceInfo; }
   isDeviceResponsive(): boolean { return this.deviceResponsive; }
+  getRecoveredRunId(): number | null { return this.recoveredRunId; }
 
   getReading(): DecodedReading {
     const elapsedS = this.mode !== 'idle' && this.testStartTime > 0
@@ -288,10 +314,29 @@ export class DeviceSession {
       this.clearInitTimer();
       const mode = stateByteToMode(stateByte);
       if (mode !== 'idle') {
-        // Device is mid-test — pick up state without sending init
-        logger.info(`Device is mid-test (state=0x${stateByte.toString(16)}, mode=${mode}). Recovering.`);
-        this.setMode(mode);
-        this.testStartTime = now;
+        // Device is mid-test — try to recover state from the previous run
+        let recovery: RecoveryState | null = null;
+        if (this.recoveryProvider) {
+          recovery = this.recoveryProvider(mode, capacityMah);
+          if (recovery) {
+            this.recoveredRunId = recovery.runId;
+            logger.info(`Recovery state found: run #${recovery.runId}, restoring elapsed/energy/capacity`);
+          }
+        }
+
+        logger.info(`Device is mid-test (state=0x${stateByte.toString(16)}, mode=${mode}). ${recovery ? 'Resuming' : 'Recovering'}.`);
+        this.setMode(mode); // resets state + emits stateChange
+
+        // Override the reset values with recovered state
+        if (recovery) {
+          this.testStartTime = recovery.testStartTime;
+          this.energyMwh = recovery.energyMwh;
+          this.capacityWrapOffset = recovery.capacityWrapOffset;
+          this.prevDeviceCapMah = capacityMah; // current raw value, avoids false wrap trigger
+          this.peakVoltage = recovery.peakVoltage;
+          this.minVoltage = recovery.minVoltage;
+          this.peakCurrent = recovery.peakCurrent;
+        }
         this.lastEnergyUpdateTime = now;
       } else if (!this.initSent) {
         // Device is idle — send init to start measurement stream
@@ -385,6 +430,11 @@ export class DeviceSession {
       elapsedS,
       timestamp: now,
       isInfoPacket: false,
+      rawField7: this.rawField7,
+      setpointEcho: this.setpointEcho,
+      cutoffEcho: this.cutoffEcho,
+      stepByte: this.stepByte,
+      maxTimeEcho: this.maxTimeEcho,
     };
 
     this.emit({ type: 'reading', data: reading });

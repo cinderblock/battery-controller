@@ -22,6 +22,7 @@ import {
   DeployHost,
   DeployKey,
   DeployPort,
+  DeployEnvFile,
   DeployServiceName,
   DeploySetupHome,
   DeploySetupPath,
@@ -108,6 +109,38 @@ async function runSetup(config: DeployConfig, signal?: AbortSignal): Promise<voi
 
   // Setup script calls sudo internally for privileged operations
   await runBunOnRemote(config, [DeploySetupPath], DeploySetupHome, signal, true);
+}
+
+/** Keys from .env.local that should be forwarded to the Pi's environment file */
+const FORWARDED_ENV_KEYS = ['RTSP_URL', 'RTSP_FILTER'];
+
+async function deployEnvFile(config: DeployConfig, signal?: AbortSignal): Promise<void> {
+  // Read .env.local and forward selected keys to the Pi
+  let envContent = '';
+  try {
+    const localEnv = await Bun.file('.env.local').text();
+    const lines: string[] = [];
+    for (const line of localEnv.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('#') || !trimmed.includes('=')) continue;
+      const key = trimmed.split('=')[0];
+      if (FORWARDED_ENV_KEYS.includes(key)) {
+        lines.push(trimmed);
+      }
+    }
+    envContent = lines.join('\n') + '\n';
+  } catch {
+    logger.debug('No .env.local found, skipping env file deployment');
+    return;
+  }
+
+  if (!envContent.trim()) {
+    logger.debug('No forwarded env vars found in .env.local');
+    return;
+  }
+
+  logger.debug(`Deploying env file with ${envContent.trim().split('\n').length} var(s)...`);
+  await writeRemoteFilesStaged(config.sshConfig, [{ content: envContent, remotePath: DeployEnvFile }], signal);
 }
 
 async function deployPackageFiles(config: DeployConfig, signal?: AbortSignal): Promise<void> {
@@ -233,6 +266,19 @@ async function startService(config: DeployConfig, serviceName: string, signal?: 
   signal?.throwIfAborted();
 }
 
+async function restartService(config: DeployConfig, serviceName: string, signal?: AbortSignal): Promise<void> {
+  logger.debug(`Restarting ${serviceName} service...`);
+  signal?.throwIfAborted();
+
+  try {
+    await sshExec(config.sshConfig, 'sudo systemctl restart', [serviceName], signal);
+    logger.debug(`${serviceName} restarted`);
+  } catch (error: unknown) {
+    logErrorMessage(`Failed to restart ${serviceName}:`, error);
+    throw error;
+  }
+}
+
 async function stopService(config: DeployConfig, serviceName: string, signal?: AbortSignal): Promise<void> {
   try {
     await sshExec(config.sshConfig, 'sudo systemctl stop', [serviceName], signal);
@@ -287,8 +333,9 @@ async function performInitialDeploy(
   // Run setup (creates directories, installs system deps, configures services)
   await runSetup(config, signal);
 
-  // Deploy package files and install dependencies
+  // Deploy package files, env file, and install dependencies
   await deployPackageFiles(config, signal);
+  await deployEnvFile(config, signal);
   await installRemoteDependencies(config, signal);
 
   // Deploy all build outputs (setup.js + server bundle files)
@@ -300,11 +347,9 @@ async function performInitialDeploy(
   await deployBuildOutputs(config, appOutputs, signal, ['package.json', 'bun.lock']);
   log(`Files deployed (${appOutputs.length} file${appOutputs.length !== 1 ? 's' : ''})`, '✅');
 
-  // Start dev service (systemd handles if already running)
-  await startService(config, DeployDevServiceName, signal);
-
-  // Check status
-  await checkStatus(config, signal);
+  // Restart dev service to pick up the new bundle (Bun --watch doesn't
+  // reliably detect changes to the bundled index.js)
+  await restartService(config, DeployDevServiceName, signal);
 
   log('Initial deployment complete!', '🎉');
 }
@@ -377,6 +422,12 @@ function createIncrementalDeployHandler(config: DeployConfig) {
       // Only cleanup remote files when server outputs are rebuilt; setup-only rebuilds must not delete the app bundle.
       const cleanupPreserveFiles = options.server ? ['package.json'] : undefined;
       await deployBuildOutputs(config, outputs, signal, cleanupPreserveFiles);
+
+      // Restart service to pick up new bundle (Bun --watch doesn't reliably
+      // detect changes to the pre-built index.js)
+      if (options.server) {
+        await restartService(config, DeployDevServiceName, signal);
+      }
 
       // Only log success if we weren't aborted
       if (deployId === currentDeployId && !signal.aborted) {

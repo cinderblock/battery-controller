@@ -459,6 +459,40 @@ export function getDataPointCount(runId: number): number {
   ).get(runId)?.count ?? 0;
 }
 
+/** Find the most recent run closed by service_restart with matching mode */
+export function getLastServiceRestartRun(mode: string): TestRun | null {
+  return getDb().query<TestRun, [string]>(
+    `SELECT * FROM test_runs
+     WHERE end_reason = 'service_restart' AND mode = ?
+     ORDER BY id DESC LIMIT 1`
+  ).get(mode) ?? null;
+}
+
+/** Get the last data point for a run (by insertion order) */
+export function getLastDataPointForRun(runId: number): DataPoint | null {
+  return getDb().query<DataPoint, [number]>(
+    'SELECT * FROM data_points WHERE run_id = ? ORDER BY id DESC LIMIT 1'
+  ).get(runId) ?? null;
+}
+
+/** Get aggregate peak/min stats from all data points in a run */
+export function getRunPeakStats(runId: number): { peakVoltage: number; minVoltage: number; peakCurrent: number } | null {
+  const row = getDb().query<{ peak_v: number; min_v: number; peak_i: number }, [number]>(
+    `SELECT MAX(voltage_v) as peak_v, MIN(voltage_v) as min_v, MAX(current_a) as peak_i
+     FROM data_points WHERE run_id = ?`
+  ).get(runId);
+  if (!row || row.peak_v == null) return null;
+  return { peakVoltage: row.peak_v, minVoltage: row.min_v, peakCurrent: row.peak_i };
+}
+
+/** Reopen a service_restart run for continued recording */
+export function reopenRun(runId: number): void {
+  getDb().run(
+    'UPDATE test_runs SET ended_at = NULL, end_reason = NULL WHERE id = ?',
+    [runId]
+  );
+}
+
 // ── Sequence operations ─────────────────────────────────────────────
 
 export interface Sequence {

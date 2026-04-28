@@ -13,6 +13,7 @@ export const DeploySetupHome = `/home/${DeployUser}`; // Where to run setup from
 // Remote files
 export const DeploySetupPath = `${DeploySetupHome}/setup.js`; // Path to setup script
 export const DeployBunBin = `${DeploySetupHome}/.bun/bin/bun`; // Path to Bun binary
+export const DeployEnvFile = `${DeployAppDir}/.env`; // Environment file for systemd services
 
 // Remote systemd service configuration
 export const DeployServiceName = 'battery-controller';

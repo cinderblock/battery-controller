@@ -25,6 +25,7 @@ import {
   DeployBridgeServiceName,
   DeployBunBin,
   DeployDevServiceName,
+  DeployEnvFile,
   DeployServiceName,
 } from './config.ts';
 
@@ -321,6 +322,7 @@ Conflicts=${allConflicts(mode)}
 [Service]
 WorkingDirectory=${DeployAppDir}
 ExecStart=${execArgs[mode]}
+EnvironmentFile=-${DeployEnvFile}
 Environment="NODE_ENV=${env[mode]}"
 Environment="DB_PATH=${DeployAppDir}/data/battery.db"
 Restart=always

@@ -13,7 +13,7 @@ import { logger } from '../utils/logger.ts';
 import { shutdown } from '../utils/shutdown.ts';
 import { SerialManager } from './serial.ts';
 import { startTcpBridge, startTcpBridgeStandalone, type TcpBridge } from './tcp-bridge.ts';
-import { DeviceSession, type DecodedReading, type SessionEvent } from './device-session.ts';
+import { DeviceSession, type DecodedReading, type RecoveryState, type SessionEvent } from './device-session.ts';
 import { TestRecorder, type TestSetpoints } from './test-recorder.ts';
 import { SettingsLock } from './settings-lock.ts';
 import { CycleRunner } from './cycle-runner.ts';
@@ -28,6 +28,7 @@ import {
   getRecentCells, getRecentRunsWithData,
   getCycleProgram, getRunsForCycleProgram,
   getSetting, setSetting,
+  getLastServiceRestartRun, getLastDataPointForRun, getRunPeakStats,
 } from './db.ts';
 import {
   getCellCapacityStats,
@@ -104,7 +105,40 @@ async function main() {
   const serialManager = new SerialManager();
   await serialManager.connect();
 
-  const session = new DeviceSession(serialManager);
+  const session = new DeviceSession(serialManager, (mode, rawCapMah): RecoveryState | null => {
+    const run = getLastServiceRestartRun(mode);
+    if (!run) return null;
+    const lastPoint = getLastDataPointForRun(run.id);
+    if (!lastPoint) return null;
+    const stats = getRunPeakStats(run.id);
+
+    // Reconstruct testStartTime from last data point's wall-clock time
+    const lastRecordedMs = new Date(lastPoint.recorded_at).getTime();
+    const gapS = (Date.now() - lastRecordedMs) / 1000;
+    const trueElapsedS = lastPoint.elapsed_s + gapS;
+    const testStartTime = Date.now() - trueElapsedS * 1000;
+
+    // Compute capacity wrap offset: true capacity must be >= last recorded
+    let capacityWrapOffset = 0;
+    if (lastPoint.capacity_mah > rawCapMah) {
+      capacityWrapOffset = Math.ceil((lastPoint.capacity_mah - rawCapMah) / 57_600) * 57_600;
+    }
+
+    logger.info(
+      `Recovery: run #${run.id}, elapsed=${trueElapsedS.toFixed(0)}s (gap=${gapS.toFixed(1)}s), ` +
+      `energy=${lastPoint.energy_mwh.toFixed(0)} mWh, wrapOffset=${capacityWrapOffset}`
+    );
+
+    return {
+      runId: run.id,
+      testStartTime,
+      energyMwh: lastPoint.energy_mwh,
+      capacityWrapOffset,
+      peakVoltage: stats?.peakVoltage ?? 0,
+      minVoltage: stats?.minVoltage ?? Infinity,
+      peakCurrent: stats?.peakCurrent ?? 0,
+    };
+  });
   const recorder = new TestRecorder(session);
   const settingsLock = new SettingsLock();
   const cycleRunner = new CycleRunner(session, recorder);
@@ -819,6 +853,18 @@ async function main() {
         const response = await handleApi(req, url.pathname);
         if (response) return response;
         return new Response('Not Found', { status: 404 });
+      }
+
+      // Serve bundled assets (JS/CSS chunks from the build)
+      const ext = url.pathname.split('.').pop();
+      if (ext === 'js' || ext === 'css') {
+        const file = Bun.file(`.${url.pathname}`);
+        if (await file.exists()) {
+          const mime = ext === 'js' ? 'application/javascript' : 'text/css';
+          return new Response(file, {
+            headers: { 'Content-Type': mime, 'Cache-Control': 'public, max-age=31536000, immutable' },
+          });
+        }
       }
 
       // SPA fallback: serve index.html for unrecognized paths

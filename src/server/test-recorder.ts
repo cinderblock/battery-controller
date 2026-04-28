@@ -13,6 +13,7 @@ import {
   finalizeTestRun,
   insertDataPoint,
   getDataPointCount,
+  reopenRun,
   type CreateTestRunParams,
 } from './db.ts';
 import type { DeviceSession, DeviceMode, DecodedReading, SessionEvent } from './device-session.ts';
@@ -217,7 +218,13 @@ export class TestRecorder {
       this.hasSeenFirstTransition = true;
       // If there's no pending reason set, this is a recovery
       if (this.pendingStartReason === 'manual' && this.pendingSetpoints === null) {
-        this.startRecoveredRun(to);
+        // Try to reopen the previous run instead of creating a new one
+        const recoveredRunId = this.session.getRecoveredRunId();
+        if (recoveredRunId) {
+          this.reopenPreviousRun(recoveredRunId, to);
+        } else {
+          this.startRecoveredRun(to);
+        }
         return;
       }
     }
@@ -290,6 +297,16 @@ export class TestRecorder {
     this.pendingSetpoints = null;
 
     logger.info(`Started recording test run #${run.id} (mode=${mode}, cell=${this.pendingCellId ?? 'none'}, reason=${params.startReason})`);
+  }
+
+  private reopenPreviousRun(runId: number, mode: DeviceMode): void {
+    reopenRun(runId);
+    this.activeRunId = runId;
+    this.activeRunMode = mode;
+    this.activeRunMaxTimeMin = null;
+    this.dataPointCount = getDataPointCount(runId);
+
+    logger.info(`Reopened test run #${runId} (mode=${mode}, ${this.dataPointCount} existing points). Continuing recording.`);
   }
 
   private startRecoveredRun(mode: DeviceMode): void {
