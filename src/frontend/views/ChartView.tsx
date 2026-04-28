@@ -12,7 +12,7 @@ import { useSession } from '../hooks/useDeviceSession.ts';
 import {
   api,
   type TestRun,
-  type DataPoint,
+  type TestRunWithData,
   type CellGroup,
   type GroupFleetSummary,
 } from '../api-client.ts';
@@ -20,7 +20,7 @@ import {
   mergeRunsForChart,
   mergeCapacityChart,
   mergeActiveRunWithLive,
-  dataPointsToChartRun,
+  compactDataToChartRun,
   runToCapacityDomain,
   type ChartRun,
   type MetricKey,
@@ -32,7 +32,6 @@ import { CapacityChart } from '../components/CapacityChart.tsx';
 import { TopBar } from '../components/TopBar.tsx';
 import { StartModal } from '../components/StartModal.tsx';
 import { LegendPanel } from '../components/LegendPanel.tsx';
-import { LiveOverlay } from '../components/LiveOverlay.tsx';
 import { CameraView } from '../components/CameraView.tsx';
 
 // ── Component ──────────────────────────────────────────────────────
@@ -46,6 +45,9 @@ export function ChartView() {
   const [loading, setLoading] = useState(true);
   const [cellGroups, setCellGroups] = useState<CellGroup[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
+
+  // ── Active run metadata (for threshold lines) ────────────────
+  const [activeRunMeta, setActiveRunMeta] = useState<TestRun | null>(null);
 
   // ── Fleet summary ────────────────────────────────────────────
   const [fleetSummary, setFleetSummary] = useState<GroupFleetSummary | null>(null);
@@ -62,28 +64,28 @@ export function ChartView() {
   // ── Auto-detect cell insertion ────────────────────────────────
   // When the device is idle and voltage jumps from near-zero to cell range,
   // a new cell was probably inserted → auto-open the start modal.
-  const prevVoltageRef = useRef<number>(0);
-  const hasInitializedRef = useRef(false);
+  // We use null to mean "no real reading yet" — only start detecting after
+  // two consecutive real readings, so page reload doesn't trigger it.
+  const prevVoltageRef = useRef<number | null>(null);
 
   useEffect(() => {
-    const voltage = state.reading?.voltage ?? 0;
+    // Don't act on missing readings (state.reading is null before snapshot)
+    if (!state.reading) return;
+
+    const voltage = state.reading.voltage;
     const isIdle = state.mode === 'idle';
     const prev = prevVoltageRef.current;
 
-    // Skip the first reading (don't trigger on app load)
-    if (!hasInitializedRef.current) {
-      hasInitializedRef.current = true;
-      prevVoltageRef.current = voltage;
-      return;
-    }
+    prevVoltageRef.current = voltage;
+
+    // Need a prior real reading to detect a transition
+    if (prev === null) return;
 
     // Detect voltage transition: low → cell range, while idle
     if (isIdle && prev < 1.5 && voltage > 2.0 && !startModalOpen) {
       setStartModalOpen(true);
     }
-
-    prevVoltageRef.current = voltage;
-  }, [state.reading?.voltage, state.mode, startModalOpen]);
+  }, [state.reading, state.mode, startModalOpen]);
 
   // ── Load cell groups ──────────────────────────────────────────
   useEffect(() => {
@@ -106,61 +108,41 @@ export function ChartView() {
       .catch(() => setFleetSummary(null));
   }, [selectedGroupId]);
 
-  // ── Load historical runs ──────────────────────────────────────
+  // ── Fetch active run metadata for threshold lines ─────────────
   useEffect(() => {
-    setLoading(true);
-    api<TestRun[]>('/api/runs/recent?limit=100')
-      .then(async (testRuns) => {
-        // Load data points for each run (in parallel, limited batch)
+    if (!state.activeRunId) { setActiveRunMeta(null); return; }
+    api<TestRun>(`/api/runs/${state.activeRunId}`)
+      .then(setActiveRunMeta)
+      .catch(() => setActiveRunMeta(null));
+  }, [state.activeRunId]);
+
+  // ── Load historical runs ──────────────────────────────────────
+  const loadRuns = useCallback(() => {
+    return api<TestRunWithData[]>('/api/runs/recent?limit=100&withData=1')
+      .then(runsWithData => {
         const chartRuns: ChartRun[] = [];
-        const batchSize = 5;
-
-        for (let i = 0; i < testRuns.length; i += batchSize) {
-          const batch = testRuns.slice(i, i + batchSize);
-          const results = await Promise.all(
-            batch.map(async (run) => {
-              try {
-                const points = await api<DataPoint[]>(`/api/runs/${run.id}/data`);
-                if (points.length === 0) return null;
-                const label = run.cell_id ? `Cell #${run.cell_id}` : `Run #${run.id}`;
-                return dataPointsToChartRun(run, points, label);
-              } catch {
-                return null;
-              }
-            })
-          );
-          for (const r of results) {
-            if (r) chartRuns.push(r);
-          }
+        for (const rwd of runsWithData) {
+          if (rwd.d.length === 0) continue;
+          const label = rwd.cell_id ? `Cell #${rwd.cell_id}` : `Run #${rwd.id}`;
+          chartRuns.push(compactDataToChartRun(rwd, rwd.d, label));
         }
-
         setRuns(chartRuns);
         setVisibleRuns(new Set(chartRuns.map(r => r.id)));
       })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    loadRuns().finally(() => setLoading(false));
+  }, [loadRuns]);
 
   // ── Reload runs + fleet summary when a test completes ─────────
   const prevActiveRef = usePrevious(isTestActive);
   useEffect(() => {
     // When test transitions from active → idle, reload runs
     if (prevActiveRef && !isTestActive) {
-      api<TestRun[]>('/api/runs/recent?limit=100')
-        .then(async (testRuns) => {
-          const chartRuns: ChartRun[] = [];
-          for (const run of testRuns) {
-            try {
-              const points = await api<DataPoint[]>(`/api/runs/${run.id}/data`);
-              if (points.length === 0) continue;
-              const label = run.cell_id ? `Cell #${run.cell_id}` : `Run #${run.id}`;
-              chartRuns.push(dataPointsToChartRun(run, points, label));
-            } catch { /* skip */ }
-          }
-          setRuns(chartRuns);
-          setVisibleRuns(new Set(chartRuns.map(r => r.id)));
-        })
-        .catch(() => {});
+      loadRuns();
 
       // Refresh fleet summary too — new run data may update stats
       if (selectedGroupId !== null) {
@@ -169,7 +151,7 @@ export function ChartView() {
           .catch(() => {});
       }
     }
-  }, [isTestActive, prevActiveRef, selectedGroupId]);
+  }, [isTestActive, prevActiveRef, selectedGroupId, loadRuns]);
 
   // ── Merge data for chart ──────────────────────────────────────
   const chartData = useMemo(
@@ -212,39 +194,37 @@ export function ChartView() {
 
   // ── Threshold lines from active run setpoints ──────────────────
   const thresholds = useMemo((): ThresholdLine[] => {
-    const activeRun = runs.find(r => r.id === state.activeRunId);
-    if (!activeRun?.meta) return [];
+    if (!activeRunMeta) return [];
 
-    const meta = activeRun.meta;
     const lines: ThresholdLine[] = [];
 
-    if (meta.setpoint_cutoff_v != null) {
+    if (activeRunMeta.setpoint_cutoff_v != null) {
       lines.push({
-        value: meta.setpoint_cutoff_v,
+        value: activeRunMeta.setpoint_cutoff_v,
         scale: 'V',
-        label: `Cutoff ${meta.setpoint_cutoff_v.toFixed(2)}V`,
+        label: `Cutoff ${activeRunMeta.setpoint_cutoff_v.toFixed(2)}V`,
         color: 'rgba(244, 67, 54, 0.5)',
       });
     }
-    if (meta.setpoint_voltage_v != null && meta.mode === 'c-cv') {
+    if (activeRunMeta.setpoint_voltage_v != null && activeRunMeta.mode === 'c-cv') {
       lines.push({
-        value: meta.setpoint_voltage_v,
+        value: activeRunMeta.setpoint_voltage_v,
         scale: 'V',
-        label: `Target ${meta.setpoint_voltage_v.toFixed(2)}V`,
+        label: `Target ${activeRunMeta.setpoint_voltage_v.toFixed(2)}V`,
         color: 'rgba(79, 195, 247, 0.5)',
       });
     }
-    if (meta.setpoint_cutoff_current_a != null) {
+    if (activeRunMeta.setpoint_cutoff_current_a != null) {
       lines.push({
-        value: meta.setpoint_cutoff_current_a,
+        value: activeRunMeta.setpoint_cutoff_current_a,
         scale: 'A',
-        label: `Cutoff ${meta.setpoint_cutoff_current_a.toFixed(1)}A`,
+        label: `Cutoff ${activeRunMeta.setpoint_cutoff_current_a.toFixed(1)}A`,
         color: 'rgba(129, 199, 132, 0.5)',
       });
     }
 
     return lines;
-  }, [runs, state.activeRunId]);
+  }, [activeRunMeta]);
 
   // ── Toggle handlers ──────────────────────────────────────────
   const toggleMetric = useCallback((metric: MetricKey) => {
@@ -307,7 +287,6 @@ export function ChartView() {
             </div>
           )
         )}
-        {chartMode === 'time' && <LiveOverlay />}
       </div>
 
       {/* Bottom bar */}
@@ -356,9 +335,9 @@ export function ChartView() {
 
         <div className="bottom-spacer" />
 
-        {isTestActive ? (
-          <button className="btn btn-stop" onClick={stopTest}>
-            Stop
+        {isTestActive || state.stopping || (state.cycleState && (state.cycleState.status === 'running' || state.cycleState.status === 'waiting')) ? (
+          <button className="btn btn-stop" onClick={stopTest} disabled={state.stopping}>
+            {state.stopping ? 'Stopping...' : 'Stop'}
           </button>
         ) : (
           <button className="btn btn-new-run" onClick={() => setStartModalOpen(true)}>

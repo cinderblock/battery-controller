@@ -8,7 +8,7 @@
 
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useSession, type StartTestParams } from '../hooks/useDeviceSession.ts';
-import { api, apiPost, type CellGroup, type Cell } from '../api-client.ts';
+import { api, apiPost, type CellGroup, type Cell, type TestRun } from '../api-client.ts';
 import { BarcodeScanner } from './BarcodeScanner.tsx';
 import type { SequenceStep } from '../lib/sequence-types.ts';
 
@@ -142,6 +142,7 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
 
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [lastCell, setLastCell] = useState<Cell | null>(null);
 
   const selectedGroup = cellGroups.find(g => g.id === selectedGroupId) ?? cellGroups[0];
   const capacityAh = selectedGroup ? selectedGroup.nominal_capacity_mah / 1000 : 200;
@@ -157,6 +158,12 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
       setError(null);
       setSubmitting(false);
       setSequencesLoaded(false);
+      setLastCell(null);
+
+      // Fetch most recently used cell for quick-continue
+      api<Cell[]>('/api/cells/recent')
+        .then(cells => { if (cells[0]) setLastCell(cells[0]); })
+        .catch(() => {});
     }
   }, [open]);
 
@@ -206,6 +213,15 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
       setWizardStep('configure');
     }
   }, [barcode, lookupCell]);
+
+  const handleContinueLastCell = useCallback(() => {
+    if (!lastCell) return;
+    setBarcode(lastCell.barcode);
+    setCellInfo(lastCell);
+    setCellNotes(lastCell.notes ?? '');
+    setNotesDirty(false);
+    setWizardStep('configure');
+  }, [lastCell]);
 
   const handleManualBarcodeSubmit = useCallback(() => {
     if (barcode.trim()) {
@@ -324,6 +340,11 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
                 </button>
               )}
             </div>
+            {lastCell && (
+              <button className="btn btn-start wizard-continue-btn" onClick={handleContinueLastCell}>
+                Continue — {lastCell.barcode}
+              </button>
+            )}
             <button className="btn wizard-skip-btn" onClick={handleSkipScan}>
               Skip — no barcode
             </button>

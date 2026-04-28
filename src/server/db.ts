@@ -208,6 +208,10 @@ export function getCells(): Cell[] {
   return getDb().query<Cell, []>('SELECT * FROM cells ORDER BY label, barcode').all();
 }
 
+export function getRecentCells(limit = 1): Cell[] {
+  return getDb().query<Cell, [number]>('SELECT * FROM cells ORDER BY updated_at DESC LIMIT ?').all(limit);
+}
+
 export function getCellById(id: number): Cell | null {
   return getDb().query<Cell, [number]>('SELECT * FROM cells WHERE id = ?').get(id) ?? null;
 }
@@ -407,6 +411,48 @@ export function getDataPointsForRun(runId: number): DataPoint[] {
   ).all(runId);
 }
 
+/**
+ * Compact data point row: [elapsed_s, voltage_v, current_a, power_w, capacity_mah, energy_mwh]
+ * Avoids repeating key names for every point — cuts payload size 60-80%.
+ */
+export type CompactDataRow = [number, number, number, number, number, number];
+
+export interface RunWithCompactData extends TestRun {
+  /** Column order: [elapsed_s, voltage_v, current_a, power_w, capacity_mah, energy_mwh] */
+  d: CompactDataRow[];
+}
+
+/** Fetch recent runs with compact data points in one go */
+export function getRecentRunsWithData(limit: number = 50): RunWithCompactData[] {
+  const db = getDb();
+  const runs = db.query<TestRun, [number]>(
+    'SELECT * FROM test_runs ORDER BY started_at DESC LIMIT ?'
+  ).all(limit);
+
+  if (runs.length === 0) return [];
+
+  // Single query for only the columns we need, in compact form
+  const runIds = runs.map(r => r.id);
+  const placeholders = runIds.map(() => '?').join(',');
+  const allPoints = db.query<{ run_id: number; elapsed_s: number; voltage_v: number; current_a: number; power_w: number; capacity_mah: number; energy_mwh: number }, number[]>(
+    `SELECT run_id, elapsed_s, voltage_v, current_a, power_w, capacity_mah, energy_mwh
+     FROM data_points WHERE run_id IN (${placeholders}) ORDER BY run_id, elapsed_s`
+  ).all(...runIds);
+
+  // Group as compact arrays by run_id
+  const pointsByRun = new Map<number, CompactDataRow[]>();
+  for (const p of allPoints) {
+    let arr = pointsByRun.get(p.run_id);
+    if (!arr) { arr = []; pointsByRun.set(p.run_id, arr); }
+    arr.push([p.elapsed_s, p.voltage_v, p.current_a, p.power_w, p.capacity_mah, p.energy_mwh]);
+  }
+
+  return runs.map(run => ({
+    ...run,
+    d: pointsByRun.get(run.id) ?? [],
+  }));
+}
+
 export function getDataPointCount(runId: number): number {
   return getDb().query<{ count: number }, [number]>(
     'SELECT COUNT(*) as count FROM data_points WHERE run_id = ?'
@@ -509,6 +555,13 @@ export function getRunsForCycleProgram(programId: number): TestRun[] {
   return getDb().query<TestRun, [number]>(
     'SELECT * FROM test_runs WHERE cycle_program_id = ? ORDER BY started_at ASC'
   ).all(programId);
+}
+
+/** Get the most recent test run for a specific cycle step (used for wait resume) */
+export function getCycleStepRun(programId: number, stepIndex: number): TestRun | null {
+  return getDb().query<TestRun, [number, number]>(
+    'SELECT * FROM test_runs WHERE cycle_program_id = ? AND cycle_step_index = ? ORDER BY started_at DESC LIMIT 1'
+  ).get(programId, stepIndex) ?? null;
 }
 
 // ── Settings operations ─────────────────────────────────────────────

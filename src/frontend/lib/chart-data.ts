@@ -122,6 +122,31 @@ export function dataPointsToChartRun(
   return { id: meta.id, meta, label, elapsed, voltage, current, power, capacity };
 }
 
+/** Parse compact data rows: [elapsed_s, voltage_v, current_a, power_w, capacity_mah, energy_mwh] */
+export function compactDataToChartRun(
+  meta: TestRun,
+  rows: number[][],
+  label: string,
+): ChartRun {
+  const n = rows.length;
+  const elapsed = new Array<number>(n);
+  const voltage = new Array<number>(n);
+  const current = new Array<number>(n);
+  const power = new Array<number>(n);
+  const capacity = new Array<number>(n);
+
+  for (let i = 0; i < n; i++) {
+    const r = rows[i];
+    elapsed[i] = r[0];
+    voltage[i] = r[1];
+    current[i] = r[2];
+    power[i] = r[3];
+    capacity[i] = r[4] / 1000; // mAh → Ah
+  }
+
+  return { id: meta.id, meta, label, elapsed, voltage, current, power, capacity };
+}
+
 export function livePointsToArrays(points: LivePoint[]): {
   elapsed: number[];
   voltage: number[];

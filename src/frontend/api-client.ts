@@ -23,6 +23,11 @@ export interface DecodedReading {
   elapsedS: number;
   timestamp: number;
   isInfoPacket: boolean;
+  rawField7: number;
+  setpointEcho: number;
+  cutoffEcho: number;
+  stepByte: number;
+  maxTimeEcho: number;
 }
 
 export interface DeviceInfo {
@@ -42,6 +47,7 @@ export interface PendingCommand {
 export interface WsSnapshot {
   type: 'snapshot';
   data: {
+    buildId: string;
     mode: DeviceMode;
     reading: DecodedReading;
     stats: TestStats;
@@ -122,6 +128,10 @@ export interface CycleState {
   currentCycle: number;
   totalCycles: number;
   waitEndTime: number | null;
+  execStepTypes: string[];
+  stepCapacities: (number | null)[];
+  stepDurations: (number | null)[];
+  stepExpectedS: number[];
 }
 
 export interface WsCycleState {
@@ -204,6 +214,11 @@ export interface TestRun {
   peak_current_a: number | null;
   duration_s: number | null;
   data_point_count: number;
+}
+
+/** Compact format: d = [[elapsed_s, voltage_v, current_a, power_w, capacity_mah, energy_mwh], ...] */
+export interface TestRunWithData extends TestRun {
+  d: number[][];
 }
 
 export interface DataPoint {

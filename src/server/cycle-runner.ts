@@ -17,6 +17,8 @@ import {
   getActiveCycleProgram,
   getCellById,
   getCellGroup,
+  getCycleStepRun,
+  getRunsForCycleProgram,
   type CycleProgram,
 } from './db.ts';
 import { logger } from '../utils/logger.ts';
@@ -117,6 +119,14 @@ export interface CycleState {
   totalCycles: number;
   /** Wait timer info */
   waitEndTime: number | null;
+  /** Step types in the flattened exec plan, for UI timeline rendering */
+  execStepTypes: string[];
+  /** Final capacity (mAh) for each completed step, null if not yet done or n/a */
+  stepCapacities: (number | null)[];
+  /** Actual wall-clock duration (seconds) for completed steps */
+  stepDurations: (number | null)[];
+  /** Expected duration (seconds) per step, for proportional timeline widths */
+  stepExpectedS: number[];
 }
 
 type CycleListener = (state: CycleState) => void;
@@ -144,6 +154,11 @@ export class CycleRunner {
   private waitTimer: Timer | null = null;
   private waitEndTime: number | null = null;
 
+  // Cached per-step metadata (updated as steps complete)
+  private stepCapacities: (number | null)[] = [];
+  private stepDurations: (number | null)[] = [];
+  private stepExpectedS: number[] = [];
+
   constructor(
     private session: DeviceSession,
     private recorder: TestRecorder,
@@ -153,11 +168,35 @@ export class CycleRunner {
   start(): void {
     this.unsubSession = this.session.on(event => this.onSessionEvent(event));
 
-    // Check for an active cycle program from a previous session
+    // Check for an active cycle program from a previous session.
+    // We must wait for the first device reading before resuming, so we
+    // know the actual device state (isRunning). Without this, mode defaults
+    // to 'idle' and we'd incorrectly skip/re-schedule steps.
     const active = getActiveCycleProgram();
     if (active) {
-      logger.info(`Found active cycle program #${active.id} from previous session. Resuming...`);
-      this.resumeProgram(active);
+      logger.info(`Found active cycle program #${active.id} from previous session. Waiting for device state...`);
+
+      // If device is already responsive (unlikely but possible), resume now
+      if (this.session.isDeviceResponsive()) {
+        this.resumeProgram(active);
+      } else {
+        // Wait for first reading event, then resume
+        const unsub = this.session.on(event => {
+          if (event.type === 'reading' || event.type === 'deviceResponsive') {
+            unsub();
+            logger.info(`Device state confirmed. Resuming cycle program #${active.id}...`);
+            this.resumeProgram(active);
+          }
+        });
+        // Safety timeout: if no reading arrives in 10s, resume anyway
+        setTimeout(() => {
+          unsub();
+          if (this.status === 'idle' && this.programId === null) {
+            logger.warn(`No device reading after 10s. Resuming cycle program #${active.id} anyway.`);
+            this.resumeProgram(active);
+          }
+        }, 10_000);
+      }
     }
   }
 
@@ -183,7 +222,11 @@ export class CycleRunner {
       totalExecSteps: this.execPlan.length,
       currentCycle: this.execPlan[this.execIndex]?.cycleNum ?? 0,
       totalCycles: this.totalCycles,
-      waitEndTime: this.waitEndTime,
+      waitEndTime: this.status === 'waiting' ? this.waitEndTime : null,
+      execStepTypes: this.execPlan.map(e => e.step.type),
+      stepCapacities: this.stepCapacities,
+      stepDurations: this.stepDurations,
+      stepExpectedS: this.stepExpectedS,
     };
   }
 
@@ -237,6 +280,9 @@ export class CycleRunner {
     this.programName = name;
     this.execIndex = 0;
     this.status = 'running';
+    this.stepCapacities = new Array(this.execPlan.length).fill(null);
+    this.stepDurations = new Array(this.execPlan.length).fill(null);
+    this.stepExpectedS = this.computeExpectedDurations();
 
     logger.info(`Starting cycle "${name}" with ${this.execPlan.length} steps`);
     this.emit();
@@ -249,14 +295,15 @@ export class CycleRunner {
   async abort(): Promise<void> {
     if (this.status !== 'running' && this.status !== 'waiting') return;
 
+    // Set status first to prevent onSessionEvent from advancing
+    this.status = 'aborted';
+
     this.clearWaitTimer();
     this.recorder.stopWaitRun(); // no-op if no wait run active
 
     if (this.session.isRunning()) {
       await this.session.stop();
     }
-
-    this.status = 'aborted';
     if (this.programId) {
       updateCycleProgram(this.programId, {
         status: 'aborted',
@@ -329,6 +376,16 @@ export class CycleRunner {
     return plan;
   }
 
+  /** Compute expected duration (seconds) for each step in the exec plan */
+  private computeExpectedDurations(): number[] {
+    return this.execPlan.map(({ step }) => {
+      if (step.type === 'wait') return step.durationS;
+      // Use maxTimeMin if set, otherwise default estimate of 1 hour
+      const maxMin = (step as { maxTimeMin?: number }).maxTimeMin;
+      return maxMin ? maxMin * 60 : 3600;
+    });
+  }
+
   private async executeCurrentStep(cellId: number | null = null): Promise<void> {
     if (this.execIndex >= this.execPlan.length) {
       this.completeProgram();
@@ -362,6 +419,7 @@ export class CycleRunner {
 
       this.waitTimer = setTimeout(() => {
         this.recorder.stopWaitRun();
+        this.stepDurations[this.execIndex] = step.durationS;
         this.waitEndTime = null;
         this.execIndex++;
         this.status = 'running';
@@ -420,10 +478,20 @@ export class CycleRunner {
     if (isIdle && this.execIndex < this.execPlan.length) {
       const currentStep = this.execPlan[this.execIndex].step;
       if (currentStep.type !== 'wait') {
+        // Capture final capacity and duration from device before advancing
+        const reading = this.session.getReading();
+        if (reading.capacityMah > 0 && this.stepCapacities[this.execIndex] === null) {
+          this.stepCapacities[this.execIndex] = reading.capacityMah;
+        }
+        if (reading.elapsedS > 0) {
+          this.stepDurations[this.execIndex] = Math.round(reading.elapsedS);
+        }
+
         // Test step completed — advance to next
         logger.info(`Cycle step ${this.execIndex + 1} completed (device → ${to})`);
         this.recorder.clearCycleContext();
         this.execIndex++;
+        this.emit(); // push updated capacities to frontend
         // Small delay before starting next step to let device settle
         setTimeout(() => this.executeCurrentStep(), 2000);
       }
@@ -458,6 +526,22 @@ export class CycleRunner {
 
       this.totalCycles = this.computeTotalCycles(steps);
 
+      // Restore step metadata from completed runs
+      this.stepCapacities = new Array(this.execPlan.length).fill(null);
+      this.stepDurations = new Array(this.execPlan.length).fill(null);
+      this.stepExpectedS = this.computeExpectedDurations();
+      const completedRuns = getRunsForCycleProgram(program.id);
+      for (const run of completedRuns) {
+        if (run.cycle_step_index != null) {
+          if (run.final_capacity_mah != null && run.final_capacity_mah > 0) {
+            this.stepCapacities[run.cycle_step_index] = run.final_capacity_mah;
+          }
+          if (run.duration_s != null) {
+            this.stepDurations[run.cycle_step_index] = run.duration_s;
+          }
+        }
+      }
+
       // Restore recorder state so any recovered run gets linked
       if (program.cell_id != null) {
         this.recorder.setCellId(program.cell_id);
@@ -468,8 +552,62 @@ export class CycleRunner {
       if (this.session.isRunning()) {
         this.status = 'running';
         logger.info(`Cycle resumed mid-step at ${this.execIndex + 1}/${this.execPlan.length}`);
+      } else if (
+        this.execIndex < this.execPlan.length &&
+        this.execPlan[this.execIndex].step.type === 'wait'
+      ) {
+        // Device is idle and current step is a wait — check if the wait
+        // period has elapsed or if we need to resume the remaining time.
+        const waitStep = this.execPlan[this.execIndex].step as StepWait;
+        const waitRun = getCycleStepRun(program.id, this.execIndex);
+        const waitStartedAt = waitRun?.started_at
+          ? new Date(waitRun.started_at).getTime()
+          : null;
+
+        if (waitStartedAt) {
+          const elapsedS = (Date.now() - waitStartedAt) / 1000;
+          const remainingS = waitStep.durationS - elapsedS;
+
+          // Sanity check: if remainingS > step duration (e.g., clock skew after
+          // reboot before NTP sync), cap to the full step duration
+          const cappedRemainingS = remainingS > waitStep.durationS
+            ? (logger.warn(`Wait remainingS (${Math.round(remainingS)}s) exceeds durationS (${waitStep.durationS}s) — clock skew? Capping.`), waitStep.durationS)
+            : remainingS;
+
+          if (cappedRemainingS > 1) {
+            // Resume the wait with remaining time
+            this.status = 'waiting';
+            this.waitEndTime = Date.now() + cappedRemainingS * 1000;
+            logger.info(`Cycle resuming wait step ${this.execIndex + 1} with ${Math.round(cappedRemainingS)}s remaining (elapsed=${Math.round(elapsedS)}s, duration=${waitStep.durationS}s)`);
+
+            this.waitTimer = setTimeout(() => {
+              this.recorder.stopWaitRun();
+              this.waitEndTime = null;
+              this.execIndex++;
+              this.status = 'running';
+              this.emit();
+              this.executeCurrentStep();
+            }, cappedRemainingS * 1000);
+          } else {
+            // Wait already elapsed — advance to next step
+            this.recorder.stopWaitRun();
+            logger.info(`Cycle wait step ${this.execIndex + 1} already elapsed, advancing`);
+            this.status = 'running';
+            this.execIndex++;
+            if (this.execIndex < this.execPlan.length) {
+              setTimeout(() => this.executeCurrentStep(), 3000);
+            } else {
+              this.completeProgram();
+            }
+          }
+        } else {
+          // No wait run found — restart the full wait
+          logger.info(`Cycle resuming wait step ${this.execIndex + 1} (no prior run found, restarting)`);
+          this.status = 'running';
+          setTimeout(() => this.executeCurrentStep(), 3000);
+        }
       } else {
-        // Device is idle — advance to next step
+        // Device is idle, non-wait step — advance to next step
         this.status = 'running';
         this.execIndex++;
         if (this.execIndex < this.execPlan.length) {
@@ -495,11 +633,15 @@ export class CycleRunner {
   }
 
   private reset(): void {
+    this.status = 'idle';
     this.programId = null;
     this.programName = null;
     this.execPlan = [];
     this.execIndex = 0;
     this.totalCycles = 1;
+    this.stepCapacities = [];
+    this.stepDurations = [];
+    this.stepExpectedS = [];
     this.clearWaitTimer();
   }
 }

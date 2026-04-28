@@ -25,6 +25,7 @@ import {
   getCellGroups, getCellsInGroup,
   getSequences, getSequence, createSequence, updateSequence, deleteSequence,
   createCellGroup,
+  getRecentCells, getRecentRunsWithData,
   getCycleProgram, getRunsForCycleProgram,
   getSetting, setSetting,
 } from './db.ts';
@@ -44,6 +45,9 @@ import {
 const Port = Number(process.env.PORT) || 80;
 const CANONICAL_HOST = 'coulomb.tomsawyerlabs.com';
 const TRUSTED_PROXY = '10.255.0.5';
+
+/** Unique ID per server process — clients detect restarts and auto-reload */
+const SERVER_BUILD_ID = crypto.randomUUID();
 
 // ── WebSocket client tracking ──────────────────────────────────────
 
@@ -337,6 +341,10 @@ async function main() {
     }
 
     // ── Cell management ───────────────────────────────────────
+    if (pathname === '/api/cells/recent' && method === 'GET') {
+      return jsonResponse(getRecentCells());
+    }
+
     if (pathname === '/api/cells' && method === 'GET') {
       return jsonResponse(getCells());
     }
@@ -385,6 +393,10 @@ async function main() {
     if (pathname === '/api/runs/recent' && method === 'GET') {
       const url = new URL(req.url);
       const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
+      // If ?withData=1, return runs bundled with compact data points (single request)
+      if (url.searchParams.get('withData') === '1') {
+        return jsonResponse(getRecentRunsWithData(limit));
+      }
       return jsonResponse(getRecentTestRuns(limit));
     }
 
@@ -726,6 +738,7 @@ async function main() {
         ws.send(JSON.stringify({
           type: 'snapshot',
           data: {
+            buildId: SERVER_BUILD_ID,
             mode: session.getMode(),
             reading: session.getReading(),
             stats: session.getTestStats(),

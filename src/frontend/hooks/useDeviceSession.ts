@@ -50,6 +50,7 @@ export interface SessionState {
   bridgeActive: boolean;
   cycleState: CycleState | null;
   livePoints: LivePoint[];
+  stopping: boolean;
 }
 
 const INITIAL_STATE: SessionState = {
@@ -67,6 +68,7 @@ const INITIAL_STATE: SessionState = {
   bridgeActive: false,
   cycleState: null,
   livePoints: [],
+  stopping: false,
 };
 
 // ── Context ───────────────────────────────────────────────────────
@@ -114,10 +116,13 @@ export function useSession(): SessionContextValue {
 
 export function useDeviceSessionManager(): SessionContextValue {
   const [state, setState] = useState<SessionState>(INITIAL_STATE);
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelay = useRef(1000);
   const livePointsRef = useRef<LivePoint[]>([]);
+  const serverBuildIdRef = useRef<string | null>(null);
 
   // Track whether we were running before the last state change,
   // so we can clear live points when a new test starts
@@ -154,7 +159,16 @@ export function useDeviceSessionManager(): SessionContextValue {
       catch { return; }
 
       switch (msg.type) {
-        case 'snapshot':
+        case 'snapshot': {
+          // Auto-reload when the server restarts with new code
+          const buildId = msg.data.buildId;
+          if (buildId && serverBuildIdRef.current && buildId !== serverBuildIdRef.current) {
+            console.log('[ws] Server restarted with new build, reloading...');
+            window.location.reload();
+            return;
+          }
+          if (buildId) serverBuildIdRef.current = buildId;
+
           livePointsRef.current = [];
           setState(s => ({
             ...s,
@@ -173,6 +187,7 @@ export function useDeviceSessionManager(): SessionContextValue {
           }));
           prevModeRef.current = msg.data.mode;
           break;
+        }
 
         case 'reading': {
           const r = msg.data;
@@ -275,7 +290,18 @@ export function useDeviceSessionManager(): SessionContextValue {
   }, []);
 
   const stopTest = useCallback(async () => {
-    await apiPost('/api/test/stop', {});
+    setState(s => ({ ...s, stopping: true }));
+    try {
+      // If a cycle sequence is running, abort it (which also stops the device)
+      const cycle = stateRef.current.cycleState;
+      if (cycle && (cycle.status === 'running' || cycle.status === 'waiting')) {
+        await apiPost('/api/cycle/stop', {});
+      } else {
+        await apiPost('/api/test/stop', {});
+      }
+    } finally {
+      setState(s => ({ ...s, stopping: false }));
+    }
   }, []);
 
   const continueTest = useCallback(async (params: ContinueTestParams) => {

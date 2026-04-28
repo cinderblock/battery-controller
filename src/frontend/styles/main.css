@@ -133,10 +133,6 @@ html, body {
   margin-left: 12px;
 }
 
-.reading-time {
-  color: var(--text-dim);
-}
-
 .reading-val {
   font-family: "SF Mono", "Consolas", "Courier New", monospace;
   font-size: 13px;
@@ -144,6 +140,16 @@ html, body {
 
 .reading-num { color: var(--text); }
 .reading-unit { color: var(--text-dim); font-size: 11px; margin-left: 1px; }
+
+.rv-voltage .reading-num { color: #4fc3f7; }
+.rv-current .reading-num { color: #81c784; }
+.rv-power   .reading-num { color: #ffb74d; }
+.rv-capacity .reading-num { color: #ce93d8; }
+.rv-energy  .reading-num { color: #4db6ac; }
+.rv-time    .reading-num { color: var(--text-dim); }
+.rv-raw     .reading-num { color: #999; font-size: 11px; }
+.rv-raw     .reading-unit { font-size: 10px; }
+.rv-highlight .reading-num { color: #ff8a65; }
 
 /* ── Disconnect banner ─────────────────────────────────────────── */
 
@@ -170,37 +176,87 @@ html, body {
   background: #1565c0;
 }
 
-/* ── Cycle status banner ──────────────────────────────────────── */
+/* ── Cycle info (inline in top bar) ───────────────────────────── */
 
-.cycle-banner {
+.top-bar-cycle {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  font-weight: 500;
-  text-align: center;
-  justify-content: center;
-  padding: 4px 12px;
-  flex-shrink: 0;
-  color: #fff;
-  animation: banner-slide-in 0.3s ease;
+  gap: 8px;
+  margin-left: auto;
+  padding-left: 12px;
 }
 
-.cycle-running { background: #1b5e20; }
-.cycle-waiting { background: #e65100; }
-
-.cycle-name { font-weight: 700; }
+.cycle-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
 
 .cycle-wait-countdown {
   font-family: "SF Mono", "Consolas", "Courier New", monospace;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 12px;
+  color: #ffa726;
 }
 
 .cycle-progress {
-  opacity: 0.8;
   font-size: 11px;
+  color: var(--text-dim);
 }
+
+/* ── Cycle timeline bar ──────────────────────────────────────── */
+
+.cycle-timeline-bar {
+  display: flex;
+  align-items: stretch;
+  height: 18px;
+  flex-shrink: 0;
+  background: var(--surface);
+  gap: 1px;
+}
+
+.cycle-timeline-step {
+  min-width: 4px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  /* Base color is dimmed; the .step-fill overlay shows "completed" portion */
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* The fill overlay: colored, grows from left to right */
+.step-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  transition: width 1s linear;
+}
+
+.step-charge .step-fill  { background: var(--charge-color); }
+.step-discharge .step-fill { background: var(--discharge-color); }
+.step-wait .step-fill    { background: #555; }
+.step-unknown .step-fill { background: #333; }
+
+/* Label sits above the fill */
+.step-capacity-label {
+  position: relative;
+  z-index: 1;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+}
+
+/* Done steps: fill is full width, slightly dimmed */
+.cycle-timeline-step.step-done .step-fill { opacity: 0.5; }
+
+/* Active step: fill shows progress, full brightness */
+.cycle-timeline-step.step-active .step-fill { opacity: 1; }
 
 @keyframes banner-slide-in {
   from { transform: translateY(-100%); opacity: 0; }
@@ -278,50 +334,6 @@ html, body {
   font-size: 15px;
 }
 
-/* ── Live overlay (top-right during active test) ────────────────── */
-
-.live-overlay {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  background: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  pointer-events: none;
-  z-index: 10;
-}
-
-.live-row {
-  display: flex;
-  gap: 16px;
-  justify-content: flex-end;
-}
-
-.live-primary .live-val {
-  font-size: 20px;
-  font-weight: 600;
-}
-
-.live-val {
-  font-family: "SF Mono", "Consolas", "Courier New", monospace;
-  font-size: 14px;
-  color: #fff;
-  white-space: nowrap;
-}
-
-.live-val small {
-  font-size: 11px;
-  color: var(--text-dim);
-  margin-left: 2px;
-  font-weight: 400;
-}
-
-.live-time {
-  color: var(--accent) !important;
-}
 
 /* ── Bottom bar ─────────────────────────────────────────────────── */
 
@@ -384,6 +396,7 @@ html, body {
   font-weight: 600;
 }
 .btn-stop:hover { background: #c62828; }
+.btn-stop:disabled { opacity: 0.6; cursor: wait; }
 
 .btn-start {
   background: var(--success);
@@ -529,6 +542,11 @@ html, body {
 .wizard-barcode-input:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+.wizard-continue-btn {
+  width: 100%;
+  font-weight: 600;
 }
 
 .wizard-skip-btn {
@@ -1954,7 +1972,4 @@ html, body {
   .reading-val { font-size: 12px; }
   .bottom-bar { padding: 6px 8px; }
   .legend-panel { width: 100%; }
-  .live-overlay { top: 4px; right: 4px; padding: 6px 8px; }
-  .live-primary .live-val { font-size: 16px; }
-  .live-val { font-size: 12px; }
 }

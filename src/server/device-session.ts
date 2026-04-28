@@ -30,7 +30,7 @@ export interface DecodedReading {
   current: number;
   /** Power in watts (V × I) */
   power: number;
-  /** Capacity in mAh (device-reported) */
+  /** Capacity in mAh (device-reported, with wrap compensation) */
   capacityMah: number;
   /** Capacity in Ah */
   capacityAh: number;
@@ -44,6 +44,16 @@ export interface DecodedReading {
   timestamp: number;
   /** Whether this is an info packet (device ID, not a data reading) */
   isInfoPacket: boolean;
+  /** Raw payload bytes 7-8 (field7 — unknown, suspected high capacity word) */
+  rawField7: number;
+  /** Decoded setpoint echo (bytes 10-11) */
+  setpointEcho: number;
+  /** Decoded cutoff voltage echo (bytes 12-13, ÷100 → V) */
+  cutoffEcho: number;
+  /** Step/mode byte (byte 14) */
+  stepByte: number;
+  /** Max time or cutoff echo (byte 15) */
+  maxTimeEcho: number;
 }
 
 export interface DeviceInfo {
@@ -119,6 +129,16 @@ export class DeviceSession {
   private capacityMah = 0;
   private energyMwh = 0;
   private lastReadingTimestamp = 0;
+  private rawField7 = 0;
+  private setpointEcho = 0;
+  private cutoffEcho = 0;
+  private stepByte = 0;
+  private maxTimeEcho = 0;
+  private lastStateByte = 0;
+
+  // Capacity wrap detection — 2-byte base-240 maxes at 57,599 mAh
+  private prevDeviceCapMah = 0;
+  private capacityWrapOffset = 0;
 
   // Test timing
   private testStartTime = 0;
@@ -203,7 +223,7 @@ export class DeviceSession {
       : 0;
     return {
       mode: this.mode,
-      stateByte: 0,
+      stateByte: this.lastStateByte,
       voltage: this.voltage,
       current: this.current,
       power: this.voltage * this.current,
@@ -214,6 +234,11 @@ export class DeviceSession {
       elapsedS,
       timestamp: this.lastReadingTimestamp,
       isInfoPacket: false,
+      rawField7: this.rawField7,
+      setpointEcho: this.setpointEcho,
+      cutoffEcho: this.cutoffEcho,
+      stepByte: this.stepByte,
+      maxTimeEcho: this.maxTimeEcho,
     };
   }
 
@@ -246,6 +271,16 @@ export class DeviceSession {
     const currentRaw = decodeBase240(payload[1], payload[2], EbcDivisors.current);
     const voltage = decodeBase240(payload[3], payload[4], EbcDivisors.voltage);
     const capacityMah = decodeBase240(payload[5], payload[6], EbcDivisors.capacity);
+    const field7raw = decodeBase240(payload[7], payload[8], 1);
+    const setpointEcho = decodeBase240(payload[9], payload[10], EbcDivisors.current);
+    const cutoffEcho = decodeBase240(payload[11], payload[12], EbcDivisors.setpointVoltage);
+    const stepByte = payload[13];
+    const maxTimeEcho = payload[14];
+
+    // Log field7 when non-zero to understand what it carries on high-capacity tests
+    if (field7raw !== 0 && !isInfoPacket(payload[0])) {
+      logger.info(`Field7 non-zero: raw=${field7raw}, bytes=[0x${payload[7].toString(16)}, 0x${payload[8].toString(16)}], capLow=${capacityMah}`);
+    }
 
     // First packet: cancel init probe timer, decide whether to send init
     if (!this.firstPacketReceived) {
@@ -282,10 +317,23 @@ export class DeviceSession {
     // Update readings
     this.voltage = voltage;
     this.current = currentRaw;
-    this.capacityMah = capacityMah;
     this.lastReadingTimestamp = now;
+    this.rawField7 = field7raw;
+    this.setpointEcho = setpointEcho;
+    this.cutoffEcho = cutoffEcho;
+    this.stepByte = stepByte;
+    this.maxTimeEcho = maxTimeEcho;
+    this.lastStateByte = stateByte;
 
-    // Host-side energy integration (device bytes 7-8 are always 0 on A40L)
+    // Detect capacity wrap (2-byte base-240 max = 57,599 mAh)
+    if (this.isRunning() && capacityMah < this.prevDeviceCapMah - 1000) {
+      this.capacityWrapOffset += 57_600;
+      logger.info(`Capacity wrap: ${this.prevDeviceCapMah} → ${capacityMah}, offset now ${this.capacityWrapOffset}`);
+    }
+    this.prevDeviceCapMah = capacityMah;
+    this.capacityMah = capacityMah + this.capacityWrapOffset;
+
+    // Host-side energy integration (device bytes 8-9 are always 0 on A40L)
     if (this.isRunning() && this.lastEnergyUpdateTime > 0) {
       const dtHours = (now - this.lastEnergyUpdateTime) / 3_600_000;
       const powerW = voltage * currentRaw;
@@ -354,6 +402,8 @@ export class DeviceSession {
         this.testStartTime = Date.now();
         this.lastEnergyUpdateTime = Date.now();
         this.energyMwh = 0;
+        this.capacityWrapOffset = 0;
+        this.prevDeviceCapMah = 0;
         this.peakVoltage = 0;
         this.minVoltage = Infinity;
         this.peakCurrent = 0;
