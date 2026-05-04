@@ -2,37 +2,41 @@
  * Camera frame provider for the Pi server.
  *
  * Keeps a persistent ffmpeg process decoding an RTSP stream at low
- * framerate, writing unfiltered frames to a temp file. On request,
- * reads the latest frame, applies crop/rotate via sharp, and returns
- * the filtered JPEG buffer.
+ * framerate, writing frames to a temp file. On Linux, crop/rotate/scale
+ * are applied inside ffmpeg's -vf chain so frames are already small when
+ * written to disk. On Windows, ffmpeg's -update 1 mode bypasses -vf
+ * filters, so the RTSP_FILTER is applied via sharp at read time instead.
  *
  * Configure via environment variables:
  *   RTSP_URL     — RTSP stream URL (e.g. rtsp://10.255.0.2:7447/token)
- *   RTSP_FILTER  — ffmpeg -vf filter string for crop/rotate
+ *   RTSP_FILTER  — ffmpeg -vf filter string for crop/rotate/scale
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, statSync, unlinkSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { logger } from '../utils/logger.ts';
+import { applyFilter } from '../utils/sharp-filter.ts';
 
-const FPS = 2;
+const IS_WINDOWS = process.platform === 'win32';
+const FPS = 1;
 const RESTART_DELAY_MS = 3000;
 const MAX_RESTART_ATTEMPTS = 5;
 
 let ffmpeg: ChildProcess | null = null;
 let restartAttempts = 0;
 let stopped = false;
-let rawFramePath = '';
+let framePath = '';
 
-// Sharp is optional — loaded dynamically so the server still starts without it
-let sharpModule: typeof import('sharp') | null = null;
+// Sharp is optional — loaded dynamically so the server still starts without it.
+// Only needed on Windows where ffmpeg can't apply filters via -vf.
+let sharpFn: typeof import('sharp') | null = null;
 
 async function loadSharp(): Promise<typeof import('sharp') | null> {
-  if (sharpModule) return sharpModule;
+  if (sharpFn) return sharpFn;
   try {
-    sharpModule = await import('sharp');
-    return sharpModule;
+    sharpFn = (await import('sharp')).default;
+    return sharpFn;
   } catch {
     logger.warn('[camera] sharp not available — frames will be served unfiltered');
     return null;
@@ -41,15 +45,7 @@ async function loadSharp(): Promise<typeof import('sharp') | null> {
 
 // ── Frame cache ─────────────────────────────────────────────────
 
-let cachedFiltered: { buffer: Buffer; rawMtime: number } | null = null;
-
-function getRawFrameMtime(): number {
-  try {
-    return statSync(rawFramePath).mtimeMs;
-  } catch {
-    return 0;
-  }
-}
+let cachedFrame: { buffer: Buffer; mtime: number } | null = null;
 
 // ── Public API ──────────────────────────────────────────────────
 
@@ -70,25 +66,30 @@ export function startCamera(): void {
   // Create temp directory for frame files
   const tmpDir = join(process.env.DATA_DIR || '/opt/battery-controller/data', 'camera');
   try { mkdirSync(tmpDir, { recursive: true }); } catch {}
-  rawFramePath = join(tmpDir, '.latest-frame-raw.jpg');
+  framePath = join(tmpDir, '.latest-frame.jpg');
 
   spawnFfmpeg(rtspUrl);
-
-  // Pre-load sharp in the background
-  loadSharp();
 }
 
 function spawnFfmpeg(rtspUrl: string): void {
   if (stopped) return;
 
+  // Build -vf chain. On Linux, include RTSP_FILTER so ffmpeg crops early
+  // (smaller frames to disk). On Windows, -update 1 bypasses -vf filters,
+  // so we only include fps here and apply RTSP_FILTER via sharp at read time.
+  const rtspFilter = process.env.RTSP_FILTER;
+  const vf = (rtspFilter && !IS_WINDOWS) ? `${rtspFilter},fps=${FPS}` : `fps=${FPS}`;
+
   const args = [
+    '-fflags', 'nobuffer',
+    '-flags', 'low_delay',
     '-rtsp_transport', 'tcp',
     '-i', rtspUrl,
-    '-vf', `fps=${FPS}`,
+    '-vf', vf,
     '-f', 'image2',
     '-update', '1',
     '-q:v', '2',
-    '-y', rawFramePath,
+    '-y', framePath,
   ];
 
   try {
@@ -161,131 +162,45 @@ export function stopCamera(): void {
     setTimeout(() => { try { ffmpeg?.kill('SIGKILL'); } catch {} }, 2000);
     ffmpeg = null;
   }
-  try { if (rawFramePath && existsSync(rawFramePath)) unlinkSync(rawFramePath); } catch {}
+  try { if (framePath && existsSync(framePath)) unlinkSync(framePath); } catch {}
 }
 
 /**
- * Get the latest camera frame as a filtered JPEG buffer.
+ * Get the latest camera frame as a JPEG buffer.
+ * On Linux, frames are already cropped/rotated by ffmpeg.
+ * On Windows, RTSP_FILTER is applied via sharp at read time.
  * Returns null if no frame is available.
  */
 export async function getFrame(): Promise<Buffer | null> {
-  if (!rawFramePath || !existsSync(rawFramePath)) return null;
+  if (!framePath || !existsSync(framePath)) return null;
 
   try {
-    const stat = statSync(rawFramePath);
+    const stat = statSync(framePath);
     if (stat.size < 100) return null;
 
-    // Return cached filtered frame if the raw file hasn't changed
-    if (cachedFiltered && cachedFiltered.rawMtime === stat.mtimeMs) {
-      return cachedFiltered.buffer;
+    // Return cached frame if the file hasn't changed
+    if (cachedFrame && cachedFrame.mtime === stat.mtimeMs) {
+      return cachedFrame.buffer;
     }
 
-    const raw = readFileSync(rawFramePath);
+    let buf: Buffer = readFileSync(framePath);
     // Validate JPEG magic bytes
-    if (raw[0] !== 0xff || raw[1] !== 0xd8) return null;
+    if (buf[0] !== 0xff || buf[1] !== 0xd8) return null;
 
-    const filter = process.env.RTSP_FILTER;
-    if (!filter) {
-      cachedFiltered = { buffer: raw, rawMtime: stat.mtimeMs };
-      return raw;
+    // On Windows, ffmpeg can't apply filters via -vf with -update 1,
+    // so apply RTSP_FILTER here via sharp instead
+    const rtspFilter = IS_WINDOWS ? process.env.RTSP_FILTER : undefined;
+    if (rtspFilter) {
+      const sharp = await loadSharp();
+      if (sharp) {
+        buf = await applyFilter(sharp, buf, rtspFilter);
+      }
     }
 
-    const sharp = await loadSharp();
-    if (!sharp) {
-      cachedFiltered = { buffer: raw, rawMtime: stat.mtimeMs };
-      return raw;
-    }
-
-    const filtered = await applyFilter(sharp.default, raw, filter);
-    cachedFiltered = { buffer: filtered, rawMtime: stat.mtimeMs };
-    return filtered;
+    cachedFrame = { buffer: buf, mtime: stat.mtimeMs };
+    return buf;
   } catch (err) {
     logger.debug(`[camera] Frame read error: ${err}`);
-    return cachedFiltered?.buffer ?? null;
+    return cachedFrame?.buffer ?? null;
   }
-}
-
-// ── Filter application via sharp ────────────────────────────────
-
-async function applyFilter(
-  sharp: typeof import('sharp').default,
-  image: Buffer,
-  filterString: string,
-): Promise<Buffer> {
-  const filters = filterString.split(',').map(f => f.trim());
-  let buf = image;
-
-  for (const filter of filters) {
-    const meta = await sharp(buf).metadata();
-    const iw = meta.width ?? 0;
-    const ih = meta.height ?? 0;
-    if (iw === 0 || ih === 0) break;
-
-    if (filter.startsWith('crop=')) {
-      const parts = filter.slice(5).split(':');
-      if (parts.length >= 4) {
-        const w = evalDimExpr(parts[0], iw, ih);
-        const h = evalDimExpr(parts[1], iw, ih);
-        const x = evalDimExpr(parts[2], iw, ih);
-        const y = evalDimExpr(parts[3], iw, ih);
-        const cx = Math.max(0, Math.min(x, iw - 1));
-        const cy = Math.max(0, Math.min(y, ih - 1));
-        const cw = Math.max(1, Math.min(w, iw - cx));
-        const ch = Math.max(1, Math.min(h, ih - cy));
-        buf = await sharp(buf).extract({ left: cx, top: cy, width: cw, height: ch }).toBuffer();
-      }
-    } else if (filter.startsWith('rotate=')) {
-      const anglePart = filter.slice(7).split(':')[0];
-      const radians = evalAngle(anglePart);
-      const degrees = (radians * 180) / Math.PI;
-      buf = await sharp(buf).rotate(degrees, { background: '#000' }).toBuffer();
-    } else if (filter.startsWith('scale=')) {
-      const parts = filter.slice(6).split(':');
-      if (parts.length >= 2) {
-        const newW = Math.round(evalDimExpr(parts[0], iw, ih));
-        const newH = Math.round(evalDimExpr(parts[1], iw, ih));
-        if (newW > 0 && newH > 0) {
-          buf = await sharp(buf).resize(newW, newH, { kernel: 'nearest' }).toBuffer();
-        }
-      }
-    }
-  }
-
-  return buf;
-}
-
-function evalDimExpr(expr: string, iw: number, ih: number): number {
-  const cleaned = expr.trim();
-  const plain = Number(cleaned);
-  if (!Number.isNaN(plain) && !cleaned.includes('i')) return plain;
-
-  let sub = cleaned
-    .replace(/\biw\b/g, String(iw))
-    .replace(/\bih\b/g, String(ih))
-    .replace(/\bPI\b/gi, String(Math.PI));
-
-  sub = sub.replace(/rotw\(([^)]+)\)/g, (_m, angleExpr) => {
-    const angle = evalAngle(angleExpr);
-    return String(Math.abs(iw * Math.cos(angle)) + Math.abs(ih * Math.sin(angle)));
-  });
-  sub = sub.replace(/roth\(([^)]+)\)/g, (_m, angleExpr) => {
-    const angle = evalAngle(angleExpr);
-    return String(Math.abs(iw * Math.sin(angle)) + Math.abs(ih * Math.cos(angle)));
-  });
-
-  try {
-    const result = Function(`"use strict"; return (${sub})`)();
-    if (typeof result === 'number' && !Number.isNaN(result)) return Math.round(result);
-  } catch {}
-
-  return parseFloat(cleaned) || 0;
-}
-
-function evalAngle(expr: string): number {
-  const cleaned = expr.trim().replace(/\bPI\b/gi, String(Math.PI));
-  try {
-    const result = Function(`"use strict"; return (${cleaned})`)();
-    if (typeof result === 'number' && !Number.isNaN(result)) return result;
-  } catch {}
-  return parseFloat(expr) || 0;
 }
