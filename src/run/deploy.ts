@@ -36,6 +36,7 @@ import {
   type StagedRemoteFile,
   sshExec,
   unlink,
+  writeRemoteFile,
   writeRemoteFilesStaged,
 } from './ssh.ts';
 
@@ -140,7 +141,8 @@ async function deployEnvFile(config: DeployConfig, signal?: AbortSignal): Promis
   }
 
   logger.debug(`Deploying env file with ${envContent.trim().split('\n').length} var(s)...`);
-  await writeRemoteFilesStaged(config.sshConfig, [{ content: envContent, remotePath: DeployEnvFile }], signal);
+  // /etc/default/ requires root — write to /tmp then sudo mv into place
+  await writeRemoteFile(config.sshConfig, envContent, DeployEnvFile, true, signal);
 }
 
 async function deployPackageFiles(config: DeployConfig, signal?: AbortSignal): Promise<void> {
