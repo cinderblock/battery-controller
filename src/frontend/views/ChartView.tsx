@@ -85,8 +85,9 @@ export function ChartView() {
   const prevVoltageRef = useRef<number | null>(null);
 
   useEffect(() => {
-    // Don't act on missing readings (state.reading is null before snapshot)
-    if (!state.reading) return;
+    // Only track voltages from real device readings, not the default-zero
+    // snapshot that arrives before the device responds.
+    if (!state.reading || !state.deviceResponsive) return;
 
     const voltage = state.reading.voltage;
     const isIdle = state.mode === 'idle';
@@ -101,7 +102,7 @@ export function ChartView() {
     if (isIdle && prev < 1.5 && voltage > 2.0 && !startModalOpen) {
       setStartModalOpen(true);
     }
-  }, [state.reading?.voltage, state.mode, startModalOpen]);
+  }, [state.reading?.voltage, state.mode, state.deviceResponsive, startModalOpen]);
 
   // ── Load cell groups ──────────────────────────────────────────
   useEffect(() => {
