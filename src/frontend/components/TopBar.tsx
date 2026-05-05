@@ -6,7 +6,7 @@
  * and a bridge mode toggle for proxying the serial port to EB Tester.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useReducer } from 'react';
 import { useSession } from '../hooks/useDeviceSession.ts';
 import type { DeviceMode } from '../api-client.ts';
 
@@ -71,7 +71,7 @@ export function TopBar() {
   const { state, enableBridge, disableBridge } = useSession();
   const { wsConnected, serialConnected, deviceResponsive, mode, reading, pendingCommand, bridgeActive, cycleState, activeRunMaxTimeMin } = state;
   const [bridgeLoading, setBridgeLoading] = useState(false);
-  const [waitRemaining, setWaitRemaining] = useState<number | null>(null);
+  const [, forceTick] = useReducer((x: number) => x + 1, 0);
 
   const isRunning = mode === 'd-cc' || mode === 'd-cp' || mode === 'c-cv';
   const cycleActive = cycleState && (cycleState.status === 'running' || cycleState.status === 'waiting');
@@ -101,14 +101,15 @@ export function TopBar() {
     return () => clearInterval(id);
   }, []);
 
-  // Tick the wait countdown every second
+  // Force a re-render every second while a wait countdown is active
   useEffect(() => {
-    if (!cycleState?.waitEndTime) { setWaitRemaining(null); return; }
-    const tick = () => setWaitRemaining(cycleState.waitEndTime! - Date.now());
-    tick();
-    const id = setInterval(tick, 1000);
+    if (!cycleState?.waitEndTime) return;
+    const id = setInterval(forceTick, 1000);
     return () => clearInterval(id);
-  }, [cycleState?.waitEndTime]);
+  }, [!!cycleState?.waitEndTime]);
+
+  // Derive remaining time at render time — always fresh from Date.now()
+  const waitRemaining = cycleState?.waitEndTime ? cycleState.waitEndTime - Date.now() : null;
 
   // Connection dot class: off → warn (stale) → ok, plus flash on packet
   const connClass = !wsConnected ? 'conn-off'

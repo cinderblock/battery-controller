@@ -139,7 +139,13 @@ export function useDeviceSessionManager(): SessionContextValue {
 
     es.onerror = () => {
       setState(s => ({ ...s, wsConnected: false }));
-      // EventSource auto-reconnects (interval set by server's retry: directive)
+      // EventSource auto-reconnects on network errors, but permanently closes on
+      // HTTP errors (e.g. 502 from reverse proxy while service is restarting).
+      // Detect CLOSED state and schedule a manual reconnect.
+      if (es.readyState === EventSource.CLOSED) {
+        esRef.current = null;
+        setTimeout(connect, 2000);
+      }
     };
 
     es.addEventListener('snapshot', (e) => {
