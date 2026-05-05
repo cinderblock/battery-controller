@@ -98,11 +98,22 @@ export async function startTcpBridge(): Promise<TcpBridge> {
   const serialReadBuffer = new Uint8Array(1024);
 
   async function serialReadLoop() {
+    let consecutiveZeroReads = 0;
+
     try {
       while (!stopped) {
         const { bytesRead } = await serialHandle.read(serialReadBuffer, 0, serialReadBuffer.length);
-        if (bytesRead === 0) continue;
+        if (bytesRead === 0) {
+          consecutiveZeroReads++;
+          if (consecutiveZeroReads >= 10) {
+            logger.error('[bridge] Serial port returning no data after 10 attempts, closing');
+            break;
+          }
+          await Bun.sleep(500);
+          continue;
+        }
 
+        consecutiveZeroReads = 0;
         const data = serialReadBuffer.slice(0, bytesRead);
 
         if (activeClient) {

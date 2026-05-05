@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 
 /**
- * Development Deployment Script
+ * Deployment Script
  *
  * Runs on development machine. Builds project in memory, transfers to Pi via SSH,
- * starts dev service with --watch, and monitors for changes.
+ * restarts the production service, and optionally monitors for changes.
  *
  * Usage:
  *   bun start                   # Deploy and watch for changes
@@ -18,7 +18,6 @@ import { buildWatchInMemory } from './build.ts';
 import {
   DeployAppDir,
   DeployBunBin,
-  DeployDevServiceName,
   DeployHost,
   DeployKey,
   DeployPort,
@@ -249,25 +248,6 @@ async function deployBuildOutputs(
   }
 }
 
-async function startService(config: DeployConfig, serviceName: string, signal?: AbortSignal): Promise<void> {
-  logger.debug(`Starting ${serviceName} service...`);
-  signal?.throwIfAborted();
-
-  try {
-    // Start service (systemd will handle if already running)
-    await sshExec(config.sshConfig, 'sudo systemctl start', [serviceName], signal);
-
-    logger.debug(`${serviceName} started`);
-  } catch (error: unknown) {
-    logErrorMessage(`Failed to start ${serviceName}:`, error);
-    logger.debug('Checking service status...');
-    await sshExec(config.sshConfig, 'journalctl', ['-u', serviceName, '-n', '20', '--no-pager'], signal);
-    throw error;
-  }
-
-  signal?.throwIfAborted();
-}
-
 async function restartService(config: DeployConfig, serviceName: string, signal?: AbortSignal): Promise<void> {
   logger.debug(`Restarting ${serviceName} service...`);
   signal?.throwIfAborted();
@@ -281,20 +261,10 @@ async function restartService(config: DeployConfig, serviceName: string, signal?
   }
 }
 
-async function stopService(config: DeployConfig, serviceName: string, signal?: AbortSignal): Promise<void> {
-  try {
-    await sshExec(config.sshConfig, 'sudo systemctl stop', [serviceName], signal);
-    logger.debug(`${serviceName} stopped`);
-  } catch {
-    // Service might not be running, that's ok
-    logger.debug(`${serviceName} was not running`);
-  }
-}
-
 async function checkStatus(
   config: DeployConfig,
   signal?: AbortSignal,
-  serviceName = DeployDevServiceName
+  serviceName = DeployServiceName
 ): Promise<void> {
   signal?.throwIfAborted();
   logger.debug('Checking deployment status...');
@@ -349,9 +319,8 @@ async function performInitialDeploy(
   await deployBuildOutputs(config, appOutputs, signal, ['package.json', 'bun.lock']);
   log(`Files deployed (${appOutputs.length} file${appOutputs.length !== 1 ? 's' : ''})`, '✅');
 
-  // Restart dev service to pick up the new bundle (Bun --watch doesn't
-  // reliably detect changes to the bundled index.js)
-  await restartService(config, DeployDevServiceName, signal);
+  // Restart service to pick up the new bundle
+  await restartService(config, DeployServiceName, signal);
 
   log('Initial deployment complete!', '🎉');
 }
@@ -425,10 +394,9 @@ function createIncrementalDeployHandler(config: DeployConfig) {
       const cleanupPreserveFiles = options.server ? ['package.json'] : undefined;
       await deployBuildOutputs(config, outputs, signal, cleanupPreserveFiles);
 
-      // Restart service to pick up new bundle (Bun --watch doesn't reliably
-      // detect changes to the pre-built index.js)
+      // Restart service to pick up new bundle
       if (options.server) {
-        await restartService(config, DeployDevServiceName, signal);
+        await restartService(config, DeployServiceName, signal);
       }
 
       // Only log success if we weren't aborted
@@ -545,22 +513,10 @@ async function main() {
     pendingAfterInit = null;
   }
 
-  // Exit handler: start main service and stop dev service
+  // Exit handler: clean up watcher and SSH, service keeps running
   const exitHandler = async () => {
     log('Stopping watch mode...', '👋');
-
     buildCleanup();
-
-    try {
-      logger.debug('Stopping dev service...');
-      await stopService(config, DeployDevServiceName);
-
-      logger.debug('Starting main service...');
-      await startService(config, DeployServiceName);
-    } catch (error) {
-      logErrorMessage('Error during cleanup:', error);
-    }
-
     await closeSSHConnection();
     shutdown(0);
   };

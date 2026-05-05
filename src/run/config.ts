@@ -17,8 +17,5 @@ export const DeployServiceName = 'battery-controller';
 export const DeploySetupPath = `${DeploySetupHome}/setup.js`; // Path to setup script
 export const DeployBunBin = `${DeploySetupHome}/.bun/bin/bun`; // Path to Bun binary
 export const DeployEnvFile = `/etc/default/${DeployServiceName}`; // Environment file for systemd services
-export const DeployDevServiceName = 'battery-controller-dev';
-export const DeployBridgeServiceName = 'battery-controller-bridge';
-
 // TCP bridge configuration (used by bridge mode on Pi and proxy on Windows)
 export const BridgeTcpPort = 49600;

@@ -107,20 +107,28 @@ export class SerialManager {
   private async doReading() {
     if (!this.fileHandle) throw new Error('Serial port not connected');
 
+    let consecutiveZeroReads = 0;
+
     while (this.fileHandle) {
-      // Blocks until data is available
+      // Blocks until data is available (stty min 1)
       const { bytesRead } = await this.fileHandle.read(
         this.readBuffer,
         this.readBufferOffset,
         this.readBuffer.length - this.readBufferOffset
       );
 
-      // Should not be possible, but just in case
       if (bytesRead === 0) {
-        logger.error('❌ No data available from serial port');
+        consecutiveZeroReads++;
+        if (consecutiveZeroReads >= 10) {
+          logger.error('Serial port returning no data after 10 attempts, disconnecting');
+          this.disconnect();
+          return;
+        }
+        await Bun.sleep(500);
         continue;
       }
 
+      consecutiveZeroReads = 0;
       this.readBufferOffset += bytesRead;
       this.parseBuffer();
     }

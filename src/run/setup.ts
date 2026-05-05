@@ -22,9 +22,7 @@ import { logger } from '../utils/logger.ts';
 import { shutdown } from '../utils/shutdown.ts';
 import {
   DeployAppDir,
-  DeployBridgeServiceName,
   DeployBunBin,
-  DeployDevServiceName,
   DeployEnvFile,
   DeployServiceName,
 } from './config.ts';
@@ -269,64 +267,21 @@ async function createDirectories() {
 
   log('Directories created', '✅');
 }
-type ServiceMode = 'prod' | 'dev' | 'bridge';
+const ServiceFileName = `${SystemdServiceDir}/${DeployServiceName}.service`;
 
-function serviceName(mode: ServiceMode = 'prod') {
-  const nameMap: Record<ServiceMode, string> = {
-    prod: DeployServiceName,
-    dev: DeployDevServiceName,
-    bridge: DeployBridgeServiceName,
-  };
-  return `${nameMap[mode]}.service`;
-}
-
-function serviceFileName(mode: ServiceMode = 'prod') {
-  return `${SystemdServiceDir}/${serviceName(mode)}`;
-}
-
-function allConflicts(mode: ServiceMode): string {
-  const allModes: ServiceMode[] = ['prod', 'dev', 'bridge'];
-  return allModes
-    .filter(m => m !== mode)
-    .map(m => serviceName(m))
-    .join(' ');
-}
-
-function serviceContent(mode: ServiceMode = 'prod') {
-  const labels: Record<ServiceMode, string> = {
-    prod: '',
-    dev: ' (Development)',
-    bridge: ' (TCP Bridge)',
-  };
-  const execArgs: Record<ServiceMode, string> = {
-    prod: `${DeployBunBin} ${DeployAppDir}`,
-    dev: `${DeployBunBin} ${DeployAppDir}`,
-    bridge: `${DeployBunBin} ${DeployAppDir} --bridge`,
-  };
-  const env: Record<ServiceMode, string> = {
-    prod: 'production',
-    dev: 'production',
-    bridge: 'production',
-  };
-  const restartSec: Record<ServiceMode, string> = {
-    prod: '10',
-    dev: '2',
-    bridge: '5',
-  };
-
+function serviceContent() {
   return `[Unit]
-Description=Battery Charge & Discharge Controller Service${labels[mode]}
+Description=Battery Charge & Discharge Controller Service
 After=network.target
-Conflicts=${allConflicts(mode)}
 
 [Service]
 WorkingDirectory=${DeployAppDir}
-ExecStart=${execArgs[mode]}
+ExecStart=${DeployBunBin} ${DeployAppDir}
 EnvironmentFile=-${DeployEnvFile}
-Environment="NODE_ENV=${env[mode]}"
+Environment="NODE_ENV=production"
 Environment="DB_PATH=${DeployAppDir}/data/battery.db"
 Restart=always
-RestartSec=${restartSec[mode]}
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
@@ -364,26 +319,37 @@ async function writeFile(path: string, content: string, sudo = false) {
   }
 }
 
+/** Remove old dev and bridge services left over from previous setup versions */
+async function cleanupOldServices() {
+  const obsolete = ['battery-controller-dev', 'battery-controller-bridge'];
+  for (const name of obsolete) {
+    const unitFile = `${SystemdServiceDir}/${name}.service`;
+    try {
+      await readFile(unitFile, 'utf-8');
+    } catch {
+      continue; // File doesn't exist, nothing to clean up
+    }
+    log(`Removing obsolete service: ${name}`, '🧹');
+    await sudoExec('systemctl', ['stop', name]).catch(() => {});
+    await sudoExec('systemctl', ['disable', name]).catch(() => {});
+    await sudoExec('rm', ['-f', unitFile]);
+  }
+}
+
 async function setupSystemdServices() {
-  log('Creating systemd services...', '⚙️');
+  log('Setting up systemd service...', '⚙️');
 
-  const prod = ensureFileIs(serviceFileName('prod'), serviceContent('prod'), true);
-  const dev = ensureFileIs(serviceFileName('dev'), serviceContent('dev'), true);
-  const bridge = ensureFileIs(serviceFileName('bridge'), serviceContent('bridge'), true);
+  await cleanupOldServices();
 
-  const changes = await Promise.all([prod, dev, bridge]);
+  const changed = await ensureFileIs(ServiceFileName, serviceContent(), true);
 
-  log('Systemd services created', '✅');
-
-  if (changes.some(Boolean)) {
+  if (changed) {
     await sudoExec('systemctl', ['daemon-reload']);
     log('Systemd reloaded', '✅');
   }
 
-  log('Enabling production service...', '🔧');
-
   // Enable service to start on boot
-  await sudoExec('systemctl', ['enable', serviceName('prod')]);
+  await sudoExec('systemctl', ['enable', `${DeployServiceName}.service`]);
 
   log('Service enabled', '✅');
 }
@@ -393,9 +359,7 @@ function displaySummary() {
   logger.debug(`  📁 Application directory: ${DeployAppDir}`);
   logger.debug(`  🏃 Bun runtime: ${DeployBunBin}`);
   logger.debug(`  📦 Main entry: ${DeployAppDir}`);
-  logger.debug(`  ⚙️  Production service: ${serviceFileName('prod')}`);
-  logger.debug(`  ⚙️  Dev service: ${serviceFileName('dev')}`);
-  logger.debug(`  ⚙️  Bridge service: ${serviceFileName('bridge')}`);
+  logger.debug(`  ⚙️  Service: ${ServiceFileName}`);
 }
 
 async function main() {
