@@ -2,13 +2,14 @@
  * CameraView — live LCD camera feed.
  *
  * Shows the cropped webcam view of the device LCD at the top of the
- * UI. Auto-refreshes every 2 seconds. Hides itself if no camera is
- * configured or the server reports the camera is unavailable.
+ * UI. Auto-refreshes every second (matching server-side 1 fps capture).
+ * Hides itself if no camera is configured or the server reports the
+ * camera is unavailable.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const REFRESH_INTERVAL_MS = 2000;
+const REFRESH_INTERVAL_MS = 1000;
 
 interface CameraViewProps {
   onVisibilityChange?: (visible: boolean) => void;

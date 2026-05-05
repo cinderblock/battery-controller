@@ -81,13 +81,20 @@ function spawnFfmpeg(rtspUrl: string): void {
   const vf = (rtspFilter && !IS_WINDOWS) ? `${rtspFilter},fps=${FPS}` : `fps=${FPS}`;
 
   const args = [
+    // Low-latency input: skip probe/analysis, disable demux buffering and
+    // packet reordering so frames pass through as soon as they arrive
     '-fflags', 'nobuffer',
     '-flags', 'low_delay',
+    '-probesize', '32',
+    '-analyzeduration', '0',
+    '-max_delay', '0',
+    '-reorder_queue_size', '0',
     '-rtsp_transport', 'tcp',
     '-i', rtspUrl,
     '-vf', vf,
     '-f', 'image2',
     '-update', '1',
+    '-flush_packets', '1',
     '-q:v', '2',
     '-y', framePath,
   ];
