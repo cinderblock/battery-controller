@@ -101,12 +101,14 @@ export function TopBar() {
     return () => clearInterval(id);
   }, []);
 
-  // Force a re-render every second while a wait countdown is active
+  // Force a re-render every second while a cycle step is active (wait or running).
+  // Wait steps need this for the countdown; running steps need it so the
+  // progress bar can interpolate elapsed time between device readings.
   useEffect(() => {
-    if (!cycleState?.waitEndTime) return;
+    if (!cycleActive) return;
     const id = setInterval(forceTick, 1000);
     return () => clearInterval(id);
-  }, [!!cycleState?.waitEndTime]);
+  }, [cycleActive]);
 
   // Derive remaining time at render time — always fresh from Date.now()
   const waitRemaining = cycleState?.waitEndTime ? cycleState.waitEndTime - Date.now() : null;
@@ -268,8 +270,10 @@ export function TopBar() {
             // Wait step: use ticking waitRemaining state
             activeProgressPct = Math.min(100, Math.max(0, (1 - waitRemaining / (expectedS * 1000)) * 100));
           } else if (reading && expectedS > 0) {
-            // Active test step: use device elapsed (updates on every reading)
-            activeProgressPct = Math.min(100, (reading.elapsedS / expectedS) * 100);
+            // Active test step: interpolate elapsed from last reading + local clock
+            // so the bar advances smoothly between ~1s device packets
+            const interpolatedS = reading.elapsedS + (Date.now() - lastReadingTimeRef.current) / 1000;
+            activeProgressPct = Math.min(100, (interpolatedS / expectedS) * 100);
           }
         }
 
