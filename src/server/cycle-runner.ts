@@ -19,6 +19,7 @@ import {
   getCellGroup,
   getCycleStepRun,
   getRunsForCycleProgram,
+  parseUtcTimestamp,
   type CycleProgram,
 } from './db.ts';
 import { logger } from '../utils/logger.ts';
@@ -561,7 +562,7 @@ export class CycleRunner {
         const waitStep = this.execPlan[this.execIndex].step as StepWait;
         const waitRun = getCycleStepRun(program.id, this.execIndex);
         const waitStartedAt = waitRun?.started_at
-          ? new Date(waitRun.started_at).getTime()
+          ? parseUtcTimestamp(waitRun.started_at)
           : null;
 
         if (waitStartedAt) {

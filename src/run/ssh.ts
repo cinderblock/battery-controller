@@ -245,7 +245,8 @@ export async function sshExec(
 }
 
 export async function getTempFile(config: SSHConfig): Promise<string> {
-  return await sshExec(config, 'mktemp', ['-t', 'ssh2-promise-XXXXXX']);
+  const result = await sshExec(config, 'mktemp', ['-t', 'ssh2-promise-XXXXXX']);
+  return result.trim();
 }
 
 /**
