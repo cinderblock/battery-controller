@@ -17,7 +17,7 @@ import { TestRecorder, type TestSetpoints } from './test-recorder.ts';
 import { SettingsLock } from './settings-lock.ts';
 import { CycleRunner } from './cycle-runner.ts';
 import {
-  initDb, closeDb, markIncompleteRuns, ensureDefaultCellGroup,
+  initDb, closeDb, markIncompleteRuns, ensureDefaultCellGroup, parseUtcTimestamp,
   getCells, getCellById, getCellByBarcode, upsertCell, updateCell, setCellGroup,
   getTestRunsForCell, getTestRun, getRecentTestRuns,
   getDataPointsForRun, getDataPointCount,
@@ -108,9 +108,12 @@ async function main() {
 
   // ── Initialize database ────────────────────────────────────────
   initDb();
-  const incompleteRuns = markIncompleteRuns();
-  if (incompleteRuns > 0) {
-    logger.info(`Marked ${incompleteRuns} incomplete run(s) from previous session as 'service_restart'`);
+  const incomplete = markIncompleteRuns();
+  if (incomplete.runs > 0) {
+    logger.info(`Marked ${incomplete.runs} incomplete run(s) from previous session as 'service_restart'`);
+  }
+  if (incomplete.cycles > 0) {
+    logger.info(`Aborted ${incomplete.cycles} active cycle program(s) from previous session`);
   }
   ensureDefaultCellGroup();
 
@@ -126,27 +129,58 @@ async function main() {
     const stats = getRunPeakStats(run.id);
 
     // Reconstruct testStartTime from last data point's wall-clock time
-    const lastRecordedMs = new Date(lastPoint.recorded_at).getTime();
+    const lastRecordedMs = parseUtcTimestamp(lastPoint.recorded_at);
     const gapS = (Date.now() - lastRecordedMs) / 1000;
     const trueElapsedS = lastPoint.elapsed_s + gapS;
     const testStartTime = Date.now() - trueElapsedS * 1000;
 
-    // Compute capacity wrap offset: true capacity must be >= last recorded
-    let capacityWrapOffset = 0;
-    if (lastPoint.capacity_mah > rawCapMah) {
-      capacityWrapOffset = Math.ceil((lastPoint.capacity_mah - rawCapMah) / 57_600) * 57_600;
+    // Detect high-capacity mode from the raw device value.
+    // In low-cap mode, raw values max out at ~10,000–11,000 mAh before
+    // the hi-byte +99 transition. In high-cap mode, the minimum raw value
+    // is ~33,769 (the transition point). A threshold of 20,000 cleanly
+    // separates the two ranges.
+    const HIGH_CAP_THRESHOLD = 20_000;
+    const highCapMode = rawCapMah > HIGH_CAP_THRESHOLD;
+
+    // In high-cap mode, validate the DB capacity value. If the CapacityTracker
+    // wasn't correcting properly before the restart (e.g., previous recovery
+    // failed to detect high-cap mode), the DB may contain raw (uncorrected)
+    // values. Detect this and recompute from the raw device value.
+    let capacityForRecovery = lastPoint.capacity_mah;
+    if (highCapMode) {
+      // Approximate true capacity from raw using known EBC-A40L constants:
+      //   corrected = transitionTrue + (raw - transitionRaw) * 10
+      //   transitionRaw ≈ transitionTrue + 99*240 = transitionTrue + 23,760
+      //   transitionTrue ≈ 10,000 mAh (varies by ~200)
+      // Simplifies to: corrected ≈ 10 * raw - 327,600
+      const approxCorrected = 10 * rawCapMah - 327_600;
+      if (approxCorrected > 0) {
+        const divergence = Math.abs(lastPoint.capacity_mah - approxCorrected) / approxCorrected;
+        if (divergence > 0.1) {
+          logger.warn(
+            `Recovery: DB capacity (${lastPoint.capacity_mah} mAh) diverges ${(divergence * 100).toFixed(0)}% ` +
+            `from expected (${approxCorrected} mAh) — likely uncorrected raw. Using computed value.`
+          );
+          capacityForRecovery = approxCorrected;
+        }
+      }
     }
 
     logger.info(
       `Recovery: run #${run.id}, elapsed=${trueElapsedS.toFixed(0)}s (gap=${gapS.toFixed(1)}s), ` +
-      `energy=${lastPoint.energy_mwh.toFixed(0)} mWh, wrapOffset=${capacityWrapOffset}`
+      `energy=${lastPoint.energy_mwh.toFixed(0)} mWh, highCap=${highCapMode}, ` +
+      `dbCap=${lastPoint.capacity_mah}, recoveryCap=${capacityForRecovery}`
     );
 
     return {
       runId: run.id,
       testStartTime,
       energyMwh: lastPoint.energy_mwh,
-      capacityWrapOffset,
+      capState: {
+        highCapMode,
+        transitionRaw: rawCapMah,
+        transitionTrue: capacityForRecovery,
+      },
       peakVoltage: stats?.peakVoltage ?? 0,
       minVoltage: stats?.minVoltage ?? Infinity,
       peakCurrent: stats?.peakCurrent ?? 0,

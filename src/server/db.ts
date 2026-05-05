@@ -8,6 +8,23 @@
 import { Database } from 'bun:sqlite';
 import { logger } from '../utils/logger.ts';
 
+// ── UTC timestamp helpers ──────────────────────────────────────────
+
+/** SQLite expression that produces ISO 8601 UTC timestamps (with 'Z' suffix) */
+const SQL_NOW_UTC = "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')";
+
+/**
+ * Parse a SQLite timestamp as UTC, regardless of whether it has a 'Z' suffix.
+ * SQLite's datetime('now') stores UTC but omits the timezone marker, which
+ * causes `new Date()` to misinterpret it as local time.
+ */
+export function parseUtcTimestamp(sqliteTs: string): number {
+  if (sqliteTs.endsWith('Z') || sqliteTs.endsWith('+00:00')) {
+    return new Date(sqliteTs).getTime();
+  }
+  return new Date(sqliteTs + 'Z').getTime();
+}
+
 const DB_PATH = process.env.DB_PATH || '/opt/battery-controller/data/battery.db';
 
 let db: Database;
@@ -58,8 +75,8 @@ function runMigrations(db: Database): void {
           nominal_capacity_mah INTEGER DEFAULT 200000,
           chemistry TEXT DEFAULT 'LiFePO4',
           notes TEXT,
-          created_at TEXT NOT NULL DEFAULT (datetime('now')),
-          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+          updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
         );
         CREATE INDEX IF NOT EXISTS idx_cells_barcode ON cells(barcode);
 
@@ -71,7 +88,7 @@ function runMigrations(db: Database): void {
           charge_voltage_v REAL,
           discharge_cutoff_v REAL,
           charge_cutoff_current_a REAL,
-          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
         );
 
         CREATE TABLE IF NOT EXISTS cycle_programs (
@@ -84,7 +101,7 @@ function runMigrations(db: Database): void {
           current_cycle INTEGER DEFAULT 0,
           started_at TEXT,
           ended_at TEXT,
-          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
         );
 
         CREATE TABLE IF NOT EXISTS test_runs (
@@ -99,7 +116,7 @@ function runMigrations(db: Database): void {
           setpoint_cutoff_v REAL,
           setpoint_cutoff_current_a REAL,
           setpoint_max_time_min INTEGER,
-          started_at TEXT NOT NULL DEFAULT (datetime('now')),
+          started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
           ended_at TEXT,
           start_reason TEXT DEFAULT 'manual',
           end_reason TEXT,
@@ -124,7 +141,7 @@ function runMigrations(db: Database): void {
           capacity_mah REAL NOT NULL,
           energy_mwh REAL NOT NULL,
           state_byte INTEGER NOT NULL,
-          recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+          recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
         );
         CREATE INDEX IF NOT EXISTS idx_data_points_run_id ON data_points(run_id);
 
@@ -138,8 +155,8 @@ function runMigrations(db: Database): void {
           name TEXT NOT NULL,
           cell_group_id INTEGER REFERENCES cell_groups(id),
           steps_json TEXT NOT NULL,
-          created_at TEXT NOT NULL DEFAULT (datetime('now')),
-          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+          updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
         );
       `,
     },
@@ -154,6 +171,47 @@ function runMigrations(db: Database): void {
       sql: `
         ALTER TABLE test_runs ADD COLUMN exclude_from_capacity BOOLEAN DEFAULT 0;
         ALTER TABLE test_runs ADD COLUMN cycle_iteration INTEGER;
+      `,
+    },
+    {
+      version: 4,
+      sql: `
+        -- Convert bare datetime('now') timestamps to ISO 8601 UTC (with 'Z').
+        -- datetime('now') stored UTC without a timezone marker, which JS
+        -- new Date() misinterprets as local time.
+        UPDATE cells SET
+          created_at = replace(created_at, ' ', 'T') || 'Z'
+          WHERE created_at NOT LIKE '%Z' AND created_at NOT LIKE '%+%';
+        UPDATE cells SET
+          updated_at = replace(updated_at, ' ', 'T') || 'Z'
+          WHERE updated_at NOT LIKE '%Z' AND updated_at NOT LIKE '%+%';
+        UPDATE cell_groups SET
+          created_at = replace(created_at, ' ', 'T') || 'Z'
+          WHERE created_at NOT LIKE '%Z' AND created_at NOT LIKE '%+%';
+        UPDATE cycle_programs SET
+          created_at = replace(created_at, ' ', 'T') || 'Z'
+          WHERE created_at NOT LIKE '%Z' AND created_at NOT LIKE '%+%';
+        UPDATE cycle_programs SET
+          started_at = replace(started_at, ' ', 'T') || 'Z'
+          WHERE started_at IS NOT NULL AND started_at NOT LIKE '%Z' AND started_at NOT LIKE '%+%';
+        UPDATE cycle_programs SET
+          ended_at = replace(ended_at, ' ', 'T') || 'Z'
+          WHERE ended_at IS NOT NULL AND ended_at NOT LIKE '%Z' AND ended_at NOT LIKE '%+%';
+        UPDATE test_runs SET
+          started_at = replace(started_at, ' ', 'T') || 'Z'
+          WHERE started_at NOT LIKE '%Z' AND started_at NOT LIKE '%+%';
+        UPDATE test_runs SET
+          ended_at = replace(ended_at, ' ', 'T') || 'Z'
+          WHERE ended_at IS NOT NULL AND ended_at NOT LIKE '%Z' AND ended_at NOT LIKE '%+%';
+        UPDATE data_points SET
+          recorded_at = replace(recorded_at, ' ', 'T') || 'Z'
+          WHERE recorded_at NOT LIKE '%Z' AND recorded_at NOT LIKE '%+%';
+        UPDATE sequences SET
+          created_at = replace(created_at, ' ', 'T') || 'Z'
+          WHERE created_at NOT LIKE '%Z' AND created_at NOT LIKE '%+%';
+        UPDATE sequences SET
+          updated_at = replace(updated_at, ' ', 'T') || 'Z'
+          WHERE updated_at NOT LIKE '%Z' AND updated_at NOT LIKE '%+%';
       `,
     },
   ];
@@ -189,7 +247,7 @@ export function upsertCell(barcode: string, label?: string | null): Cell {
 
   if (existing) {
     if (label !== undefined) {
-      db.run('UPDATE cells SET label = ?, updated_at = datetime(\'now\') WHERE id = ?', [label, existing.id]);
+      db.run(`UPDATE cells SET label = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [label, existing.id]);
       existing.label = label;
     }
     return existing;
@@ -235,7 +293,7 @@ export function updateCell(id: number, updates: { label?: string | null; notes?:
   }
   if (sets.length === 0) return getCellById(id);
 
-  sets.push("updated_at = datetime('now')");
+  sets.push(`updated_at = ${SQL_NOW_UTC}`);
   vals.push(id);
   db.run(`UPDATE cells SET ${sets.join(', ')} WHERE id = ?`, vals);
   return getCellById(id);
@@ -328,7 +386,7 @@ export function finalizeTestRun(
 ): void {
   getDb().run(
     `UPDATE test_runs SET
-       ended_at = datetime('now'),
+       ended_at = ${SQL_NOW_UTC},
        end_reason = ?, final_capacity_mah = ?, final_energy_mwh = ?,
        peak_voltage_v = ?, min_voltage_v = ?, peak_current_a = ?,
        duration_s = ?, data_point_count = ?
@@ -353,13 +411,18 @@ export function getRecentTestRuns(limit: number = 50): TestRun[] {
   ).all(limit);
 }
 
-/** Mark incomplete runs from a previous crash as service_restart */
-export function markIncompleteRuns(): number {
-  const result = getDb().run(
-    `UPDATE test_runs SET ended_at = datetime('now'), end_reason = 'service_restart'
+/** Mark incomplete runs and cycle programs from a previous crash */
+export function markIncompleteRuns(): { runs: number; cycles: number } {
+  const db = getDb();
+  const runs = db.run(
+    `UPDATE test_runs SET ended_at = ${SQL_NOW_UTC}, end_reason = 'service_restart'
      WHERE ended_at IS NULL`
-  );
-  return result.changes;
+  ).changes;
+  const cycles = db.run(
+    `UPDATE cycle_programs SET ended_at = ${SQL_NOW_UTC}, status = 'aborted'
+     WHERE status IN ('running', 'pending')`
+  ).changes;
+  return { runs, cycles };
 }
 
 // ── Data point operations ───────────────────────────────────────────
@@ -459,11 +522,11 @@ export function getDataPointCount(runId: number): number {
   ).get(runId)?.count ?? 0;
 }
 
-/** Find the most recent run closed by service_restart with matching mode */
+/** Find the most recent run closed by a service restart/shutdown with matching mode */
 export function getLastServiceRestartRun(mode: string): TestRun | null {
   return getDb().query<TestRun, [string]>(
     `SELECT * FROM test_runs
-     WHERE end_reason = 'service_restart' AND mode = ?
+     WHERE end_reason IN ('service_restart', 'service_shutdown') AND mode = ?
      ORDER BY id DESC LIMIT 1`
   ).get(mode) ?? null;
 }
@@ -525,7 +588,7 @@ export function createSequence(name: string, stepsJson: string, cellGroupId?: nu
 
 export function updateSequence(id: number, name: string, stepsJson: string): void {
   getDb().run(
-    'UPDATE sequences SET name = ?, steps_json = ?, updated_at = datetime(\'now\') WHERE id = ?',
+    `UPDATE sequences SET name = ?, steps_json = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`,
     [name, stepsJson, id]
   );
 }
@@ -642,7 +705,7 @@ export function getCellsInGroup(groupId: number): Cell[] {
 
 export function setCellGroup(cellId: number, groupId: number | null): void {
   getDb().run(
-    'UPDATE cells SET cell_group_id = ?, updated_at = datetime(\'now\') WHERE id = ?',
+    `UPDATE cells SET cell_group_id = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`,
     [groupId, cellId]
   );
 }
