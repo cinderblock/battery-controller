@@ -1,0 +1,282 @@
+[
+  {
+    "idx": 0,
+    "elapsed_s": 0,
+    "capacity_mah": 0,
+    "voltage_v": 3.543,
+    "current_a": 0
+  },
+  {
+    "idx": 1,
+    "elapsed_s": 2.0,
+    "capacity_mah": 9,
+    "voltage_v": 3.424,
+    "current_a": 40
+  },
+  {
+    "idx": 2,
+    "elapsed_s": 4.0,
+    "capacity_mah": 31,
+    "voltage_v": 3.387,
+    "current_a": 40
+  },
+  {
+    "idx": 3,
+    "elapsed_s": 6.0,
+    "capacity_mah": 54,
+    "voltage_v": 3.367,
+    "current_a": 40
+  },
+  {
+    "idx": 4,
+    "elapsed_s": 8.0,
+    "capacity_mah": 76,
+    "voltage_v": 3.352,
+    "current_a": 40
+  },
+  {
+    "idx": 5,
+    "elapsed_s": 10.0,
+    "capacity_mah": 98,
+    "voltage_v": 3.344,
+    "current_a": 40
+  },
+  {
+    "idx": 6,
+    "elapsed_s": 12.0,
+    "capacity_mah": 120,
+    "voltage_v": 3.335,
+    "current_a": 40
+  },
+  {
+    "idx": 7,
+    "elapsed_s": 14.0,
+    "capacity_mah": 143,
+    "voltage_v": 3.329,
+    "current_a": 40
+  },
+  {
+    "idx": 8,
+    "elapsed_s": 16.0,
+    "capacity_mah": 165,
+    "voltage_v": 3.323,
+    "current_a": 40
+  },
+  {
+    "idx": 9,
+    "elapsed_s": 18.0,
+    "capacity_mah": 187,
+    "voltage_v": 3.318,
+    "current_a": 40
+  },
+  {
+    "idx": 445,
+    "elapsed_s": 889.9,
+    "capacity_mah": 9876,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 446,
+    "elapsed_s": 891.9,
+    "capacity_mah": 9898,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 447,
+    "elapsed_s": 893.9,
+    "capacity_mah": 9920,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 448,
+    "elapsed_s": 895.9,
+    "capacity_mah": 9943,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 449,
+    "elapsed_s": 897.9,
+    "capacity_mah": 9965,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 450,
+    "elapsed_s": 899.9,
+    "capacity_mah": 9987,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 451,
+    "elapsed_s": 901.9,
+    "capacity_mah": 33769,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 452,
+    "elapsed_s": 903.9,
+    "capacity_mah": 33771,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 453,
+    "elapsed_s": 905.9,
+    "capacity_mah": 33773,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 454,
+    "elapsed_s": 907.9,
+    "capacity_mah": 33776,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 455,
+    "elapsed_s": 909.9,
+    "capacity_mah": 33778,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 456,
+    "elapsed_s": 911.9,
+    "capacity_mah": 33780,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 457,
+    "elapsed_s": 913.9,
+    "capacity_mah": 33782,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 458,
+    "elapsed_s": 915.9,
+    "capacity_mah": 33785,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 459,
+    "elapsed_s": 917.9,
+    "capacity_mah": 33787,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 480,
+    "elapsed_s": 959.9,
+    "capacity_mah": 33833,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 481,
+    "elapsed_s": 961.9,
+    "capacity_mah": 33836,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 482,
+    "elapsed_s": 963.9,
+    "capacity_mah": 33838,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 483,
+    "elapsed_s": 965.9,
+    "capacity_mah": 33840,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 484,
+    "elapsed_s": 967.9,
+    "capacity_mah": 33842,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 485,
+    "elapsed_s": 969.9,
+    "capacity_mah": 33845,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 486,
+    "elapsed_s": 971.9,
+    "capacity_mah": 33847,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 487,
+    "elapsed_s": 973.9,
+    "capacity_mah": 33849,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 488,
+    "elapsed_s": 975.9,
+    "capacity_mah": 33851,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 489,
+    "elapsed_s": 977.9,
+    "capacity_mah": 33853,
+    "voltage_v": 3.185,
+    "current_a": 40
+  },
+  {
+    "idx": 600,
+    "elapsed_s": 1199.9,
+    "capacity_mah": 34100,
+    "voltage_v": 3.183,
+    "current_a": 40
+  },
+  {
+    "idx": 1200,
+    "elapsed_s": 2399.9,
+    "capacity_mah": 35433,
+    "voltage_v": 3.169,
+    "current_a": 40
+  },
+  {
+    "idx": 3000,
+    "elapsed_s": 5999.6,
+    "capacity_mah": 39433,
+    "voltage_v": 3.131,
+    "current_a": 40
+  },
+  {
+    "idx": 6000,
+    "elapsed_s": 11999.2,
+    "capacity_mah": 46100,
+    "voltage_v": 2.881,
+    "current_a": 40
+  },
+  {
+    "idx": 6267,
+    "elapsed_s": 12529.2,
+    "capacity_mah": 46691,
+    "voltage_v": 2.8,
+    "current_a": 40
+  }
+]

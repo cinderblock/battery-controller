@@ -13,6 +13,7 @@
 import { decodeBase240, encodeBase240, isInfoPacket } from '../protocol/codec.ts';
 import { EbcDivisors, INFO_STATE_OFFSET, RxState } from '../protocol/constants.ts';
 import { logger } from '../utils/logger.ts';
+import { CapacityTracker, type CapacityState } from './capacity-tracker.ts';
 import type { SerialManager } from './serial.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -116,7 +117,7 @@ export interface RecoveryState {
   runId: number;
   testStartTime: number;
   energyMwh: number;
-  capacityWrapOffset: number;
+  capState: CapacityState;
   peakVoltage: number;
   minVoltage: number;
   peakCurrent: number;
@@ -155,9 +156,8 @@ export class DeviceSession {
   private maxTimeEcho = 0;
   private lastStateByte = 0;
 
-  // Capacity wrap detection — 2-byte base-240 maxes at 57,599 mAh
-  private prevDeviceCapMah = 0;
-  private capacityWrapOffset = 0;
+  // Capacity tracking with high-capacity encoding correction
+  private capTracker = new CapacityTracker();
 
   // Test timing
   private testStartTime = 0;
@@ -331,8 +331,7 @@ export class DeviceSession {
         if (recovery) {
           this.testStartTime = recovery.testStartTime;
           this.energyMwh = recovery.energyMwh;
-          this.capacityWrapOffset = recovery.capacityWrapOffset;
-          this.prevDeviceCapMah = capacityMah; // current raw value, avoids false wrap trigger
+          this.capTracker.restore(recovery.capState, capacityMah);
           this.peakVoltage = recovery.peakVoltage;
           this.minVoltage = recovery.minVoltage;
           this.peakCurrent = recovery.peakCurrent;
@@ -370,13 +369,17 @@ export class DeviceSession {
     this.maxTimeEcho = maxTimeEcho;
     this.lastStateByte = stateByte;
 
-    // Detect capacity wrap (2-byte base-240 max = 57,599 mAh)
-    if (this.isRunning() && capacityMah < this.prevDeviceCapMah - 1000) {
-      this.capacityWrapOffset += 57_600;
-      logger.info(`Capacity wrap: ${this.prevDeviceCapMah} → ${capacityMah}, offset now ${this.capacityWrapOffset}`);
+    // Apply high-capacity encoding correction (see capacity-tracker.ts)
+    // Only update capacity when running — idle packets contain stale device register values
+    if (this.isRunning()) {
+      const prevCorrected = this.capacityMah;
+      this.capacityMah = this.capTracker.update(capacityMah, true);
+      if (this.capTracker.highCapMode && prevCorrected < this.capacityMah - 5000 && prevCorrected > 0) {
+        logger.info(
+          `High-cap transition: rawJump=${capacityMah}, trueCap=${this.capacityMah} (10 mAh/unit mode)`
+        );
+      }
     }
-    this.prevDeviceCapMah = capacityMah;
-    this.capacityMah = capacityMah + this.capacityWrapOffset;
 
     // Host-side energy integration (device bytes 8-9 are always 0 on A40L)
     if (this.isRunning() && this.lastEnergyUpdateTime > 0) {
@@ -423,8 +426,8 @@ export class DeviceSession {
       voltage,
       current: currentRaw,
       power: voltage * currentRaw,
-      capacityMah,
-      capacityAh: capacityMah / 1000,
+      capacityMah: this.capacityMah,
+      capacityAh: this.capacityMah / 1000,
       energyMwh: this.energyMwh,
       energyWh: this.energyMwh / 1000,
       elapsedS,
@@ -452,8 +455,8 @@ export class DeviceSession {
         this.testStartTime = Date.now();
         this.lastEnergyUpdateTime = Date.now();
         this.energyMwh = 0;
-        this.capacityWrapOffset = 0;
-        this.prevDeviceCapMah = 0;
+        this.capTracker.reset();
+        this.capacityMah = 0;
         this.peakVoltage = 0;
         this.minVoltage = Infinity;
         this.peakCurrent = 0;
