@@ -1322,9 +1322,7 @@ html, body {
 .cap-chart-tooltip {
   position: absolute;
   z-index: 20;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(0, 0, 0, 0.92);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 10px;

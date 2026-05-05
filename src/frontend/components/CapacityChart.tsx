@@ -28,11 +28,46 @@ const DASH_PATTERNS: Record<string, number[]> = {
 
 // ── Tooltip helpers ───────────────────────────────────────────────
 
-function createTooltipEl(): HTMLDivElement {
-  const el = document.createElement('div');
-  el.className = 'cap-chart-tooltip';
-  el.style.display = 'none';
-  return el;
+const MAX_TOOLTIP_ROWS = 16;
+
+interface TooltipDOM {
+  root: HTMLDivElement;
+  header: HTMLDivElement;
+  rows: { el: HTMLDivElement; swatch: HTMLSpanElement; label: HTMLSpanElement; value: HTMLSpanElement }[];
+}
+
+function createTooltipEl(): TooltipDOM {
+  const root = document.createElement('div');
+  root.className = 'cap-chart-tooltip';
+  root.style.display = 'none';
+
+  const header = document.createElement('div');
+  header.className = 'cap-tt-header';
+  root.appendChild(header);
+
+  const rows: TooltipDOM['rows'] = [];
+  for (let i = 0; i < MAX_TOOLTIP_ROWS; i++) {
+    const el = document.createElement('div');
+    el.className = 'cap-tt-row';
+    el.style.display = 'none';
+
+    const swatch = document.createElement('span');
+    swatch.className = 'cap-tt-swatch';
+    el.appendChild(swatch);
+
+    const label = document.createElement('span');
+    label.className = 'cap-tt-label';
+    el.appendChild(label);
+
+    const value = document.createElement('span');
+    value.className = 'cap-tt-val';
+    el.appendChild(value);
+
+    root.appendChild(el);
+    rows.push({ el, swatch, label, value });
+  }
+
+  return { root, header, rows };
 }
 
 // ── Component ──────────────────────────────────────────────────────
@@ -40,7 +75,7 @@ function createTooltipEl(): HTMLDivElement {
 export function CapacityChart({ data, seriesInfo, thresholds = [], className }: CapacityChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const uplotRef = useRef<uPlot | null>(null);
-  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const tooltipRef = useRef<TooltipDOM | null>(null);
   const prevSeriesKeyRef = useRef<string>('');
 
   // Keep thresholds in a ref so the draw hook reads them without causing rebuild
@@ -189,75 +224,59 @@ export function CapacityChart({ data, seriesInfo, thresholds = [], className }: 
             const { idx } = u.cursor;
 
             if (idx == null || idx < 0) {
-              tooltip.style.display = 'none';
+              tooltip.root.style.display = 'none';
               return;
             }
 
             const info = seriesInfoRef.current;
             const xVal = u.data[0][idx];
             if (xVal == null) {
-              tooltip.style.display = 'none';
+              tooltip.root.style.display = 'none';
               return;
             }
 
-            // Collect values for all series at this index (measured first, then reference)
-            const entries: { label: string; value: string; color: string; isRef: boolean }[] = [];
+            tooltip.header.textContent = `${(xVal as number).toFixed(1)}%`;
+
+            // Fill rows: measured series first, then reference curves (dimmed)
+            let rowIdx = 0;
             for (let si = 0; si < info.length; si++) {
               const s = info[si];
-              const val = u.data[si + 1]?.[idx]; // +1 because data[0] is X
+              const val = u.data[si + 1]?.[idx];
               if (val == null) continue;
+              if (rowIdx >= tooltip.rows.length) break;
 
               const unit = s.metric === 'current' ? 'A' : 'V';
               const decimals = s.metric === 'current' ? 1 : 3;
-              entries.push({
-                label: s.label,
-                value: `${(val as number).toFixed(decimals)} ${unit}`,
-                color: s.color,
-                isRef: s.isReference,
-              });
+              const row = tooltip.rows[rowIdx];
+              row.swatch.style.background = s.color;
+              row.label.textContent = s.label;
+              row.value.textContent = `${(val as number).toFixed(decimals)} ${unit}`;
+              row.el.style.display = '';
+              row.el.style.opacity = s.isReference ? '0.6' : '';
+              rowIdx++;
             }
 
-            if (entries.length === 0) {
-              tooltip.style.display = 'none';
+            if (rowIdx === 0) {
+              tooltip.root.style.display = 'none';
               return;
             }
 
-            // Position tooltip near cursor
+            for (let i = rowIdx; i < tooltip.rows.length; i++) {
+              tooltip.rows[i].el.style.display = 'none';
+            }
+
+            // Position tooltip, flipping to left side when cursor is past 60%
             const cx = u.cursor.left ?? 0;
             const cy = u.cursor.top ?? 0;
             const plotLeft = u.bbox.left / devicePixelRatio;
             const plotTop = u.bbox.top / devicePixelRatio;
+            const plotWidth = u.bbox.width / devicePixelRatio;
+            const showLeft = cx > plotWidth * 0.6;
 
-            tooltip.style.display = 'block';
-            tooltip.style.left = `${plotLeft + cx + 12}px`;
-            tooltip.style.top = `${plotTop + cy - 10}px`;
-
-            // Build tooltip HTML — measured runs first, then reference curves
-            const measured = entries.filter(e => !e.isRef);
-            const refs = entries.filter(e => e.isRef);
-            let html = `<div class="cap-tt-header">${(xVal as number).toFixed(1)}%</div>`;
-            for (const e of measured) {
-              html += `<div class="cap-tt-row"><span class="cap-tt-swatch" style="background:${e.color}"></span><span class="cap-tt-label">${e.label}</span><span class="cap-tt-val">${e.value}</span></div>`;
-            }
-            if (refs.length > 0) {
-              for (const e of refs) {
-                html += `<div class="cap-tt-row" style="opacity:0.6"><span class="cap-tt-swatch" style="background:${e.color}"></span><span class="cap-tt-label">${e.label}</span><span class="cap-tt-val">${e.value}</span></div>`;
-              }
-            }
-            tooltip.innerHTML = html;
-
-            // Keep tooltip within container bounds
-            const container = u.root.parentElement;
-            if (container) {
-              const containerRect = container.getBoundingClientRect();
-              const tooltipRect = tooltip.getBoundingClientRect();
-              if (tooltipRect.right > containerRect.right - 4) {
-                tooltip.style.left = `${plotLeft + cx - tooltipRect.width - 12}px`;
-              }
-              if (tooltipRect.bottom > containerRect.bottom - 4) {
-                tooltip.style.top = `${plotTop + cy - tooltipRect.height + 10}px`;
-              }
-            }
+            tooltip.root.style.display = 'block';
+            tooltip.root.style.left = `${plotLeft + cx + (showLeft ? -12 : 12)}px`;
+            tooltip.root.style.top = `${plotTop + cy - 10}px`;
+            tooltip.root.style.transform = showLeft ? 'translateX(-100%)' : '';
           },
         ],
       },
@@ -269,10 +288,10 @@ export function CapacityChart({ data, seriesInfo, thresholds = [], className }: 
     const container = containerRef.current;
     if (!container) return;
     const tt = createTooltipEl();
-    container.appendChild(tt);
+    container.appendChild(tt.root);
     tooltipRef.current = tt;
     return () => {
-      tt.remove();
+      tt.root.remove();
       tooltipRef.current = null;
     };
   }, []);
