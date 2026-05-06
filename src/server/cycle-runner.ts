@@ -67,6 +67,24 @@ export interface StepLoop {
 
 export type CycleStep = StepDCC | StepDCP | StepCCV | StepWait | StepLoop;
 
+/** Short parameter summary for a step, for timeline labels */
+function stepParamLabel(step: StepDCC | StepDCP | StepCCV | StepWait): string {
+  switch (step.type) {
+    case 'd-cc': return `${step.currentA}A ${step.cutoffV}V`;
+    case 'd-cp': return `${step.powerW}W ${step.cutoffV}V`;
+    case 'c-cv': return `${step.currentA}A ${step.targetV}V ${step.cutoffCurrentA}A`;
+    case 'wait': {
+      const s = step.durationS;
+      if (s >= 3600) {
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        return m > 0 ? `${h}h${m}m` : `${h}h`;
+      }
+      return `${Math.floor(s / 60)}m`;
+    }
+  }
+}
+
 // ── V1 migration ──────────────────────────────────────────────────
 
 interface V1Loop { type: 'loop'; count: number; startIndex: number; endIndex: number; }
@@ -128,6 +146,8 @@ export interface CycleState {
   stepDurations: (number | null)[];
   /** Expected duration (seconds) per step, for proportional timeline widths */
   stepExpectedS: number[];
+  /** Short parameter summary per step (e.g. "40A 2.8V", "3.8V 2A", "30m") */
+  stepLabels: string[];
 }
 
 type CycleListener = (state: CycleState) => void;
@@ -228,6 +248,7 @@ export class CycleRunner {
       stepCapacities: this.stepCapacities,
       stepDurations: this.stepDurations,
       stepExpectedS: this.stepExpectedS,
+      stepLabels: this.execPlan.map(e => stepParamLabel(e.step)),
     };
   }
 

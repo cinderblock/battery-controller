@@ -261,16 +261,26 @@ export function TopBar() {
               const isFuture = i > activeIdx;
               const fillPct = isDone ? 100 : isActive ? activeProgressPct : 0;
 
-              // Build label: completed steps show final capacity/duration,
-              // active step shows live capacity from the current reading
-              const parts: string[] = [];
-              if (isActive && reading && stepType !== 'wait') {
-                parts.push(`${reading.capacityAh.toFixed(1)}Ah`);
-              } else if (capMah != null) {
-                parts.push(`${(capMah / 1000).toFixed(1)}Ah`);
+              // Build label per step state:
+              // - Done: final capacity + duration
+              // - Active: live capacity + live elapsed time
+              // - Future: step parameters from sequence definition
+              let label = '';
+              if (isFuture) {
+                label = cycleState.stepLabels?.[i] ?? '';
+              } else {
+                const parts: string[] = [];
+                if (isActive && reading && stepType !== 'wait') {
+                  parts.push(`${reading.capacityAh.toFixed(1)}Ah`);
+                  parts.push(formatElapsed(reading.elapsedS));
+                } else if (isActive && stepType === 'wait' && waitRemaining !== null) {
+                  parts.push(formatCountdown(waitRemaining));
+                } else {
+                  if (capMah != null) parts.push(`${(capMah / 1000).toFixed(1)}Ah`);
+                  if (durS != null) parts.push(formatElapsed(durS));
+                }
+                label = parts.join(' · ');
               }
-              if (durS != null) parts.push(formatElapsed(durS));
-              const label = parts.join(' · ');
 
               return (
                 <div

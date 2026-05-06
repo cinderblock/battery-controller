@@ -132,6 +132,7 @@ export interface CycleState {
   stepCapacities: (number | null)[];
   stepDurations: (number | null)[];
   stepExpectedS: number[];
+  stepLabels?: string[];
 }
 
 export interface WsCycleState {
