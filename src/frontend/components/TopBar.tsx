@@ -3,10 +3,10 @@
  *
  * Shows: connection dot (pulses on each packet, dims when stale),
  * device state badge, condensed live readings with run timer,
- * and a bridge mode toggle for proxying the serial port to EB Tester.
+ * and cycle timeline progress bar.
  */
 
-import { useState, useEffect, useRef, useReducer } from 'react';
+import { useEffect, useRef, useReducer, useState } from 'react';
 import { useSession } from '../hooks/useDeviceSession.ts';
 import type { DeviceMode } from '../api-client.ts';
 
@@ -68,9 +68,8 @@ const MODE_CLASSES: Record<DeviceMode, string> = {
 };
 
 export function TopBar() {
-  const { state, enableBridge, disableBridge } = useSession();
+  const { state } = useSession();
   const { wsConnected, serialConnected, deviceResponsive, mode, reading, pendingCommand, bridgeActive, cycleState, activeRunMaxTimeMin } = state;
-  const [bridgeLoading, setBridgeLoading] = useState(false);
   const [, forceTick] = useReducer((x: number) => x + 1, 0);
 
   const isRunning = mode === 'd-cc' || mode === 'd-cp' || mode === 'c-cv';
@@ -119,21 +118,6 @@ export function TopBar() {
     : readingStale || (!deviceResponsive && !bridgeActive) ? 'conn-warn'
     : 'conn-ok';
   const flashClass = readingFlash && connClass === 'conn-ok' ? ' conn-flash' : '';
-
-  async function toggleBridge() {
-    setBridgeLoading(true);
-    try {
-      if (bridgeActive) {
-        await disableBridge();
-      } else {
-        await enableBridge();
-      }
-    } catch (err) {
-      console.error('Bridge toggle failed:', err);
-    } finally {
-      setBridgeLoading(false);
-    }
-  }
 
   return (
     <div className="top-bar-wrapper">
@@ -226,23 +210,11 @@ export function TopBar() {
           </div>
         )}
 
-        <button
-          className={`bridge-toggle ${bridgeActive ? 'bridge-active' : ''}`}
-          onClick={toggleBridge}
-          disabled={bridgeLoading || isRunning}
-          title={
-            isRunning ? 'Cannot enable bridge while a test is running'
-              : bridgeActive ? 'Disable bridge mode — return serial to this app'
-              : 'Enable bridge mode — proxy serial to EB Tester via TCP'
-          }
-        >
-          {bridgeLoading ? '...' : bridgeActive ? 'EB' : 'EB'}
-        </button>
       </header>
 
       {bridgeActive && (
         <div className="disconnect-banner disconnect-bridge">
-          Bridge mode — serial port proxied to EB Tester (TCP {49600})
+          Serial proxy active — forwarding to TCP {49600}
         </div>
       )}
       {!wsConnected && (
@@ -284,20 +256,26 @@ export function TopBar() {
               const durS = cycleState.stepDurations?.[i];
               const flexWeight = cycleState.stepExpectedS?.[i] ?? 1;
 
-              // Build label parts
-              const parts: string[] = [];
-              if (capMah != null) parts.push(`${(capMah / 1000).toFixed(1)}Ah`);
-              if (durS != null) parts.push(formatElapsed(durS));
-              const label = parts.join(' · ');
-
               const isDone = i < activeIdx;
               const isActive = i === activeIdx;
+              const isFuture = i > activeIdx;
               const fillPct = isDone ? 100 : isActive ? activeProgressPct : 0;
+
+              // Build label: completed steps show final capacity/duration,
+              // active step shows live capacity from the current reading
+              const parts: string[] = [];
+              if (isActive && reading && stepType !== 'wait') {
+                parts.push(`${reading.capacityAh.toFixed(1)}Ah`);
+              } else if (capMah != null) {
+                parts.push(`${(capMah / 1000).toFixed(1)}Ah`);
+              }
+              if (durS != null) parts.push(formatElapsed(durS));
+              const label = parts.join(' · ');
 
               return (
                 <div
                   key={i}
-                  className={`cycle-timeline-step ${STEP_TIMELINE_CLASSES[stepType] ?? 'step-unknown'}${isDone ? ' step-done' : ''}${isActive ? ' step-active' : ''}`}
+                  className={`cycle-timeline-step ${STEP_TIMELINE_CLASSES[stepType] ?? 'step-unknown'}${isDone ? ' step-done' : ''}${isActive ? ' step-active' : ''}${isFuture ? ' step-future' : ''}`}
                   style={{ flex: flexWeight }}
                   title={`Step ${i + 1}: ${STEP_TIMELINE_LABELS[stepType] ?? stepType}${label ? ` — ${label}` : ''}`}
                 >

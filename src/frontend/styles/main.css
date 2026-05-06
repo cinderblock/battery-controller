@@ -67,6 +67,7 @@ html, body {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  image-rendering: pixelated;
 }
 
 .camera-img.camera-error {
@@ -97,18 +98,19 @@ html, body {
 .top-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   padding: 6px 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   min-height: 36px;
   flex-shrink: 0;
+  gap: 0;
 }
 
 .top-bar-left {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .conn-dot {
@@ -137,6 +139,7 @@ html, body {
   border-radius: 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  white-space: nowrap;
 }
 
 .badge-idle { background: rgba(255,255,255,0.08); color: var(--text-dim); }
@@ -150,11 +153,29 @@ html, body {
   gap: 12px;
   align-items: baseline;
   margin-left: 12px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.top-bar-readings::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 24px;
+  background: linear-gradient(to right, transparent, var(--surface));
+  pointer-events: none;
+  flex-shrink: 0;
 }
 
 .reading-val {
   font-family: "SF Mono", "Consolas", "Courier New", monospace;
   font-size: 13px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .reading-num { color: var(--text); }
@@ -203,6 +224,8 @@ html, body {
   gap: 8px;
   margin-left: auto;
   padding-left: 12px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .cycle-name {
@@ -271,6 +294,11 @@ html, body {
   text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
 }
 
+/* Future steps: desaturated tint of their step color */
+.cycle-timeline-step.step-future.step-charge    { background: rgba(79, 195, 247, 0.12); }
+.cycle-timeline-step.step-future.step-discharge { background: rgba(255, 152, 0, 0.12); }
+.cycle-timeline-step.step-future.step-wait      { background: rgba(255, 255, 255, 0.04); }
+
 /* Done steps: fill is full width, slightly dimmed */
 .cycle-timeline-step.step-done .step-fill { opacity: 0.5; }
 
@@ -282,40 +310,15 @@ html, body {
   to { transform: translateY(0); opacity: 1; }
 }
 
-/* ── Bridge toggle button ──────────────────────────────────────── */
+/* ── Bridge button (active state) ─────────────────────────────── */
 
-.bridge-toggle {
-  background: var(--surface);
-  color: var(--text-dim);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  letter-spacing: 0.5px;
-  transition: all 0.2s;
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.bridge-toggle:hover:not(:disabled) {
-  background: var(--border);
-  color: var(--text);
-}
-
-.bridge-toggle:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.bridge-toggle.bridge-active {
+.btn-bridge-active {
   background: #1565c0;
   color: #fff;
   border-color: #1565c0;
 }
 
-.bridge-toggle.bridge-active:hover:not(:disabled) {
+.btn-bridge-active:hover:not(:disabled) {
   background: #1976d2;
 }
 

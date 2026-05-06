@@ -37,8 +37,9 @@ import { CameraView } from '../components/CameraView.tsx';
 // ── Component ──────────────────────────────────────────────────────
 
 export function ChartView() {
-  const { state, stopTest } = useSession();
+  const { state, stopTest, enableBridge, disableBridge } = useSession();
   const isTestActive = state.mode === 'd-cc' || state.mode === 'd-cp' || state.mode === 'c-cv';
+  const [bridgeLoading, setBridgeLoading] = useState(false);
 
   // ── Layout refs ─────────────────────────────────────────────
   const chartViewRef = useRef<HTMLDivElement>(null);
@@ -275,6 +276,18 @@ export function ChartView() {
     ? `${fleetSummary.avgHealthPct.toFixed(0)}%`
     : null;
 
+  async function toggleBridge() {
+    setBridgeLoading(true);
+    try {
+      if (state.bridgeActive) await disableBridge();
+      else await enableBridge();
+    } catch (err) {
+      console.error('Bridge toggle failed:', err);
+    } finally {
+      setBridgeLoading(false);
+    }
+  }
+
   return (
     <div className="chart-view" ref={chartViewRef}>
       <CameraView onVisibilityChange={handleCameraVisibility} />
@@ -365,6 +378,19 @@ export function ChartView() {
           )}
 
           <a href="/sequences" className="btn btn-link">Sequences</a>
+
+          <button
+            className={`btn ${state.bridgeActive ? 'btn-bridge-active' : 'btn-link'}`}
+            onClick={toggleBridge}
+            disabled={bridgeLoading || isTestActive}
+            title={
+              isTestActive ? 'Cannot enable bridge while a test is running'
+                : state.bridgeActive ? 'Disable bridge mode — return serial to this app'
+                : 'Enable serial proxy — forward serial port over TCP'
+            }
+          >
+            {bridgeLoading ? '...' : state.bridgeActive ? 'Proxy On' : 'Serial Proxy'}
+          </button>
         </div>
 
         <LegendPanel
