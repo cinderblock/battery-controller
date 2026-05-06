@@ -31,6 +31,7 @@ const ALL_METRICS: { key: MetricKey; label: string; color: string }[] = [
   { key: 'current', label: 'Current', color: '#81c784' },
   { key: 'power', label: 'Power', color: '#ffb74d' },
   { key: 'capacity', label: 'Capacity', color: '#ba68c8' },
+  { key: 'temperature', label: 'Temperature', color: '#f44336' },
 ];
 
 // ── Helpers ────────────────────────────────────────────────────────

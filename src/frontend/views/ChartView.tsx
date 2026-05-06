@@ -22,8 +22,11 @@ import {
   mergeActiveRunWithLive,
   compactDataToChartRun,
   runToCapacityDomain,
+  addTemperatureSeries,
   type ChartRun,
+  type MergedChartData,
   type MetricKey,
+  type TempDataPoint,
   type ThresholdLine,
 } from '../lib/chart-data.ts';
 import { getDefaultReferenceCurves } from '../lib/lfp-reference-curves.ts';
@@ -65,6 +68,9 @@ export function ChartView() {
 
   // ── Active run metadata (for threshold lines) ────────────────
   const [activeRunMeta, setActiveRunMeta] = useState<TestRun | null>(null);
+
+  // ── Temperature data per run ────────────────────────────────
+  const [tempDataByRun, setTempDataByRun] = useState<Map<number, TempDataPoint[]>>(new Map());
 
   // ── Fleet summary ────────────────────────────────────────────
   const [fleetSummary, setFleetSummary] = useState<GroupFleetSummary | null>(null);
@@ -137,7 +143,7 @@ export function ChartView() {
   // ── Load historical runs ──────────────────────────────────────
   const loadRuns = useCallback(() => {
     return api<TestRunWithData[]>('/api/runs/recent?limit=100&withData=1')
-      .then(runsWithData => {
+      .then(async runsWithData => {
         const chartRuns: ChartRun[] = [];
         for (const rwd of runsWithData) {
           if (rwd.d.length === 0) continue;
@@ -146,6 +152,16 @@ export function ChartView() {
         }
         setRuns(chartRuns);
         setVisibleRuns(new Set(chartRuns.map(r => r.id)));
+
+        // Fetch temperature data for all runs in parallel
+        const tempMap = new Map<number, TempDataPoint[]>();
+        const tempFetches = chartRuns.map(run =>
+          api<TempDataPoint[]>(`/api/runs/${run.id}/temperature`)
+            .then(data => { if (data.length > 0) tempMap.set(run.id, data); })
+            .catch(() => {})
+        );
+        await Promise.all(tempFetches);
+        setTempDataByRun(tempMap);
       })
       .catch(() => {});
   }, []);
@@ -172,17 +188,33 @@ export function ChartView() {
   }, [isTestActive, prevActiveRef, selectedGroupId, loadRuns]);
 
   // ── Merge data for chart ──────────────────────────────────────
-  const chartData = useMemo(
-    () => mergeRunsForChart(
+  const chartData = useMemo((): MergedChartData => {
+    const base = mergeRunsForChart(
       runs,
       state.livePoints,
       visibleRuns,
       visibleMetrics,
       isTestActive,
       state.activeRunId,
-    ),
-    [runs, state.livePoints, visibleRuns, visibleMetrics, isTestActive, state.activeRunId]
-  );
+    );
+
+    // Merge temperature data if temperature metric is visible
+    if (!visibleMetrics.has('temperature')) return base;
+
+    // Collect temperature data from all visible runs
+    const allTempPoints: TempDataPoint[] = [];
+    for (const run of runs) {
+      if (visibleRuns && !visibleRuns.has(run.id)) continue;
+      const runTemp = tempDataByRun.get(run.id);
+      if (runTemp) allTempPoints.push(...runTemp);
+    }
+
+    // Add live temperature readings for the active run
+    const liveTemp = isTestActive ? state.tempReadings : undefined;
+    const liveElapsed = isTestActive && state.reading ? state.reading.elapsedS : undefined;
+
+    return addTemperatureSeries(base, allTempPoints, liveTemp, liveElapsed);
+  }, [runs, state.livePoints, visibleRuns, visibleMetrics, isTestActive, state.activeRunId, tempDataByRun, state.tempReadings, state.reading]);
 
   // ── Capacity chart data ───────────────────────────────────────
   const selectedGroup = cellGroups.find(g => g.id === selectedGroupId) ?? null;
@@ -244,6 +276,29 @@ export function ChartView() {
     return lines;
   }, [activeRunMeta]);
 
+  // ── Axis alignment (combined V+I on left axis) ────────────────
+  const axisAlignment = useMemo(() => {
+    if (!activeRunMeta || !isTestActive) return null;
+
+    const cutoffV = activeRunMeta.setpoint_cutoff_v;
+    const maxCurrent = activeRunMeta.setpoint_current_a;
+    if (cutoffV == null || maxCurrent == null) return null;
+
+    // For charge: highV is the target voltage; for discharge: use peak or a reasonable max
+    let highV: number;
+    if (activeRunMeta.mode === 'c-cv' && activeRunMeta.setpoint_voltage_v != null) {
+      highV = activeRunMeta.setpoint_voltage_v;
+    } else {
+      // For discharge, use the initial/peak voltage or a sensible default
+      highV = activeRunMeta.peak_voltage_v ?? 3.65;
+    }
+
+    // Sanity: need a meaningful spread
+    if (highV - cutoffV < 0.1) return null;
+
+    return { lowV: cutoffV, highV, maxA: maxCurrent };
+  }, [activeRunMeta, isTestActive]);
+
   // ── Toggle handlers ──────────────────────────────────────────
   const toggleMetric = useCallback((metric: MetricKey) => {
     setVisibleMetrics(prev => {
@@ -300,7 +355,7 @@ export function ChartView() {
             <div className="chart-loading">Loading runs...</div>
           ) : chartMode === 'time' ? (
             chartData.data[0]?.length ? (
-              <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} thresholds={thresholds} />
+              <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} thresholds={thresholds} axisAlignment={axisAlignment} />
             ) : (
               <div className="chart-empty">
                 {runs.length === 0

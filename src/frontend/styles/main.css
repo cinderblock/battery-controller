@@ -2042,3 +2042,380 @@ html, body {
   .bottom-bar { padding: 6px 8px; }
   .legend-panel { width: 100%; }
 }
+
+/* ── Temperature Settings ─────────────────────────────────────── */
+
+.temp-settings {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px;
+  color: var(--text);
+}
+
+.temp-settings-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.temp-settings-header a {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.temp-settings-header h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.temp-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.temp-section h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+
+.temp-section h3 {
+  font-size: 14px;
+  font-weight: 500;
+  margin: 12px 0 8px;
+}
+
+.temp-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* Channel list */
+.temp-channel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.temp-channel-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.temp-channel-card.disabled {
+  opacity: 0.5;
+}
+
+.temp-channel-card.unplugged {
+  border-color: var(--warning);
+}
+
+.temp-channel-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.temp-channel-name {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.temp-channel-source {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.temp-channel-reading {
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 60px;
+  text-align: right;
+}
+
+.temp-channel-alert {
+  font-size: 11px;
+  color: var(--warning);
+}
+
+.temp-channel-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.temp-channel-actions button {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.temp-channel-actions button:hover {
+  background: var(--border);
+}
+
+.btn-danger {
+  color: var(--error) !important;
+  border-color: var(--error) !important;
+}
+
+/* Channel edit form */
+.temp-channel-edit {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+
+.temp-channel-edit input {
+  flex: 1;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.temp-channel-edit-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.temp-channel-edit-actions button {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: var(--accent);
+  border: none;
+  color: #000;
+  cursor: pointer;
+}
+
+.temp-channel-edit-actions button:last-child {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+/* HA connection */
+.temp-ha-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.temp-ha-status button {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.temp-ha-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.temp-ha-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.temp-ha-form input {
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.temp-ha-form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.temp-ha-form-actions button {
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.temp-ha-form-actions button:first-child {
+  background: var(--accent);
+  color: #000;
+  border: none;
+}
+
+.temp-ha-result {
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
+.temp-ha-result.success { color: var(--success); }
+.temp-ha-result.error { color: var(--error); }
+
+/* HA entity browser */
+.temp-ha-entities {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.temp-entity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.temp-entity-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.temp-entity-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.temp-entity-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  min-width: 50px;
+  text-align: right;
+}
+
+.temp-entity-id {
+  color: var(--text-dim);
+  font-size: 11px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.temp-entity-row button {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--accent);
+  border: none;
+  color: #000;
+  cursor: pointer;
+}
+
+/* Live temperature display in top bar */
+.temp-live-readings {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.temp-live-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 6px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.temp-live-chip .temp-label {
+  color: var(--text-dim);
+}
+
+.temp-live-chip .temp-value {
+  font-weight: 600;
+}
+
+.temp-live-chip.alert {
+  background: var(--error);
+  color: #fff;
+}
+
+/* Temperature alerts in StartModal */
+.wizard-temp-alerts {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.wizard-section-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.wizard-temp-alert-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wizard-temp-alert-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wizard-temp-alert-name {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wizard-temp-alert-row input {
+  width: 70px;
+  padding: 4px 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+  text-align: right;
+}
+
+.wizard-temp-alert-unit {
+  font-size: 12px;
+  color: var(--text-dim);
+}

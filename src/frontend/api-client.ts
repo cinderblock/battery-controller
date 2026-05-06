@@ -59,6 +59,10 @@ export interface WsSnapshot {
     locked: boolean;
     bridgeActive?: boolean;
     cycleState?: CycleState;
+    temperature?: {
+      channels: TempChannelConfig[];
+      readings: TempChannelReading[];
+    };
   };
 }
 
@@ -145,6 +149,63 @@ export interface WsDeviceResponsive {
   data: { responsive: boolean };
 }
 
+// ── Temperature types ─────────────────────────────────────────────
+
+export interface TempChannelReading {
+  channelId: string;
+  channelDbId: number;
+  name: string | null;
+  tempC: number;
+  alertMaxC: number | null;
+}
+
+export interface TempChannelConfig {
+  id: string;
+  name: string | null;
+  sourceType: 'w1' | 'http';
+  enabled: boolean;
+  alertMaxC: number | null;
+  firstSeenAt: string;
+  lastSeenAt?: string | null;
+  unpluggedAt?: string | null;
+  // w1-specific
+  deviceId?: string;
+  // http-specific
+  entityId?: string;
+}
+
+export interface WsTemperature {
+  type: 'temperature';
+  data: { readings: TempChannelReading[] };
+}
+
+export interface WsTempAlert {
+  type: 'tempAlert';
+  data: {
+    channelId: string;
+    name: string | null;
+    tempC: number;
+    alertMaxC: number;
+  };
+}
+
+export interface WsTempChannelDiscovery {
+  type: 'tempChannelDiscovered' | 'tempChannelUnplugged' | 'tempChannelReconnected';
+  data: {
+    channelId: string;
+    deviceId?: string;
+    name: string | null;
+  };
+}
+
+export interface HaEntity {
+  entityId: string;
+  name: string;
+  state: string;
+  unit: string | null;
+  deviceClass: string | null;
+}
+
 export type WsMessage =
   | WsSnapshot
   | WsReading
@@ -158,7 +219,10 @@ export type WsMessage =
   | WsLockState
   | WsBridgeState
   | WsDeviceResponsive
-  | WsCycleState;
+  | WsCycleState
+  | WsTemperature
+  | WsTempAlert
+  | WsTempChannelDiscovery;
 
 // ── REST entity types ──────────────────────────────────────────────
 

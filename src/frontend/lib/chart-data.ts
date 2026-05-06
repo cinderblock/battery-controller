@@ -10,13 +10,13 @@
  * and undefined elsewhere. uPlot skips undefined gaps in series.
  */
 
-import type { DataPoint, TestRun } from '../api-client.ts';
+import type { DataPoint, TempChannelReading, TestRun } from '../api-client.ts';
 import type { LivePoint } from '../hooks/useDeviceSession.ts';
 import { ocvToSoc, type ReferenceCurve } from './lfp-reference-curves.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
 
-export type MetricKey = 'voltage' | 'current' | 'power' | 'capacity';
+export type MetricKey = 'voltage' | 'current' | 'power' | 'capacity' | 'temperature';
 
 export interface ChartRun {
   id: number;
@@ -42,6 +42,8 @@ export interface ChartSeriesInfo {
   color: string;
   /** Whether this is the live run */
   isLive: boolean;
+  /** Temperature channel ID (only for temperature series) */
+  channelId?: string;
 }
 
 /** Horizontal threshold line drawn on the chart (cutoff voltage, target current, etc.) */
@@ -86,6 +88,7 @@ const METRIC_ALPHA: Record<MetricKey, number> = {
   current: 0.7,
   power: 0.5,
   capacity: 0.6,
+  temperature: 0.9,
 };
 
 function colorWithAlpha(hex: string, alpha: number): string {
@@ -306,7 +309,8 @@ export function mergeRunsForChart(
 
   const data: (number | null | undefined)[][] = [xValues];
   const seriesInfo: ChartSeriesInfo[] = [];
-  const metricsArr = Array.from(visibleMetrics);
+  // Temperature is handled separately by addTemperatureSeries — exclude here
+  const metricsArr = Array.from(visibleMetrics).filter(m => m !== 'temperature');
   const desatAlpha = isTestActive ? 0.20 : 1.0;
 
   // Add series for each historical run
@@ -365,6 +369,115 @@ export function mergeRunsForChart(
   }
 
   return { data, seriesInfo };
+}
+
+// ── Temperature series ─────────────────────────────────────────────
+
+const TEMP_COLORS = [
+  '#f44336', // red (battery)
+  '#ff9800', // orange (charger)
+  '#4fc3f7', // blue (ambient)
+  '#66bb6a', // green (weather)
+  '#ab47bc', // purple
+  '#26c6da', // cyan
+];
+
+export interface TempDataPoint {
+  channel_key: string;
+  channel_name: string | null;
+  elapsed_s: number;
+  temp_c: number;
+}
+
+/**
+ * Add temperature series to an existing merged chart dataset.
+ * Temperature data comes from a separate API endpoint and is
+ * merged into the same time axis.
+ */
+export function addTemperatureSeries(
+  existing: MergedChartData,
+  tempData: TempDataPoint[],
+  liveTempReadings?: TempChannelReading[],
+  liveElapsedS?: number,
+): MergedChartData {
+  if (tempData.length === 0 && (!liveTempReadings || liveTempReadings.length === 0)) {
+    return existing;
+  }
+
+  // Group by channel
+  const byChannel = new Map<string, { name: string | null; points: { t: number; v: number }[] }>();
+  for (const p of tempData) {
+    let ch = byChannel.get(p.channel_key);
+    if (!ch) {
+      ch = { name: p.channel_name, points: [] };
+      byChannel.set(p.channel_key, ch);
+    }
+    ch.points.push({ t: p.elapsed_s, v: p.temp_c });
+  }
+
+  // Add live reading as the latest point for each channel
+  if (liveTempReadings && liveElapsedS != null) {
+    for (const r of liveTempReadings) {
+      let ch = byChannel.get(r.channelId);
+      if (!ch) {
+        ch = { name: r.name, points: [] };
+        byChannel.set(r.channelId, ch);
+      }
+      ch.points.push({ t: liveElapsedS, v: r.tempC });
+    }
+  }
+
+  if (byChannel.size === 0) return existing;
+
+  // Rebuild time index (existing X + temperature timestamps)
+  const xValues = existing.data[0] as number[];
+  const timeSet = new Set(xValues);
+  for (const ch of byChannel.values()) {
+    for (const p of ch.points) timeSet.add(p.t);
+  }
+  const newX = Array.from(timeSet).sort((a, b) => a - b);
+  const n = newX.length;
+
+  const timeIndex = new Map<number, number>();
+  for (let i = 0; i < n; i++) timeIndex.set(newX[i], i);
+
+  // Remap existing series to new X axis
+  const oldTimeIndex = new Map<number, number>();
+  for (let i = 0; i < xValues.length; i++) oldTimeIndex.set(xValues[i], i);
+
+  const newData: (number | null | undefined)[][] = [newX];
+  for (let s = 1; s < existing.data.length; s++) {
+    const oldSeries = existing.data[s];
+    const newSeries = new Array<number | null | undefined>(n).fill(undefined);
+    for (let i = 0; i < xValues.length; i++) {
+      const newIdx = timeIndex.get(xValues[i]);
+      if (newIdx !== undefined) newSeries[newIdx] = oldSeries[i];
+    }
+    newData.push(newSeries);
+  }
+
+  // Add temperature series
+  const newSeriesInfo = [...existing.seriesInfo];
+  let colorIdx = 0;
+  for (const [channelId, ch] of byChannel) {
+    const values = new Array<number | null | undefined>(n).fill(undefined);
+    for (const p of ch.points) {
+      const idx = timeIndex.get(p.t);
+      if (idx !== undefined) values[idx] = p.v;
+    }
+    newData.push(values);
+    newSeriesInfo.push({
+      runId: -2,
+      metric: 'temperature',
+      label: ch.name ?? channelId,
+      color: TEMP_COLORS[colorIdx % TEMP_COLORS.length],
+      isLive: false,
+      channelId,
+    });
+    colorIdx++;
+  }
+
+  return { data: newData, seriesInfo: newSeriesInfo };
 }
 
 // ── Time formatting ────────────────────────────────────────────────

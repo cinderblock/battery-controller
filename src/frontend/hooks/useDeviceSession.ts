@@ -17,6 +17,8 @@ import type {
   DeviceInfo,
   DeviceMode,
   PendingCommand,
+  TempChannelConfig,
+  TempChannelReading,
   TestStats,
 } from '../api-client.ts';
 import { api, apiPost } from '../api-client.ts';
@@ -50,6 +52,8 @@ export interface SessionState {
   cycleState: CycleState | null;
   livePoints: LivePoint[];
   stopping: boolean;
+  tempChannels: TempChannelConfig[];
+  tempReadings: TempChannelReading[];
 }
 
 const INITIAL_STATE: SessionState = {
@@ -68,6 +72,8 @@ const INITIAL_STATE: SessionState = {
   cycleState: null,
   livePoints: [],
   stopping: false,
+  tempChannels: [],
+  tempReadings: [],
 };
 
 // ── Context ───────────────────────────────────────────────────────
@@ -92,6 +98,7 @@ export interface StartTestParams {
   maxTimeMin?: number;
   cellId?: number;
   barcode?: string;
+  tempAlertOverrides?: Record<string, number>;
 }
 
 export interface ContinueTestParams {
@@ -176,6 +183,8 @@ export function useDeviceSessionManager(): SessionContextValue {
         bridgeActive: data.bridgeActive ?? false,
         cycleState: data.cycleState ?? null,
         livePoints: [],
+        tempChannels: data.temperature?.channels ?? [],
+        tempReadings: data.temperature?.readings ?? [],
       }));
       prevModeRef.current = data.mode;
     });
@@ -273,6 +282,37 @@ export function useDeviceSessionManager(): SessionContextValue {
       let data: any;
       try { data = JSON.parse(e.data); } catch { return; }
       setState(s => ({ ...s, cycleState: data }));
+    });
+
+    es.addEventListener('temperature', (e) => {
+      let data: any;
+      try { data = JSON.parse(e.data); } catch { return; }
+      setState(s => ({ ...s, tempReadings: data.readings ?? [] }));
+    });
+
+    es.addEventListener('tempChannelDiscovered', (e) => {
+      let data: any;
+      try { data = JSON.parse(e.data); } catch { return; }
+      // Refresh channels from server
+      api<TempChannelConfig[]>('/api/temp/channels').then(channels => {
+        setState(s => ({ ...s, tempChannels: channels }));
+      }).catch(() => {});
+    });
+
+    es.addEventListener('tempChannelUnplugged', (e) => {
+      let data: any;
+      try { data = JSON.parse(e.data); } catch { return; }
+      api<TempChannelConfig[]>('/api/temp/channels').then(channels => {
+        setState(s => ({ ...s, tempChannels: channels }));
+      }).catch(() => {});
+    });
+
+    es.addEventListener('tempChannelReconnected', (e) => {
+      let data: any;
+      try { data = JSON.parse(e.data); } catch { return; }
+      api<TempChannelConfig[]>('/api/temp/channels').then(channels => {
+        setState(s => ({ ...s, tempChannels: channels }));
+      }).catch(() => {});
     });
 
     esRef.current = es;

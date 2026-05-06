@@ -250,6 +250,7 @@ async function setupPiHardware() {
 
   await setRaspiConfig('do_serial_cons', false); // Disable console on serial port
   await setRaspiConfig('do_serial_hw', true); // Enable serial port hardware
+  await setRaspiConfig('do_onewire', true); // Enable 1-Wire interface (GPIO 4) for DS18B20 temp sensors
 
   // Add pi3-disable-bt overlay to free up UART for serial communication
   await configureBootConfig();

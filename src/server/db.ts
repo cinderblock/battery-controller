@@ -214,6 +214,36 @@ function runMigrations(db: Database): void {
           WHERE updated_at NOT LIKE '%Z' AND updated_at NOT LIKE '%+%';
       `,
     },
+    {
+      version: 5,
+      sql: `
+        -- Channel registry for temperature sensors (1-Wire + HTTP/HA)
+        CREATE TABLE temp_channels (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          channel_key TEXT UNIQUE NOT NULL,
+          name TEXT,
+          source_type TEXT NOT NULL,
+          source_config TEXT NOT NULL,
+          enabled INTEGER DEFAULT 1,
+          alert_max_c REAL,
+          first_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+          last_seen_at TEXT,
+          unplugged_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
+
+        -- Temperature readings (only stored during active runs/waits)
+        CREATE TABLE temperature_readings (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id INTEGER NOT NULL REFERENCES test_runs(id),
+          channel_id INTEGER NOT NULL REFERENCES temp_channels(id),
+          temp_c REAL NOT NULL,
+          elapsed_s REAL NOT NULL,
+          recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
+        CREATE INDEX idx_temp_readings_run ON temperature_readings(run_id, channel_id);
+      `,
+    },
   ];
 
   for (const migration of migrations) {
@@ -769,4 +799,118 @@ export function createCellGroup(
   return db.query<CellGroup, [number]>('SELECT * FROM cell_groups WHERE id = ?').get(
     result.lastInsertRowid as number
   )!;
+}
+
+// ── Temperature channel operations ─────────────────────────────────
+
+export interface TempChannel {
+  id: number;
+  channel_key: string;
+  name: string | null;
+  source_type: string;
+  source_config: string;
+  enabled: number;
+  alert_max_c: number | null;
+  first_seen_at: string;
+  last_seen_at: string | null;
+  unplugged_at: string | null;
+  created_at: string;
+}
+
+export function getTempChannels(): TempChannel[] {
+  return getDb().query<TempChannel, []>('SELECT * FROM temp_channels ORDER BY name, channel_key').all();
+}
+
+export function getTempChannelByKey(key: string): TempChannel | null {
+  return getDb().query<TempChannel, [string]>(
+    'SELECT * FROM temp_channels WHERE channel_key = ?'
+  ).get(key) ?? null;
+}
+
+export function upsertTempChannel(
+  channelKey: string,
+  sourceType: string,
+  sourceConfig: string,
+): TempChannel {
+  const db = getDb();
+  const existing = getTempChannelByKey(channelKey);
+  if (existing) return existing;
+
+  db.run(
+    `INSERT INTO temp_channels (channel_key, source_type, source_config)
+     VALUES (?, ?, ?)`,
+    [channelKey, sourceType, sourceConfig]
+  );
+  return getTempChannelByKey(channelKey)!;
+}
+
+export function updateTempChannel(
+  id: number,
+  updates: { name?: string | null; enabled?: boolean; alertMaxC?: number | null },
+): void {
+  const db = getDb();
+  const sets: string[] = [];
+  const params: (string | number | null)[] = [];
+
+  if (updates.name !== undefined) { sets.push('name = ?'); params.push(updates.name); }
+  if (updates.enabled !== undefined) { sets.push('enabled = ?'); params.push(updates.enabled ? 1 : 0); }
+  if (updates.alertMaxC !== undefined) { sets.push('alert_max_c = ?'); params.push(updates.alertMaxC); }
+
+  if (sets.length === 0) return;
+  params.push(id);
+  db.run(`UPDATE temp_channels SET ${sets.join(', ')} WHERE id = ?`, params);
+}
+
+export function updateTempChannelSeen(channelKey: string): void {
+  getDb().run(
+    `UPDATE temp_channels SET last_seen_at = ${SQL_NOW_UTC}, unplugged_at = NULL WHERE channel_key = ?`,
+    [channelKey]
+  );
+}
+
+export function markTempChannelUnplugged(channelKey: string): void {
+  getDb().run(
+    `UPDATE temp_channels SET unplugged_at = ${SQL_NOW_UTC} WHERE channel_key = ? AND unplugged_at IS NULL`,
+    [channelKey]
+  );
+}
+
+export function deleteTempChannel(id: number): void {
+  const db = getDb();
+  db.run('DELETE FROM temperature_readings WHERE channel_id = ?', [id]);
+  db.run('DELETE FROM temp_channels WHERE id = ?', [id]);
+}
+
+// ── Temperature reading operations ─────────────────────────────────
+
+export interface TempReading {
+  id: number;
+  run_id: number;
+  channel_id: number;
+  temp_c: number;
+  elapsed_s: number;
+  recorded_at: string;
+}
+
+export function insertTempReading(
+  runId: number,
+  channelId: number,
+  tempC: number,
+  elapsedS: number,
+): void {
+  getDb().run(
+    `INSERT INTO temperature_readings (run_id, channel_id, temp_c, elapsed_s)
+     VALUES (?, ?, ?, ?)`,
+    [runId, channelId, tempC, elapsedS]
+  );
+}
+
+export function getTempReadingsForRun(runId: number): (TempReading & { channel_key: string; channel_name: string | null })[] {
+  return getDb().query<TempReading & { channel_key: string; channel_name: string | null }, [number]>(
+    `SELECT tr.*, tc.channel_key, tc.name as channel_name
+     FROM temperature_readings tr
+     JOIN temp_channels tc ON tr.channel_id = tc.id
+     WHERE tr.run_id = ?
+     ORDER BY tr.elapsed_s, tc.channel_key`
+  ).all(runId);
 }

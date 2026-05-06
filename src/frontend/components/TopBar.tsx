@@ -194,6 +194,21 @@ export function TopBar() {
           </div>
         )}
 
+        {/* Live temperature readings */}
+        {state.tempReadings.length > 0 && (
+          <div className="temp-live-readings">
+            {state.tempReadings.map(r => (
+              <span
+                key={r.channelId}
+                className={`temp-live-chip${r.alertMaxC != null && r.tempC > r.alertMaxC ? ' alert' : ''}`}
+              >
+                <span className="temp-label">{r.name ?? r.channelId.slice(0, 8)}</span>
+                <span className="temp-value">{r.tempC.toFixed(1)}°</span>
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* Cycle info — inline in the header */}
         {cycleActive && cycleState && (
           <div className="top-bar-cycle">

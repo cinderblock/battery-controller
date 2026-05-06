@@ -41,6 +41,18 @@ import {
   stopCamera,
   getFrame,
 } from './camera.ts';
+import { TemperatureManager, type TempEvent } from './temperature.ts';
+import {
+  getTempConfig,
+  setHomeAssistantConfig,
+  addChannel,
+  updateChannelConfig,
+  removeChannel,
+  getChannel,
+  type HttpChannelConfig,
+} from './temp-config.ts';
+import { testHaConnection, fetchHaTemperatureEntities } from './ha-adapter.ts';
+import { getTempReadingsForRun } from './db.ts';
 
 const Port = Number(process.env.PORT) || 80;
 const TRUSTED_PROXY = '10.255.0.5';
@@ -198,6 +210,33 @@ async function main() {
     startCamera();
   }
 
+  // ── Initialize temperature monitoring ─────────────────────────
+  const tempManager = new TemperatureManager();
+  tempManager.setRunContext(recorder);
+  await tempManager.start();
+
+  // Wire temperature events → SSE broadcasts + alert abort
+  tempManager.on((event: TempEvent) => {
+    switch (event.type) {
+      case 'temperature':
+        broadcast('temperature', { readings: event.readings });
+        break;
+      case 'tempAlert':
+        logger.warn(
+          `TEMPERATURE ALERT: ${event.name ?? event.channelId} = ${event.tempC.toFixed(1)}°C ` +
+          `(threshold: ${event.alertMaxC}°C) — stopping test`
+        );
+        session.stop();
+        broadcast('tempAlert', event);
+        break;
+      case 'tempChannelDiscovered':
+      case 'tempChannelUnplugged':
+      case 'tempChannelReconnected':
+        broadcast(event.type, event);
+        break;
+    }
+  });
+
   // ── Wire session events → SSE broadcasts ───────────────────────
   session.on((event: SessionEvent) => {
     switch (event.type) {
@@ -211,6 +250,10 @@ async function main() {
           activeRunId: recorder.getActiveRunId(),
           timestamp: Date.now(),
         });
+        // Clear per-run temp alert overrides when test ends
+        if (event.from !== 'idle' && event.to === 'idle') {
+          tempManager.clearRunAlertOverrides();
+        }
         break;
       case 'connected':
         broadcast('connected', { timestamp: Date.now() });
@@ -324,6 +367,10 @@ async function main() {
             locked: settingsLock.isLocked(),
             cycleState: cycleRunner.getState(),
             bridgeActive: activeBridge !== null,
+            temperature: {
+              channels: tempManager.getChannels(),
+              readings: tempManager.getLastReadings(),
+            },
           }));
         },
         cancel() {
@@ -358,6 +405,7 @@ async function main() {
         maxTimeMin?: number;
         cellId?: number;
         barcode?: string;
+        tempAlertOverrides?: Record<string, number>;
       }>(req);
       if (!body?.mode) return errorResponse('Missing mode');
 
@@ -371,6 +419,13 @@ async function main() {
         recorder.setCellId(cell.id);
       } else if (body.cellId) {
         recorder.setCellId(body.cellId);
+      }
+
+      // Apply per-run temperature alert overrides
+      if (body.tempAlertOverrides && Object.keys(body.tempAlertOverrides).length > 0) {
+        tempManager.setRunAlertOverrides(new Map(Object.entries(body.tempAlertOverrides)));
+      } else {
+        tempManager.clearRunAlertOverrides();
       }
 
       // Record setpoints
@@ -774,6 +829,115 @@ async function main() {
           'Content-Disposition': `attachment; filename="${filename}"`,
         },
       });
+    }
+
+    // ── Temperature ─────────────────────────────────────────
+    if (pathname === '/api/temp/config' && method === 'GET') {
+      const cfg = getTempConfig();
+      return jsonResponse({
+        pollIntervalS: cfg.pollIntervalS,
+        homeAssistant: cfg.homeAssistant
+          ? { baseUrl: cfg.homeAssistant.baseUrl, hasToken: true }
+          : null,
+        channels: cfg.channels,
+      });
+    }
+
+    if (pathname === '/api/temp/config/ha' && method === 'PUT') {
+      const body = await parseBody<{ baseUrl: string; token: string }>(req);
+      if (!body?.baseUrl || !body?.token) return errorResponse('Missing baseUrl or token');
+      await setHomeAssistantConfig({ baseUrl: body.baseUrl.replace(/\/+$/, ''), token: body.token });
+      return jsonResponse({ ok: true });
+    }
+
+    if (pathname === '/api/temp/config/ha' && method === 'DELETE') {
+      await setHomeAssistantConfig(null);
+      return jsonResponse({ ok: true });
+    }
+
+    if (pathname === '/api/temp/config/ha/test' && method === 'POST') {
+      const body = await parseBody<{ baseUrl: string; token: string }>(req);
+      if (!body?.baseUrl || !body?.token) return errorResponse('Missing baseUrl or token');
+      const err = await testHaConnection({ baseUrl: body.baseUrl.replace(/\/+$/, ''), token: body.token });
+      if (err) return jsonResponse({ ok: false, error: err }, 200);
+      return jsonResponse({ ok: true });
+    }
+
+    if (pathname === '/api/temp/ha/entities' && method === 'GET') {
+      const cfg = getTempConfig();
+      if (!cfg.homeAssistant) return errorResponse('Home Assistant not configured', 404);
+      try {
+        const entities = await fetchHaTemperatureEntities(cfg.homeAssistant);
+        return jsonResponse(entities.map(e => ({
+          entityId: e.entity_id,
+          name: e.attributes.friendly_name ?? e.entity_id,
+          state: e.state,
+          unit: e.attributes.unit_of_measurement,
+          deviceClass: e.attributes.device_class,
+        })));
+      } catch (err) {
+        return errorResponse(`Failed to fetch HA entities: ${err instanceof Error ? err.message : String(err)}`, 502);
+      }
+    }
+
+    if (pathname === '/api/temp/channels' && method === 'GET') {
+      const cfg = getTempConfig();
+      const lastReadings = tempManager.getLastReadings();
+      const readingsMap = new Map(lastReadings.map(r => [r.channelId, r.tempC]));
+      return jsonResponse(cfg.channels.map(ch => ({
+        ...ch,
+        lastTempC: readingsMap.get(ch.id) ?? null,
+      })));
+    }
+
+    if (pathname === '/api/temp/channels' && method === 'POST') {
+      const body = await parseBody<{
+        sourceType: 'http';
+        entityId: string;
+        name?: string;
+        alertMaxC?: number | null;
+      }>(req);
+      if (!body?.entityId) return errorResponse('Missing entityId');
+      const channelId = `ha-${body.entityId}`;
+      const newChannel: HttpChannelConfig = {
+        id: channelId,
+        name: body.name ?? null,
+        sourceType: 'http',
+        entityId: body.entityId,
+        enabled: true,
+        alertMaxC: body.alertMaxC ?? null,
+        firstSeenAt: new Date().toISOString(),
+      };
+      await addChannel(newChannel);
+      return jsonResponse(newChannel, 201);
+    }
+
+    const tempChannelMatch = pathname.match(/^\/api\/temp\/channels\/(.+)$/);
+    if (tempChannelMatch && method === 'PATCH') {
+      const channelId = decodeURIComponent(tempChannelMatch[1]);
+      const body = await parseBody<{ name?: string | null; enabled?: boolean; alertMaxC?: number | null }>(req);
+      if (!body) return errorResponse('Missing body');
+      const updated = await updateChannelConfig(channelId, body);
+      if (!updated) return errorResponse('Channel not found', 404);
+      return jsonResponse(updated);
+    }
+
+    if (tempChannelMatch && method === 'DELETE') {
+      const channelId = decodeURIComponent(tempChannelMatch[1]);
+      const removed = await removeChannel(channelId);
+      if (!removed) return errorResponse('Channel not found', 404);
+      return jsonResponse({ ok: true });
+    }
+
+    if (pathname === '/api/temp/current' && method === 'GET') {
+      return jsonResponse(tempManager.getLastReadings());
+    }
+
+    // /api/runs/:id/temperature
+    const runTempMatch = pathname.match(/^\/api\/runs\/(\d+)\/temperature$/);
+    if (runTempMatch && method === 'GET') {
+      const runId = parseInt(runTempMatch[1], 10);
+      return jsonResponse(getTempReadingsForRun(runId));
     }
 
     // ── Bridge mode ──────────────────────────────────────────

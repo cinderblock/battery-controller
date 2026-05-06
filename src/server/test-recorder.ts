@@ -39,6 +39,7 @@ export class TestRecorder {
   private activeRunId: number | null = null;
   private activeRunMode: DeviceMode | null = null;
   private activeRunMaxTimeMin: number | null = null;
+  private runStartTime: number | null = null;
   private dataPointCount = 0;
 
   // Pending association: set before or during a test
@@ -124,6 +125,11 @@ export class TestRecorder {
     return this.activeRunMaxTimeMin;
   }
 
+  /** Get the start time of the active run (ms since epoch), or null if no run */
+  getRunStartTime(): number | null {
+    return this.runStartTime;
+  }
+
   /** Set whether the next run should be excluded from capacity calculations */
   setExcludeFromCapacity(exclude: boolean): void {
     this.pendingExcludeFromCapacity = exclude;
@@ -160,6 +166,7 @@ export class TestRecorder {
     this.activeRunMode = 'wait' as DeviceMode;
     this.activeRunMaxTimeMin = null;
     this.waitStartTime = Date.now();
+    this.runStartTime = Date.now();
     this.dataPointCount = 0;
 
     logger.info(`Started wait run #${run.id} (${durationS}s, cell=${this.pendingCellId ?? 'none'})`);
@@ -192,6 +199,7 @@ export class TestRecorder {
     this.activeRunMode = null;
     this.activeRunMaxTimeMin = null;
     this.waitStartTime = null;
+    this.runStartTime = null;
     this.dataPointCount = 0;
   }
 
@@ -290,6 +298,7 @@ export class TestRecorder {
     this.activeRunId = run.id;
     this.activeRunMode = mode;
     this.activeRunMaxTimeMin = this.pendingSetpoints?.maxTimeMin ?? null;
+    this.runStartTime = Date.now();
     this.dataPointCount = 0;
 
     // Clear pending setpoints after use (cell ID persists for
@@ -304,6 +313,7 @@ export class TestRecorder {
     this.activeRunId = runId;
     this.activeRunMode = mode;
     this.activeRunMaxTimeMin = null;
+    this.runStartTime = Date.now(); // approximate — gap is already elapsed
     this.dataPointCount = getDataPointCount(runId);
 
     logger.info(`Reopened test run #${runId} (mode=${mode}, ${this.dataPointCount} existing points). Continuing recording.`);
@@ -323,6 +333,7 @@ export class TestRecorder {
     const run = createTestRun(params);
     this.activeRunId = run.id;
     this.activeRunMode = mode;
+    this.runStartTime = Date.now();
     this.dataPointCount = 0;
 
     logger.info(`Started recording RECOVERED test run #${run.id} (mode=${mode}). Earlier data points from before restart are missing.`);
@@ -355,6 +366,7 @@ export class TestRecorder {
     this.activeRunId = null;
     this.activeRunMode = null;
     this.activeRunMaxTimeMin = null;
+    this.runStartTime = null;
     this.dataPointCount = 0;
   }
 
