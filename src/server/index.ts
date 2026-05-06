@@ -113,7 +113,7 @@ async function main() {
     logger.info(`Marked ${incomplete.runs} incomplete run(s) from previous session as 'service_restart'`);
   }
   if (incomplete.cycles > 0) {
-    logger.info(`Aborted ${incomplete.cycles} active cycle program(s) from previous session`);
+    logger.info(`Found ${incomplete.cycles} active cycle program(s) from previous session — CycleRunner will attempt recovery`);
   }
   ensureDefaultCellGroup();
 

@@ -418,10 +418,11 @@ export function markIncompleteRuns(): { runs: number; cycles: number } {
     `UPDATE test_runs SET ended_at = ${SQL_NOW_UTC}, end_reason = 'service_restart'
      WHERE ended_at IS NULL`
   ).changes;
-  const cycles = db.run(
-    `UPDATE cycle_programs SET ended_at = ${SQL_NOW_UTC}, status = 'aborted'
-     WHERE status IN ('running', 'pending')`
-  ).changes;
+  // Note: cycle programs are NOT aborted here. The CycleRunner.start() method
+  // handles recovery — it will either resume the program or abort it if recovery fails.
+  const cycles = db.query<{ count: number }, []>(
+    `SELECT COUNT(*) as count FROM cycle_programs WHERE status IN ('running', 'pending')`
+  ).get()?.count ?? 0;
   return { runs, cycles };
 }
 
