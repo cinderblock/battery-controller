@@ -444,7 +444,7 @@ export class CycleRunner {
           cutoffV: step.cutoffV,
           maxTimeMin: step.maxTimeMin,
         });
-        await this.session.startDCC(actualCurrentA, step.cutoffV);
+        await this.session.startDCC(actualCurrentA, step.cutoffV, step.maxTimeMin ?? 0);
         break;
       }
       case 'd-cp':

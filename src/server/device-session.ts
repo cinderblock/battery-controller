@@ -516,23 +516,26 @@ export class DeviceSession {
    * Start D-CC discharge
    * @param currentA Discharge current in amps (0.01–40.00)
    * @param cutoffV  Under-voltage cutoff in volts
+   * @param maxTimeMin Maximum time in minutes (0 = no limit)
    */
-  async startDCC(currentA: number, cutoffV: number): Promise<void> {
+  async startDCC(currentA: number, cutoffV: number, maxTimeMin: number = 0): Promise<void> {
     const [iHi, iLo] = encodeBase240(currentA, EbcDivisors.current);
     const [vHi, vLo] = encodeBase240(cutoffV, EbcDivisors.setpointVoltage);
+    const [tHi, tLo] = encodeBase240(maxTimeMin, 1);
     this.setPending('startDCC', 'd-cc');
-    await this.sendPayload([0x01, iHi, iLo, vHi, vLo, 0x00, 0x00]);
-    logger.info(`Sent D-CC start: ${currentA}A, cutoff ${cutoffV}V`);
+    await this.sendPayload([0x01, iHi, iLo, vHi, vLo, tHi, tLo]);
+    logger.info(`Sent D-CC start: ${currentA}A, cutoff ${cutoffV}V, max ${maxTimeMin}min`);
   }
 
   /**
    * Continue D-CC discharge with (optionally updated) setpoints
    */
-  async continueDCC(currentA: number, cutoffV: number): Promise<void> {
+  async continueDCC(currentA: number, cutoffV: number, maxTimeMin: number = 0): Promise<void> {
     const [iHi, iLo] = encodeBase240(currentA, EbcDivisors.current);
     const [vHi, vLo] = encodeBase240(cutoffV, EbcDivisors.setpointVoltage);
-    await this.sendPayload([0x08, iHi, iLo, vHi, vLo, 0x00, 0x00]);
-    logger.info(`Sent D-CC continue: ${currentA}A, cutoff ${cutoffV}V`);
+    const [tHi, tLo] = encodeBase240(maxTimeMin, 1);
+    await this.sendPayload([0x08, iHi, iLo, vHi, vLo, tHi, tLo]);
+    logger.info(`Sent D-CC continue: ${currentA}A, cutoff ${cutoffV}V, max ${maxTimeMin}min`);
   }
 
   /**

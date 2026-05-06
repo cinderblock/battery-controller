@@ -389,7 +389,7 @@ async function main() {
       switch (body.mode) {
         case 'd-cc':
           if (!body.currentA || !body.cutoffV) return errorResponse('D-CC requires currentA and cutoffV');
-          await session.startDCC(body.currentA, body.cutoffV);
+          await session.startDCC(body.currentA, body.cutoffV, body.maxTimeMin ?? 0);
           break;
         case 'd-cp':
           if (!body.powerW || !body.cutoffV) return errorResponse('D-CP requires powerW and cutoffV');
@@ -433,7 +433,7 @@ async function main() {
       switch (mode) {
         case 'd-cc':
           if (!body.currentA || !body.cutoffV) return errorResponse('D-CC continue requires currentA and cutoffV');
-          await session.continueDCC(body.currentA, body.cutoffV);
+          await session.continueDCC(body.currentA, body.cutoffV, body.maxTimeMin ?? 0);
           break;
         case 'd-cp':
           if (!body.powerW || !body.cutoffV) return errorResponse('D-CP continue requires powerW and cutoffV');
