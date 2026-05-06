@@ -77,10 +77,12 @@ function spawnFfmpeg(rtspUrl: string): void {
   // Build -vf chain. On Linux, include RTSP_FILTER so ffmpeg crops early
   // (smaller frames to disk). On Windows, -update 1 bypasses -vf filters,
   // so we only include fps here and apply RTSP_FILTER via sharp at read time.
+  // fps filter goes first so we only crop the 1 frame/sec we keep.
   const rtspFilter = process.env.RTSP_FILTER;
-  const vf = (rtspFilter && !IS_WINDOWS) ? `${rtspFilter},fps=${FPS}` : `fps=${FPS}`;
+  const vf = (rtspFilter && !IS_WINDOWS) ? `fps=${FPS},${rtspFilter}` : `fps=${FPS}`;
 
   const args = [
+    '-nostdin',
     // Low-latency input: skip probe/analysis, disable demux buffering and
     // packet reordering so frames pass through as soon as they arrive
     '-fflags', 'nobuffer',
@@ -89,8 +91,13 @@ function spawnFfmpeg(rtspUrl: string): void {
     '-analyzeduration', '0',
     '-max_delay', '0',
     '-reorder_queue_size', '0',
+    // Use hardware H.264 decoder on Pi (bcm2835-codec via V4L2 M2M) to
+    // offload decode from the CPU instead of burning ~180% CPU in software.
+    ...(IS_WINDOWS ? [] : ['-c:v', 'h264_v4l2m2m']),
+    '-threads', '1',
     '-rtsp_transport', 'tcp',
     '-i', rtspUrl,
+    '-an',
     '-vf', vf,
     '-f', 'image2',
     '-update', '1',

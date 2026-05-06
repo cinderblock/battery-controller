@@ -43,7 +43,6 @@ import {
 } from './camera.ts';
 
 const Port = Number(process.env.PORT) || 80;
-const CANONICAL_HOST = 'coulomb.tomsawyerlabs.com';
 const TRUSTED_PROXY = '10.255.0.5';
 
 /** Unique ID per server process — clients detect restarts and auto-reload */
@@ -877,19 +876,6 @@ async function main() {
       const clientIp = isTrustedProxy
         ? (req.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? connectingIp)
         : connectingIp;
-
-      // ── Host redirect: canonical hostname enforcement ─────────
-      const host = req.headers.get('host')?.replace(/:\d+$/, '');
-      if (host && host !== CANONICAL_HOST && host !== 'localhost' && host !== '127.0.0.1') {
-        const proto = isTrustedProxy
-          ? (req.headers.get('x-forwarded-proto') ?? 'http')
-          : 'http';
-        const target = `${proto}://${CANONICAL_HOST}${url.pathname}${url.search}`;
-        return new Response(null, {
-          status: 301,
-          headers: { Location: target },
-        });
-      }
 
       // Static files (zbar.wasm barcode scanner — deployed alongside the bundle)
       if (url.pathname === '/static/zbar.js') {

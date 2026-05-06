@@ -68,6 +68,7 @@ html, body {
   height: 100%;
   object-fit: contain;
   image-rendering: pixelated;
+  transform: rotate(2.8deg);
 }
 
 .camera-img.camera-error {
