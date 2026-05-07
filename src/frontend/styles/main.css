@@ -60,13 +60,16 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Lock height to whatever the top-bar column sets — don't expand the row */
+  height: 0;
+  min-height: 100%;
 }
 
 .camera-img {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
   image-rendering: pixelated;
   transform: rotate(2.8deg);
 }
@@ -99,10 +102,10 @@ html, body {
 .top-bar {
   display: flex;
   align-items: center;
-  padding: 6px 12px;
+  padding: 2px 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  min-height: 36px;
+  min-height: 24px;
   flex-shrink: 0;
   gap: 0;
 }
@@ -200,7 +203,7 @@ html, body {
   font-size: 12px;
   font-weight: 500;
   text-align: center;
-  padding: 4px 12px;
+  padding: 2px 12px;
   flex-shrink: 0;
   animation: banner-slide-in 0.3s ease;
 }
@@ -252,14 +255,14 @@ html, body {
 .cycle-timeline-bar {
   display: flex;
   align-items: stretch;
-  height: 18px;
+  height: 20px;
   flex-shrink: 0;
   background: var(--surface);
   gap: 1px;
 }
 
 .cycle-timeline-step {
-  min-width: 4px;
+  min-width: 6px;
   position: relative;
   display: flex;
   align-items: center;
@@ -295,6 +298,9 @@ html, body {
   text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
 }
 
+/* Wait steps need a minimum width so their label is readable */
+.cycle-timeline-step.step-wait { min-width: 36px; }
+
 /* Future steps: desaturated tint of their step color */
 .cycle-timeline-step.step-future.step-charge    { background: rgba(79, 195, 247, 0.12); }
 .cycle-timeline-step.step-future.step-discharge { background: rgba(255, 152, 0, 0.12); }
@@ -303,8 +309,33 @@ html, body {
 /* Done steps: fill is full width, slightly dimmed */
 .cycle-timeline-step.step-done .step-fill { opacity: 0.5; }
 
-/* Active step: fill shows progress, full brightness */
-.cycle-timeline-step.step-active .step-fill { opacity: 1; }
+/* Active step: fill shows progress, full brightness, animated stripes */
+.cycle-timeline-step.step-active .step-fill {
+  opacity: 1;
+  overflow: hidden;
+}
+.cycle-timeline-step.step-active .step-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    -45deg,
+    rgba(255,255,255,.09) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255,255,255,.09) 50%,
+    rgba(255,255,255,.09) 75%,
+    transparent 75%,
+    transparent
+  );
+  background-size: 20px 20px;
+  animation: step-active-stripes 0.8s linear infinite;
+}
+
+@keyframes step-active-stripes {
+  from { background-position: 0 0; }
+  to { background-position: 20px 20px; }
+}
 
 @keyframes banner-slide-in {
   from { transform: translateY(-100%); opacity: 0; }
@@ -2036,7 +2067,7 @@ html, body {
     grid-row: unset;
   }
 
-  .top-bar { padding: 4px 8px; }
+  .top-bar { padding: 2px 8px; }
   .top-bar-readings { gap: 8px; }
   .reading-val { font-size: 12px; }
   .bottom-bar { padding: 6px 8px; }

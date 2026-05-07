@@ -11,11 +11,14 @@ import { useSession } from '../hooks/useDeviceSession.ts';
 import type { DeviceMode } from '../api-client.ts';
 
 function formatCountdown(ms: number): string {
-  if (ms <= 0) return '0:00';
-  const totalSec = Math.ceil(ms / 1000);
-  const m = Math.floor(totalSec / 60);
-  const s = totalSec % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
+  if (ms <= 0) return '0m';
+  const totalMin = Math.ceil(ms / 60000);
+  if (totalMin >= 60) {
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return m > 0 ? `${h}h${m}m` : `${h}h`;
+  }
+  return `${totalMin}m`;
 }
 
 function formatElapsed(seconds: number): string {
@@ -33,6 +36,13 @@ function formatMinutes(min: number): string {
     return m > 0 ? `${h}h${m}m` : `${h}h`;
   }
   return `${min}m`;
+}
+
+function formatDurationCompact(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return m > 0 ? `${h}h${m}m` : `${h}h`;
+  return `${m}m`;
 }
 
 const MODE_LABELS: Record<DeviceMode, string> = {
@@ -276,25 +286,45 @@ export function TopBar() {
               const isFuture = i > activeIdx;
               const fillPct = isDone ? 100 : isActive ? activeProgressPct : 0;
 
+              const expectedS = cycleState.stepExpectedS?.[i] ?? 0;
+              const expectedLabel = expectedS > 0 ? formatDurationCompact(expectedS) : '';
+
               // Build label per step state:
-              // - Done: final capacity + duration
-              // - Active: live capacity + live elapsed time
-              // - Future: step parameters from sequence definition
+              // - Done: final capacity + duration / expected
+              // - Active: live capacity + elapsed / expected
+              // - Future: expected duration + step parameters
+              // - Wait (future/done): just the duration
               let label = '';
               if (isFuture) {
-                label = cycleState.stepLabels?.[i] ?? '';
+                if (stepType === 'wait') {
+                  label = expectedLabel;
+                } else {
+                  const paramLabel = cycleState.stepLabels?.[i] ?? '';
+                  label = [expectedLabel, paramLabel].filter(Boolean).join(' · ');
+                }
+              } else if (isActive && stepType === 'wait' && waitRemaining !== null) {
+                label = formatCountdown(waitRemaining);
+              } else if (isActive && reading && stepType !== 'wait') {
+                const parts: string[] = [];
+                parts.push(`${reading.capacityAh.toFixed(1)}Ah`);
+                const elapsed = formatElapsed(reading.elapsedS);
+                parts.push(expectedLabel ? `${elapsed}/${expectedLabel}` : elapsed);
+                label = parts.join(' · ');
               } else {
                 const parts: string[] = [];
-                if (isActive && reading && stepType !== 'wait') {
-                  parts.push(`${reading.capacityAh.toFixed(1)}Ah`);
-                  parts.push(formatElapsed(reading.elapsedS));
-                } else if (isActive && stepType === 'wait' && waitRemaining !== null) {
-                  parts.push(formatCountdown(waitRemaining));
+                if (capMah != null) parts.push(`${(capMah / 1000).toFixed(1)}Ah`);
+                if (stepType === 'wait') {
+                  // Use expected duration for done waits — actual duration rounds
+                  // down (e.g. 29m55s → "29m") which looks wrong next to "30m"
+                  label = expectedLabel || (durS != null ? formatDurationCompact(durS) : '');
+                  if (parts.length) label = `${parts.join(' · ')} · ${label}`;
+                } else if (durS != null) {
+                  const dur = formatDurationCompact(durS);
+                  label = expectedLabel ? `${dur}/${expectedLabel}` : dur;
+                  if (parts.length) label = `${parts.join(' · ')} · ${label}`;
                 } else {
-                  if (capMah != null) parts.push(`${(capMah / 1000).toFixed(1)}Ah`);
-                  if (durS != null) parts.push(formatElapsed(durS));
+                  label = parts.join(' · ');
                 }
-                label = parts.join(' · ');
               }
 
               return (
