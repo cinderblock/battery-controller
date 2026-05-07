@@ -55,18 +55,10 @@ function createTooltipEl(): TooltipDOM {
 
 // ── Types ──────────────────────────────────────────────────────────
 
-/** When provided, V and A scales are locked so 0A aligns with lowV and maxA aligns with highV. */
-export interface AxisAlignment {
-  lowV: number;   // e.g. cutoff voltage (maps to 0A)
-  highV: number;  // e.g. target/OCV voltage (maps to maxA)
-  maxA: number;   // max current setpoint
-}
-
 export interface ChartProps {
   data: (number | null | undefined)[][];
   seriesInfo: ChartSeriesInfo[];
   thresholds?: ThresholdLine[];
-  axisAlignment?: AxisAlignment | null;
   className?: string;
 }
 
@@ -90,7 +82,7 @@ const METRIC_UNIT: Record<MetricKey, string> = {
 
 // ── Component ──────────────────────────────────────────────────────
 
-export function Chart({ data, seriesInfo, thresholds = [], axisAlignment, className }: ChartProps) {
+export function Chart({ data, seriesInfo, thresholds = [], className }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const uplotRef = useRef<uPlot | null>(null);
   const tooltipRef = useRef<TooltipDOM | null>(null);
@@ -104,13 +96,8 @@ export function Chart({ data, seriesInfo, thresholds = [], axisAlignment, classN
   const thresholdsRef = useRef(thresholds);
   thresholdsRef.current = thresholds;
 
-  // Keep axis alignment in a ref for the buildOptions callback
-  const alignmentRef = useRef(axisAlignment);
-  alignmentRef.current = axisAlignment;
-
   // Build a stable key from series info to detect when series structure changes
-  const alignKey = axisAlignment ? `${axisAlignment.lowV}:${axisAlignment.highV}:${axisAlignment.maxA}` : 'none';
-  const seriesKey = seriesInfo.map(s => `${s.runId}:${s.metric}:${s.isLive}`).join('|') + '|align:' + alignKey;
+  const seriesKey = seriesInfo.map(s => `${s.runId}:${s.metric}:${s.isLive}`).join('|');
 
   const buildOptions = useCallback((): uPlot.Options => {
     const seriesInfo = seriesInfoRef.current;
@@ -145,12 +132,12 @@ export function Chart({ data, seriesInfo, thresholds = [], axisAlignment, classN
       });
     }
 
-    // Current axis: on left (aligned with V) when alignment active, otherwise right
+    // Left Y axis: current (shares left side with voltage — both auto-range
+    // so 0% and 100% of each scale are aligned)
     if (usedScales.has('A')) {
-      const align = alignmentRef.current;
       axes.push({
         scale: 'A',
-        side: align ? 3 : 1, // left when aligned with V, right otherwise
+        side: 3, // left, alongside voltage
         values: (_u: uPlot, vals: number[]) => vals.map(v => v.toFixed(1) + ' A'),
         stroke: '#81c784',
         grid: { show: false },
@@ -223,41 +210,14 @@ export function Chart({ data, seriesInfo, thresholds = [], axisAlignment, classN
         drag: { x: true, y: false, setScale: true },
         points: { size: 6, fill: '#fff' },
       },
-      scales: (() => {
-        const align = alignmentRef.current;
-        if (align) {
-          // Combined V+A axis alignment:
-          // V range: [lowV, highV] with 5% padding
-          // A range: [0, maxA] scaled so 0A is at lowV and maxA is at highV
-          const vPad = (align.highV - align.lowV) * 0.05;
-          const vMin = align.lowV - vPad;
-          const vMax = align.highV + vPad;
-          // To align: the fraction of lowV in V range = fraction of 0 in A range
-          // fraction = (lowV - vMin) / (vMax - vMin) = (0 - aMin) / (aMax - aMin)
-          const vFrac = (align.lowV - vMin) / (vMax - vMin);
-          // aMin + vFrac * (aMax - aMin) = 0  →  aMin = -vFrac * aRange / (1 - ... )
-          // Simpler: aMin = -vFrac / (1 - vFrac) * maxA ... then aMax = maxA + pad
-          const aPad = align.maxA * 0.05;
-          const aMax = align.maxA + aPad;
-          const aMin = -(vFrac / (1 - vFrac)) * aMax;
-          return {
-            x: { time: false },
-            V: { auto: false, range: [vMin, vMax] as [number, number] },
-            A: { auto: false, range: [aMin, aMax] as [number, number] },
-            W: { auto: true, range: (_u: uPlot, min: number, max: number) => [Math.max(0, min - 5), max + 5] as [number, number] },
-            Ah: { auto: true, range: (_u: uPlot, min: number, max: number) => [0, max * 1.05] as [number, number] },
-            '°C': { auto: true },
-          };
-        }
-        return {
-          x: { time: false },
-          V: { auto: true },
-          A: { auto: true, range: (_u: uPlot, min: number, max: number) => [Math.max(0, min - 1), max + 1] as [number, number] },
-          W: { auto: true, range: (_u: uPlot, min: number, max: number) => [Math.max(0, min - 5), max + 5] as [number, number] },
-          Ah: { auto: true, range: (_u: uPlot, min: number, max: number) => [0, max * 1.05] as [number, number] },
-          '°C': { auto: true },
-        };
-      })(),
+      scales: {
+        x: { time: false },
+        V: { auto: true },
+        A: { auto: true },
+        W: { auto: true, range: (_u: uPlot, min: number, max: number) => [Math.max(0, min - 5), max + 5] as [number, number] },
+        Ah: { auto: true, range: (_u: uPlot, min: number, max: number) => [0, max * 1.05] as [number, number] },
+        '°C': { auto: true },
+      },
       axes,
       series,
       legend: { show: false }, // We build our own legend panel

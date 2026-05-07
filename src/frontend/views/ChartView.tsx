@@ -276,29 +276,6 @@ export function ChartView() {
     return lines;
   }, [activeRunMeta]);
 
-  // ── Axis alignment (combined V+I on left axis) ────────────────
-  const axisAlignment = useMemo(() => {
-    if (!activeRunMeta || !isTestActive) return null;
-
-    const cutoffV = activeRunMeta.setpoint_cutoff_v;
-    const maxCurrent = activeRunMeta.setpoint_current_a;
-    if (cutoffV == null || maxCurrent == null) return null;
-
-    // For charge: highV is the target voltage; for discharge: use peak or a reasonable max
-    let highV: number;
-    if (activeRunMeta.mode === 'c-cv' && activeRunMeta.setpoint_voltage_v != null) {
-      highV = activeRunMeta.setpoint_voltage_v;
-    } else {
-      // For discharge, use the initial/peak voltage or a sensible default
-      highV = activeRunMeta.peak_voltage_v ?? 3.65;
-    }
-
-    // Sanity: need a meaningful spread
-    if (highV - cutoffV < 0.1) return null;
-
-    return { lowV: cutoffV, highV, maxA: maxCurrent };
-  }, [activeRunMeta, isTestActive]);
-
   // ── Toggle handlers ──────────────────────────────────────────
   const toggleMetric = useCallback((metric: MetricKey) => {
     setVisibleMetrics(prev => {
@@ -355,7 +332,7 @@ export function ChartView() {
             <div className="chart-loading">Loading runs...</div>
           ) : chartMode === 'time' ? (
             chartData.data[0]?.length ? (
-              <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} thresholds={thresholds} axisAlignment={axisAlignment} />
+              <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} thresholds={thresholds} />
             ) : (
               <div className="chart-empty">
                 {runs.length === 0
