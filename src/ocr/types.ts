@@ -88,6 +88,7 @@ export interface CorrelatedRecord {
     field9: number;
     field10: number;
     field11: number;
+    maxTimeOrCutoff: number;
     field12: number;
     raw: string;
   };

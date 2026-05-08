@@ -122,7 +122,7 @@ Priority: **low** — risky to test against real hardware, but safe against fake
 
 Cycle is already confirmed host-driven (Apr 2026). Step is presumed host-driven by analogy. Still missing:
 
-- [ ] **6.1** Multi-chemistry step program — mix C-NiMh + D-CC + C-LiPo steps. Confirm each step emits the per-mode Start command and byte 14 (step number) stays at 0 (single-test semantics) or increments.
+- [ ] **6.1** Multi-chemistry step program — mix C-NiMh + D-CC + C-LiPo steps. Confirm each step emits the per-mode Start command. (Byte 14 is NOT a step number — it's the hi byte of the base-240 time/cutoff echo pair. Confirmed 2026-05-07.)
 - [ ] **6.2** Cycle count > 1 — confirm host re-issues Start rather than using a device-side loop counter.
 - [ ] **6.3** Cycle through all step types (Wait, Cycle, C-*, D-*) and produce a definitive "step protocol" spec in `protocol.md`.
 

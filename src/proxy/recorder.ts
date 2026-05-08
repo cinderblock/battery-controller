@@ -51,6 +51,7 @@ export interface RxPacketRecord {
   field9: number;
   field10: number;
   field11: number;
+  maxTimeOrCutoff: number;
   field12: number;
   checksumValid: boolean;
 }
@@ -124,6 +125,7 @@ export class Recorder {
       field9: frame.field9,
       field10: frame.field10,
       field11: frame.field11,
+      maxTimeOrCutoff: frame.maxTimeOrCutoff,
       field12: frame.field12,
       checksumValid: frame.checksumValid,
     });

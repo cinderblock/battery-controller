@@ -78,17 +78,26 @@ export interface DecodedRxFrame extends ParsedFrame {
    */
   field9: number;
   /**
-   * Byte 14 (raw value).
-   * - **Normal packets:** Step number (0 for single test)
+   * Byte 14 (raw value) — high byte of the bytes 14-15 base-240 pair.
+   * - **Normal packets:** Hi byte of max time (minutes) or cutoff current (raw)
    * - **Info packets:** Device type index (0x11 = 17 on EBC-A40L)
    */
   field10: number;
   /**
-   * Byte 15 (raw value).
-   * - **Normal packets:** Cutoff current echo (raw ÷100 → A on EBC)
+   * Byte 15 (raw value) — low byte of the bytes 14-15 base-240 pair.
+   * - **Normal packets:** Lo byte of max time (minutes) or cutoff current (raw)
    * - **Info packets:** Device subtype/revision (0x86 = 134 on EBC-A40L)
    */
   field11: number;
+  /**
+   * Bytes 14-15 decoded as a base-240 pair (raw integer).
+   * - **D-CC/D-CP:** Max run time in minutes (0 = unlimited)
+   * - **C-CV:** Cutoff current (÷100 → A)
+   * - **Info packets:** Not meaningful (use field10/field11 individually)
+   *
+   * Confirmed via real hardware: time=300 produces byte14=0x01, byte15=0x3c.
+   */
+  maxTimeOrCutoff: number;
   /**
    * Byte 16 (raw value).
    * Constant 0x0A (10) on EBC-A40L across all packet types.
@@ -120,4 +129,9 @@ export interface DecodedTxFrame extends ParsedFrame {
    * Charging stops when current drops below this threshold.
    */
   cutoffCurrent?: number;
+  /**
+   * Max run time in minutes (bytes 6-7, base-240 raw).
+   * Only present in discharge mode commands (D-CC, D-CP). 0 = unlimited.
+   */
+  maxTime?: number;
 }

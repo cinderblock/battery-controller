@@ -20,10 +20,15 @@ export interface DeviceState {
   currentSetpoint: number;
   /** Voltage setpoint / cutoff — echoed in RX bytes 12-13 */
   voltageSetpoint: number;
-  /** Charge-mode cutoff current — echoed in RX byte 15 */
+  /**
+   * Cutoff current (A) for charge modes, OR max time (minutes) for discharge.
+   * Echoed in RX bytes 14-15 as a base-240 pair.
+   * - D-CC/D-CP: max run time in minutes (0 = unlimited)
+   * - C-CV: cutoff current in A (encoded as raw * divisors.cutoffCurrent)
+   */
   cutoffCurrent: number;
-  /** Step number (for multi-step cycle tests) */
-  step: number;
+  /** Max run time in minutes — echoed in RX bytes 14-15 for discharge modes */
+  maxTime: number;
   /**
    * Placeholder for future error/protection flag bytes. Real byte layout
    * is unknown — nothing writes to this yet.

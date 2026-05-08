@@ -517,14 +517,15 @@ Bytes 6-7:   Capacity   (base-240, raw = mAh) — accumulated mAh (device-comput
 Bytes 8-9:   Energy (mWh)           (base-240, raw = mWh) — always 0 on EBC-A40L captures so far; may be populated on other models
 Bytes 10-11: Setpoint echo          (base-240) — current (÷100→A) for D-CC/C-CV, power (raw=W) for D-CP
 Bytes 12-13: Cutoff voltage echo    (base-240, ÷100 → V)
-Byte 14:     Step number            (0x00 for single test)
-Byte 15:     Max time / cutoff echo (raw = minutes for D-CC/D-CP; cutoff current ÷100→A for C-CV)
+Bytes 14-15: Max time / cutoff echo (base-240, raw = minutes for D-CC/D-CP; cutoff current ÷100→A for C-CV)
 Byte 16:     Device ID              (0x0A on EBC-A40L — see Device Identification)
 Byte 17:     XOR checksum (bytes 1-16)
 Byte 18:     0xF8       — frame end
 ```
 
 > **Capacity (bytes 6-7):** The raw base-240 value equals mAh directly. At 4.00A for 62 seconds, the expected capacity is 68.9 mAh — the device reports raw value 68. At 3.00A for 145.6 seconds, the expected capacity is 121.3 mAh — the device reports raw value 121. Unlike the EBD-USB+ where the host computes capacity by integration, **EBC devices track capacity internally**.
+>
+> **⚠ High-capacity encoding transition (~10 Ah):** The EBC-A40L changes its capacity encoding when the accumulated capacity reaches approximately 10,000 mAh (10 Ah). Below 10 Ah, each base-240 unit = 1 mAh. Above 10 Ah, the hi byte jumps by exactly +99 and each base-240 unit = 10 mAh. The device's own display shows the correct value throughout, but hosts must detect and correct this transition. Confirmed on run #56 (2026-05-04): raw jumped from 9,991 to 33,769 (delta 23,778 ≈ 99×240) at the transition point. Post-transition rate dropped from +22/tick to +2–3/tick (exactly 1/10). Correction formula: `true_mAh = last_pre_transition_raw + (current_raw - first_post_transition_raw) × 10`. See `src/server/capacity-tracker.ts` for the implementation. Whether a second transition occurs at higher thresholds (100 Ah?) is unknown — bytes 8-9 (field7) remain 0 even after the 10 Ah transition.
 
 > **Setpoint echo (bytes 10-15):** During idle, these fields retain the last test's configured setpoints. During an active test, they echo the current test's parameters. The encoding of bytes 10-11 and 15 depends on the mode:
 > - **D-CC:** bytes 10-11 = current setpoint (÷100 → A), byte 15 = max time (minutes)
@@ -693,8 +694,7 @@ Key controls: `MSComm1` (serial port), `tmrComm` (polling timer), `cmSocket` (ne
 - **Response bytes 8-9 = always 0** (unknown/unused on A40L)
 - **Response bytes 10-11 = current setpoint echo** (÷100)
 - **Response bytes 12-13 = voltage setpoint echo** (÷100)
-- **Response byte 14 = step number** (0 for single test)
-- **Response byte 15 = cutoff current echo** (÷100)
+- **Response bytes 14-15 = max time / cutoff echo (base-240 pair)** — D-CC/D-CP: max run time in minutes; C-CV: cutoff current (÷100 → A). Confirmed via real hardware: time=300 min produces byte14=0x01, byte15=0x3C (base240(300)=[1,60]). NOT a step number — step tracking is entirely host-side.
 - **Response byte 16 = device ID byte** (0x0A on EBC-A40L) — confirmed via fake-device probing to be the primary identifier the EB Tester uses to look up device name and available modes. See [Device Identification](#device-identification).
 - **Heartbeat byte 3 = sequence counter** (1, 2, 3, ...)
 - **Idle packets retain last test's setpoints and accumulated capacity**
@@ -711,6 +711,7 @@ Key controls: `MSComm1` (serial port), `tmrComm` (polling timer), `cmSocket` (ne
 - **Info-packet rule holds for every running state** (0x0A→0x6E, 0x0B→0x6F, 0x0C→0x70, 0x14→0x78, 0x15→0x79, 0x16→0x7A) — confirmed via fake-device UI probe (Apr 2026)
 - **All non-running state bytes are treated as idle** — probed 0x00-0x3E, 0x40, 0x50, 0x60, 0x64-0x7E, 0x80-0xEE; only the six running bytes above triggered "test active" UI
 - **Bytes 6-7 carry capacity during discharge** — same mAh field as during charge
+- **Capacity encoding changes at ~10 Ah** — confirmed on run #56 (2026-05-04). Below ~10,000 mAh: 1 mAh per base-240 unit. Above ~10,000 mAh: hi byte gets +99, each unit = 10 mAh. Transition at raw 9,991 → 33,769 (jump = 23,778). Field7 (bytes 8-9) remains 0 even after transition. The device LCD always shows the correct value; only the serial encoding changes.
 - ~~**State 0x16 = charge complete**~~ — **revised:** state 0x16 behaves identically to 0x0C in the UI; it is best characterized as "C-CV phase 2" (likely the CV regulation phase), not a distinct "complete" state. The UI transitions to idle when the device emits any non-running state byte (most commonly 0x02).
 - **Adjust-mid-run is only allowed in D-CC mode** — the Adjust button is enabled only while state is 0x0A, 0x14, 0x6E, or 0x78. D-CP and C-CV tests cannot be adjusted mid-run through the UI (the device will still accept a `0x07` adjust frame — the lock is purely UI-side).
 - **Checksum is mod-240** — the XOR result is reduced `% 240` to keep the checksum byte below 0xF0, consistent with the base-240 constraint on all payload bytes
@@ -724,7 +725,7 @@ Key controls: `MSComm1` (serial port), `tmrComm` (polling timer), `cmSocket` (ne
 - **Response bytes 8-9** — always 0 on EBC-A40L (confirmed across idle, charge, D-CC, and D-CP captures); may carry temperature, energy, or internal resistance on other models (UI strings `Temp(C)`, `000.0` format suggest temperature)
 - **Error/protection states** — error strings `ErrStop`, `ErrStart`, `ErrSet`, `ErrComm`, `ErrConn`, `ErrDconn` suggest distinct codes for fault conditions. Fake-device probing (Apr 2026) ruled out simple "state byte = error code" patterns across 0x00-0xEE — every non-running state is treated as idle. **Confirmed Apr 2026 on real hardware:** battery disconnect mid-charge (C-CV at 20A) produces **no distinct error state** — the device emits one frame of 0x16 (charge complete) then transitions to 0x02 (idle), same as normal completion. The telltale is the abnormal readings: voltage spikes to 5.028V (charger open-circuited, above the 3.4V target) and current drops from 20A to 5.35A in one frame. The VB6 `ErrDconn` messages must be **client-side heuristics** (voltage > target + sudden current drop → disconnect), not protocol-level error codes.
 - **Other charge mode payloads** — C-NiMh/C-LiPo/C-LiFe/C-VRLA likely use the same 3-field format as C-CV, but with chemistry-specific cutoff interpretation
-- **Step test protocol** — confirmed (Apr 2026) to be host-driven (same pattern as Cycle Test below); exact semantics of multi-chemistry charge steps still need captures
+- ~~**Step test protocol**~~ — **resolved (May 2026):** fully host-driven, confirmed with live capture via fake device + EB Tester automation. 3-step program (D-CC → Wait → C-CV) produced: `0x01` D-CC start → `0x02` toggle (host-detected cutoff) → 64s silence (Wait) → `0x21` C-CV start. Byte 14 stayed 0 throughout — step tracking is 100% host-side. See PLAN-protocol-exercise.md item 8 for full hex.
 - ~~**Cycle test protocol**~~ — **resolved (Apr 2026):** fully host-driven. PC software emits Start / `0x02` load toggle per step; `Wait` and `Cycle` modes emit no serial traffic. See Cycle Test section above.
 - ~~**Calibration protocol**~~ — **resolved (Apr 2026):** CMD 0x04 fully decoded via fake-device capture. See command table and confirmed list above.
 - **Firmware update protocol** — the software has firmware update capability (`frmUpdate`, error strings `ErrUPD`, "Failed! Please check TTL cable")
@@ -737,7 +738,7 @@ Key controls: `MSComm1` (serial port), `tmrComm` (polling timer), `cmSocket` (ne
 1. **Disconnect battery mid-test** → capture error/protection state bytes
 2. ~~**D-CP discharge (constant power)**~~ → **done (Apr 2026):** CMD 0x11 payload confirmed: power (raw W, no divisor), cutoff voltage (÷100), max time (raw minutes). State 0x0B = running, 0x15 = time-complete (transitional), 0x01 = post-test idle.
 3. **C-LiPo or C-NiMh charge** → verify command format matches C-CV (CMD 0x51/0x31)
-4. **Step test with 2-3 steps** → capture step transitions, see byte 14 increment
+4. ~~**Step test with 2-3 steps**~~ → **done (May 2026):** 3-step D-CC→Wait→C-CV captured via fake device. Host-driven, byte 14 stayed 0.
 5. **Change setpoints mid-test** → capture CMD 0x08 (continue) behavior
 6. **Different device model** → confirm what info-packet bytes 14-15 encode (they are capability fields, not the device ID — see Device Identification) and record the real byte-16 value to validate the fake-device sweep
 

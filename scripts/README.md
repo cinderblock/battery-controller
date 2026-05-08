@@ -130,8 +130,8 @@ All responses are JSON. POST/PATCH bodies are JSON.
   capacity: number,         // mAh (device-accumulated on EBC family)
   currentSetpoint: number,  // A (echoed back in RX bytes 10-11)
   voltageSetpoint: number,  // V (echoed back in RX bytes 12-13)
-  cutoffCurrent: number,    // A (echoed back in RX byte 15)
-  step: number,             // step number for cycle tests
+  cutoffCurrent: number,    // A (echoed in RX bytes 14-15 for charge modes)
+  maxTime: number,          // minutes (echoed in RX bytes 14-15 for discharge modes)
   errors: number,           // reserved — byte layout of error flags unknown
   // simulation controls:
   auto: boolean,            // if true, voltage/current/capacity evolve with time

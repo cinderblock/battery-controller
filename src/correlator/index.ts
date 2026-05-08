@@ -388,6 +388,7 @@ async function main(): Promise<void> {
           field9: decoded.field9,
           field10: decoded.field10,
           field11: decoded.field11,
+          maxTimeOrCutoff: decoded.maxTimeOrCutoff,
           field12: decoded.field12,
           raw: toHex(raw),
         },

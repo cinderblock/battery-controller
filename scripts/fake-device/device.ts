@@ -163,7 +163,7 @@ export class FakeDevice {
       'currentSetpoint',
       'voltageSetpoint',
       'cutoffCurrent',
-      'step',
+      'maxTime',
       'errors',
       'auto',
       'autoRateVPerMin',
@@ -360,7 +360,7 @@ export class FakeDevice {
       currentSetpoint: 0,
       voltageSetpoint: 0,
       cutoffCurrent: 0,
-      step: 0,
+      maxTime: 0,
       errors: 0,
       auto: false,
       autoRateVPerMin: 0.1,
@@ -468,6 +468,7 @@ export class FakeDevice {
         if (decoded.currentSetpoint !== undefined) this.state.currentSetpoint = decoded.currentSetpoint;
         if (decoded.cutoffVoltage !== undefined) this.state.voltageSetpoint = decoded.cutoffVoltage;
         if (decoded.cutoffCurrent !== undefined) this.state.cutoffCurrent = decoded.cutoffCurrent;
+        if (decoded.maxTime !== undefined) this.state.maxTime = decoded.maxTime;
         if (CHARGE_MODES.has(modeOffset)) {
           this.state.mode = 'charging';
           this.state.current = this.state.currentSetpoint;
@@ -520,8 +521,7 @@ export class FakeDevice {
       field8_9: 0, // unknown slot — always 0 on A40L captures
       field10_11: this.state.currentSetpoint,
       field12_13: this.state.voltageSetpoint,
-      byte14: this.state.step,
-      byte15: Math.round(this.state.cutoffCurrent * this.profile.divisors.cutoffCurrent),
+      ...this.encodeBytes14_15(),
       byte16: this.profile.deviceConstantByte,
     });
   }
@@ -542,6 +542,23 @@ export class FakeDevice {
       byte15: this.profile.deviceSubtypeByte,
       byte16: this.profile.deviceConstantByte,
     });
+  }
+
+  /**
+   * Encode bytes 14-15 for a normal data frame as a base-240 pair.
+   * - Discharge modes: max time in minutes (raw)
+   * - Charge modes: cutoff current (raw = A * divisor)
+   */
+  private encodeBytes14_15(): { byte14: number; byte15: number } {
+    let raw: number;
+    if (this.state.mode === 'charging' || this.state.mode === 'complete') {
+      raw = Math.round(this.state.cutoffCurrent * this.profile.divisors.cutoffCurrent);
+    } else {
+      raw = this.state.maxTime; // already in minutes
+    }
+    const hi = Math.floor(raw / Base240Modulus);
+    const lo = raw % Base240Modulus;
+    return { byte14: hi, byte15: lo };
   }
 
   private stateByteForMode(mode: DeviceMode): number {

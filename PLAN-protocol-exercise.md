@@ -40,11 +40,32 @@ These 3 tests fill the biggest gaps in the protocol documentation.
 
 ## Phase 3: Advanced Features
 
-- [ ] **8. Step test** — Create a 3-step program (e.g. Charge → Wait → Discharge) and run it.
-  - Captures: How steps are communicated — individual commands per step? Or uploaded program? Watch byte 14 (step number) increment.
+- [x] **8. Step test** — ✅ Captured 2026-05-06 via fake device + EB Tester automation.
+  - 3-step program: D-CC (1A, cutoff 2.50V, 1 min) → Wait (1 min) → C-CV (1A, 3.65V, cutoff 2A).
+  - **Host-side orchestration confirmed**: VB6 app sends individual start commands per step. No program upload, no special cycle command.
+  - Step 1: CMD 0x01 (D-CC start) `fa 01 00 64 01 0a 00 01 6f f8` — current=1A, cutoff=2.50V, time=1min (bytes 6-7 = 0x00 0x01).
+  - Cutoff detection: VB6 monitors voltage in RX frames, sends CMD 0x02 (toggle) to stop when cutoff reached.
+  - Step 2 (Wait): Pure host-side — 64 seconds of silence between toggle and next start.
+  - Step 3: CMD 0x21 (C-CV start) `fa 21 00 64 01 7d 00 c8 01 f8` — current=1A, voltage=3.65V, bytes 6-7 = 0x00 0xC8 (=200, cutoff current 2A).
+  - Heartbeat (CMD 0x0A) observed with byte 3 = 0x01 (counter?).
+  - UI shows step numbering as "Cycle-Step" (e.g. "1-1", "1-2", "1-3"). Active step highlighted yellow (Wait) or red (running).
+  - **RX byte 14 stayed 0** — because max time was only 1 minute (base240(1) = [0x00, 0x01]). Byte 14 is the hi byte of the bytes 14-15 base-240 time/cutoff pair, NOT a step number. Confirmed 2026-05-07: time=300 → byte14=0x01, byte15=0x3C on real hardware. Step tracking is entirely host-side.
+
+- [x] **8b. D-CC bytes 6-7: base-240 time pair or two independent bytes?** — ✅ Resolved 2026-05-06 via fake device + EB Tester Single Test.
+  - **Answer: base-240 time pair. Our `encodeBase240` is correct.**
+  - VB6 app sends base-240 encoded time in TX bytes 6-7. No cap, no separate byte treatment.
+  - Test data (all via Single Test D-CC, 1A, cutoff 2.50V):
+    - time=0 → `[0x00, 0x00]` = base240(0) — unlimited
+    - time=239 → `[0x00, 0xEF]` = base240(239) — max single-byte value
+    - time=240 → `[0x01, 0x00]` = base240(240) — rolls over to hi byte
+    - time=300 → `[0x01, 0x3C]` = base240(300) — original question value
+    - time=9999 → `[0x29, 0x9F]` = base240(9999) — no UI cap
+  - Test 2 (step index in byte 6): **No.** Step test #8 sent time=1 → [0x00, 0x01]. Byte 6 is purely the base-240 high byte, not a step index. Step tracking is entirely host-side.
+  - Test 3 (real hardware): unnecessary — VB6 encoding is base-240, and VB6 works correctly with real hardware, so the device agrees.
 
 - [ ] **9. Cycle test** — Set up a 2-cycle charge/discharge.
   - Captures: How cycling is orchestrated (host-driven vs device-driven?).
+  - **Hypothesis from step test**: likely also host-driven — VB6 app just re-runs the step program for each cycle.
 
 - [ ] **10. Change setpoints mid-test** — Start D-CC at 1A, then change to 2A while running.
   - Captures: CMD 0x08 (continue). Confirm it updates setpoints without restarting.

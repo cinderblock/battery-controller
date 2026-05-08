@@ -243,8 +243,9 @@ export function decodeRxFrame(frame: ParsedFrame, family: DeviceFamily = 'ebd'):
       field7: decodeBase240(p[7], p[8], EbcDivisors.capacity),           // unknown, always 0 on A40L
       field8: decodeBase240(p[9], p[10], EbcDivisors.current),           // current setpoint echo ÷100
       field9: decodeBase240(p[11], p[12], EbcDivisors.setpointVoltage),  // voltage setpoint echo ÷100
-      field10: p[13],  // step number | info: device type
-      field11: p[14],  // cutoff current (raw) | info: subtype
+      field10: p[13],  // base-240 hi byte of time/cutoff | info: device type
+      field11: p[14],  // base-240 lo byte of time/cutoff | info: subtype
+      maxTimeOrCutoff: p[13] * Base240Modulus + p[14],  // base-240 pair: max time (min) or cutoff current (raw)
       field12: p[15],  // device constant (0x0A on A40L)
     };
   }
@@ -262,6 +263,7 @@ export function decodeRxFrame(frame: ParsedFrame, family: DeviceFamily = 'ebd'):
     field9: decodeBase240(p[11], p[12], Divisors.cutoffVoltage),    // UVC threshold ÷100
     field10: p[13],
     field11: p[14],
+    maxTimeOrCutoff: p[13] * Base240Modulus + p[14],
     field12: p[15],
   };
 }
@@ -292,10 +294,12 @@ export function decodeTxFrame(frame: ParsedFrame, family: DeviceFamily = 'ebd'):
     result.currentSetpoint = decodeBase240(p[1], p[2], currentDiv);
     result.cutoffVoltage = decodeBase240(p[3], p[4], voltageDiv);
 
-    // Charge mode commands also carry cutoff current in bytes 6-7
-    // (charging stops when current drops below this threshold)
     if (isChargeMode(p[0])) {
+      // Charge mode: bytes 6-7 = cutoff current (charging stops when current drops below)
       result.cutoffCurrent = decodeBase240(p[5], p[6], voltageDiv);
+    } else {
+      // Discharge mode: bytes 6-7 = max run time in minutes (base-240, raw)
+      result.maxTime = p[5] * Base240Modulus + p[6];
     }
   }
 
