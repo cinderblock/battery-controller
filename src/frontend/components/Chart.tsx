@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import uPlot from 'uplot';
-import type { ChartSeriesInfo, MetricKey, ThresholdLine } from '../lib/chart-data.ts';
+import type { BandDef, ChartSeriesInfo, MetricKey, ThresholdLine } from '../lib/chart-data.ts';
 import { formatElapsedShort } from '../lib/chart-data.ts';
 
 const MAX_TOOLTIP_ROWS = 16;
@@ -66,6 +66,7 @@ export interface ChartProps {
   seriesInfo: ChartSeriesInfo[];
   thresholds?: ThresholdLine[];
   scaleRanges?: Partial<Record<string, ScaleRange>>;
+  bands?: BandDef[];
   className?: string;
 }
 
@@ -89,7 +90,7 @@ const METRIC_UNIT: Record<MetricKey, string> = {
 
 // ── Component ──────────────────────────────────────────────────────
 
-export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, className }: ChartProps) {
+export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, bands: bandDefs = [], className }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const uplotRef = useRef<uPlot | null>(null);
   const tooltipRef = useRef<TooltipDOM | null>(null);
@@ -106,6 +107,10 @@ export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, cla
   // Keep scaleRanges in a ref so buildOptions reads current value
   const scaleRangesRef = useRef(scaleRanges);
   scaleRangesRef.current = scaleRanges;
+
+  // Keep band definitions in a ref
+  const bandDefsRef = useRef(bandDefs);
+  bandDefsRef.current = bandDefs;
 
   // Build a stable key from series info + scale ranges to detect when chart needs rebuild
   const rangesKey = Object.entries(scaleRanges).map(([k, v]) => `${k}:${v.min}-${v.max}`).join('|');
@@ -203,15 +208,22 @@ export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, cla
     ];
 
     for (const info of seriesInfo) {
+      const isBandBound = info.color === 'transparent';
       series.push({
-        label: info.label,
+        label: isBandBound ? undefined : info.label,
         scale: METRIC_SCALE[info.metric],
-        stroke: info.color,
-        width: info.isLive ? 2.5 : 1,
-        spanGaps: false,
+        stroke: isBandBound ? 'transparent' : info.color,
+        width: isBandBound ? 0 : (info.isLive ? 2.5 : 1),
+        spanGaps: true,
         points: { show: false },
       });
     }
+
+    // Build uPlot bands from our BandDef array
+    const uBands: uPlot.Band[] = bandDefsRef.current.map(b => ({
+      series: [b.minIdx, b.maxIdx] as [number, number],
+      fill: b.fill,
+    }));
 
     const tooltip = tooltipRef.current;
 
@@ -236,6 +248,7 @@ export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, cla
       },
       axes,
       series,
+      bands: uBands,
       legend: { show: false }, // We build our own legend panel
       hooks: {
         draw: [
@@ -290,6 +303,7 @@ export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, cla
             let rowIdx = 0;
             for (let si = 0; si < info.length; si++) {
               const s = info[si];
+              if (!s.label) continue; // skip band-bound series
               const val = u.data[si + 1]?.[idx];
               if (val == null) continue;
               if (rowIdx >= tooltip.rows.length) break;

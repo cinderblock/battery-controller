@@ -148,7 +148,7 @@ export function ChartView() {
         for (const rwd of runsWithData) {
           if (rwd.d.length === 0) continue;
           const label = rwd.cell_id ? `Cell #${rwd.cell_id}` : `Run #${rwd.id}`;
-          chartRuns.push(compactDataToChartRun(rwd, rwd.d, label));
+          chartRuns.push(compactDataToChartRun(rwd, rwd.d, label, rwd.downsampled));
         }
         setRuns(chartRuns);
         setVisibleRuns(new Set(chartRuns.map(r => r.id)));
@@ -355,7 +355,7 @@ export function ChartView() {
             <div className="chart-loading">Loading runs...</div>
           ) : chartMode === 'time' ? (
             chartData.data[0]?.length ? (
-              <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} thresholds={thresholds} scaleRanges={scaleRanges} />
+              <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} thresholds={thresholds} scaleRanges={scaleRanges} bands={chartData.bands} />
             ) : (
               <div className="chart-empty">
                 {runs.length === 0

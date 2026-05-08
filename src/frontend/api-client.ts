@@ -280,9 +280,15 @@ export interface TestRun {
   data_point_count: number;
 }
 
-/** Compact format: d = [[elapsed_s, voltage_v, current_a, power_w, capacity_mah, energy_mwh], ...] */
+/**
+ * Compact format:
+ * - Full-res: d = [[elapsed_s, voltage_v, current_a, power_w, capacity_mah, energy_mwh], ...]
+ * - Downsampled: d = [[elapsed_s, v_min, v_max, i_min, i_max, p_min, p_max, capacity_mah, energy_mwh], ...]
+ *   with downsampled = true
+ */
 export interface TestRunWithData extends TestRun {
   d: number[][];
+  downsampled?: boolean;
 }
 
 export interface DataPoint {

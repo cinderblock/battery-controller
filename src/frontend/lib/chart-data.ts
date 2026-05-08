@@ -29,6 +29,15 @@ export interface ChartRun {
   current: number[];
   power: number[];
   capacity: number[];
+  /** True when this run has downsampled min/max range data */
+  downsampled?: boolean;
+  /** Min/max ranges — only present for downsampled runs */
+  voltageMin?: number[];
+  voltageMax?: number[];
+  currentMin?: number[];
+  currentMax?: number[];
+  powerMin?: number[];
+  powerMax?: number[];
 }
 
 export interface ChartSeriesInfo {
@@ -55,11 +64,23 @@ export interface ThresholdLine {
   color: string;
 }
 
+/** Band fill between two series (for downsampled min/max ranges) */
+export interface BandDef {
+  /** Series index of the min bound (1-based, matching uPlot series) */
+  minIdx: number;
+  /** Series index of the max bound */
+  maxIdx: number;
+  /** Fill color */
+  fill: string;
+}
+
 export interface MergedChartData {
   /** Aligned data for uPlot: [xValues, ...seriesValues] */
   data: (number | null | undefined)[][];
   /** Metadata for each series (index 0 = X, so seriesInfo[0] = series at data[1]) */
   seriesInfo: ChartSeriesInfo[];
+  /** Band fills for downsampled min/max ranges */
+  bands?: BandDef[];
 }
 
 // ── Color palette ──────────────────────────────────────────────────
@@ -125,18 +146,57 @@ export function dataPointsToChartRun(
   return { id: meta.id, meta, label, elapsed, voltage, current, power, capacity };
 }
 
-/** Parse compact data rows: [elapsed_s, voltage_v, current_a, power_w, capacity_mah, energy_mwh] */
+/**
+ * Parse compact data rows.
+ * Full-res: [elapsed_s, voltage_v, current_a, power_w, capacity_mah, energy_mwh]
+ * Downsampled: [elapsed_s, v_min, v_max, i_min, i_max, p_min, p_max, capacity_mah, energy_mwh]
+ */
 export function compactDataToChartRun(
   meta: TestRun,
   rows: number[][],
   label: string,
+  downsampled?: boolean,
 ): ChartRun {
   const n = rows.length;
   const elapsed = new Array<number>(n);
+  const capacity = new Array<number>(n);
+
+  if (downsampled) {
+    // Downsampled: use midpoint of min/max as the main line, keep min/max for bands
+    const voltage = new Array<number>(n);
+    const current = new Array<number>(n);
+    const power = new Array<number>(n);
+    const voltageMin = new Array<number>(n);
+    const voltageMax = new Array<number>(n);
+    const currentMin = new Array<number>(n);
+    const currentMax = new Array<number>(n);
+    const powerMin = new Array<number>(n);
+    const powerMax = new Array<number>(n);
+
+    for (let i = 0; i < n; i++) {
+      const r = rows[i];
+      // [t, vMin, vMax, iMin, iMax, pMin, pMax, cap, energy]
+      elapsed[i] = r[0];
+      voltageMin[i] = r[1]; voltageMax[i] = r[2];
+      currentMin[i] = r[3]; currentMax[i] = r[4];
+      powerMin[i] = r[5]; powerMax[i] = r[6];
+      voltage[i] = (r[1] + r[2]) / 2;
+      current[i] = (r[3] + r[4]) / 2;
+      power[i] = (r[5] + r[6]) / 2;
+      capacity[i] = r[7] / 1000; // mAh → Ah
+    }
+
+    return {
+      id: meta.id, meta, label, elapsed, voltage, current, power, capacity,
+      downsampled: true,
+      voltageMin, voltageMax, currentMin, currentMax, powerMin, powerMax,
+    };
+  }
+
+  // Full resolution
   const voltage = new Array<number>(n);
   const current = new Array<number>(n);
   const power = new Array<number>(n);
-  const capacity = new Array<number>(n);
 
   for (let i = 0; i < n; i++) {
     const r = rows[i];
@@ -309,9 +369,16 @@ export function mergeRunsForChart(
 
   const data: (number | null | undefined)[][] = [xValues];
   const seriesInfo: ChartSeriesInfo[] = [];
+  const bands: BandDef[] = [];
   // Temperature is handled separately by addTemperatureSeries — exclude here
   const metricsArr = Array.from(visibleMetrics).filter(m => m !== 'temperature');
   const desatAlpha = isTestActive ? 0.20 : 1.0;
+
+  // Min/max range arrays for downsampled runs — only V and I (power/capacity don't need bands)
+  const RANGE_KEYS: Record<string, { min: keyof ChartRun; max: keyof ChartRun }> = {
+    voltage: { min: 'voltageMin', max: 'voltageMax' },
+    current: { min: 'currentMin', max: 'currentMax' },
+  };
 
   // Add series for each historical run
   for (let ri = 0; ri < historicalRuns.length; ri++) {
@@ -339,6 +406,9 @@ export function mergeRunsForChart(
         color: colorWithAlpha(baseColor, alpha),
         isLive: false,
       });
+
+      // TODO: re-enable band series once basic rendering is confirmed
+      // For downsampled runs, bands would add min/max fill areas
     }
   }
 
@@ -368,7 +438,7 @@ export function mergeRunsForChart(
     }
   }
 
-  return { data, seriesInfo };
+  return { data, seriesInfo, bands: bands.length > 0 ? bands : undefined };
 }
 
 // ── Temperature series ─────────────────────────────────────────────

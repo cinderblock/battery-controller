@@ -231,26 +231,26 @@ export function TopBar() {
 
       </header>
 
-      {bridgeActive && (
-        <div className="disconnect-banner disconnect-bridge">
+      {/* Status banner or timeline bar — always exactly one row */}
+      {bridgeActive ? (
+        <div className="cycle-timeline-bar banner-in-timeline disconnect-bridge">
           Bridge mode — sniffing serial traffic
         </div>
-      )}
-      {!wsConnected && (
-        <div className="disconnect-banner">
+      ) : !wsConnected ? (
+        <div className="cycle-timeline-bar banner-in-timeline">
           Server disconnected — reconnecting...
         </div>
-      )}
-      {wsConnected && !serialConnected && !bridgeActive && (
-        <div className="disconnect-banner disconnect-serial">
+      ) : !serialConnected ? (
+        <div className="cycle-timeline-bar banner-in-timeline disconnect-serial">
           Serial port disconnected — device not responding
         </div>
-      )}
-      {wsConnected && serialConnected && !deviceResponsive && !bridgeActive && (
-        <div className="disconnect-banner disconnect-hardware">
+      ) : !deviceResponsive && !bridgeActive ? (
+        <div className="cycle-timeline-bar banner-in-timeline disconnect-hardware">
           Server connected — hardware not responding
         </div>
-      )}
+      ) : !(cycleActive && cycleState && cycleState.execStepTypes.length > 0) ? (
+        <div className="cycle-timeline-bar" />
+      ) : null}
       {cycleActive && cycleState && cycleState.execStepTypes.length > 0 && (() => {
         // Compute progress % for the active step
         const activeIdx = cycleState.currentExecIndex;

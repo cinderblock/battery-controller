@@ -220,6 +220,20 @@ html, body {
   background: #1565c0;
 }
 
+/* Banner rendered inside the timeline bar slot */
+.banner-in-timeline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  animation: banner-slide-in 0.3s ease;
+}
+.banner-in-timeline:not(.disconnect-serial):not(.disconnect-hardware):not(.disconnect-bridge) {
+  background: var(--error);
+}
+
 /* ── Cycle info (inline in top bar) ───────────────────────────── */
 
 .top-bar-cycle {
