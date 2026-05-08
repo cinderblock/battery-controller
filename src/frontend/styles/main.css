@@ -410,6 +410,7 @@ html, body {
   grid-column: 1 / -1;
   grid-row: 3;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
@@ -418,6 +419,60 @@ html, body {
 }
 
 .bottom-spacer { flex: 1; }
+
+/* ── Run filter chips ──────────────────────────────────────────── */
+
+.run-filters {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.filter-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 2px;
+}
+
+.filter-chip {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-dim);
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s;
+  opacity: 0.5;
+}
+
+.filter-chip.active {
+  opacity: 1;
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.filter-chip.filter-charge.active {
+  border-color: var(--charge-color);
+  color: var(--charge-color);
+}
+
+.filter-chip.filter-discharge.active {
+  border-color: var(--discharge-color);
+  color: var(--discharge-color);
+}
+
+.filter-chip.filter-complete.active {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.filter-chip.filter-partial.active {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
 
 .group-select {
   background: var(--surface-2);

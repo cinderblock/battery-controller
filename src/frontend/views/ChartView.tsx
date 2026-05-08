@@ -84,6 +84,12 @@ export function ChartView() {
   );
   const [visibleRuns, setVisibleRuns] = useState<Set<number>>(() => new Set());
 
+  // ── Run filters ──────────────────────────────────────────────
+  const [showCharge, setShowCharge] = useState(true);
+  const [showDischarge, setShowDischarge] = useState(true);
+  const [showComplete, setShowComplete] = useState(true);
+  const [showPartial, setShowPartial] = useState(true);
+
   // ── Auto-detect cell insertion ────────────────────────────────
   // When the device is idle and voltage jumps from near-zero to cell range,
   // a new cell was probably inserted → auto-open the start modal.
@@ -140,6 +146,30 @@ export function ChartView() {
       .catch(() => setActiveRunMeta(null));
   }, [state.activeRunId]);
 
+  // ── Run filter helpers ──────────────────────────────────────────
+  const runPassesFilter = useCallback((run: ChartRun) => {
+    // Still-running runs always pass
+    if (run.meta.ended_at == null) return true;
+
+    const mode = run.meta.mode;
+    const isCharge = mode === 'c-cv';
+    const isDischarge = mode === 'd-cc' || mode === 'd-cp';
+    // Runs that are neither charge nor discharge (e.g. wait) always pass
+    if (isCharge && !showCharge) return false;
+    if (isDischarge && !showDischarge) return false;
+
+    const isComplete = run.meta.end_reason === 'complete';
+    if (isComplete && !showComplete) return false;
+    if (!isComplete && !showPartial) return false;
+
+    return true;
+  }, [showCharge, showDischarge, showComplete, showPartial]);
+
+  // When filters or runs change, recompute visible runs
+  useEffect(() => {
+    setVisibleRuns(new Set(runs.filter(runPassesFilter).map(r => r.id)));
+  }, [runs, runPassesFilter]);
+
   // ── Load historical runs ──────────────────────────────────────
   const loadRuns = useCallback(() => {
     return api<TestRunWithData[]>('/api/runs/recent?limit=100&withData=1')
@@ -151,7 +181,6 @@ export function ChartView() {
           chartRuns.push(compactDataToChartRun(rwd, rwd.d, label, rwd.downsampled));
         }
         setRuns(chartRuns);
-        setVisibleRuns(new Set(chartRuns.map(r => r.id)));
 
         // Fetch temperature data for all runs in parallel
         const tempMap = new Map<number, TempDataPoint[]>();
@@ -394,6 +423,34 @@ export function ChartView() {
               onClick={() => setChartMode('capacity')}
             >
               V-Ah
+            </button>
+          </div>
+
+          <div className="run-filters">
+            <button
+              className={`filter-chip filter-charge${showCharge ? ' active' : ''}`}
+              onClick={() => setShowCharge(v => !v)}
+            >
+              Charge
+            </button>
+            <button
+              className={`filter-chip filter-discharge${showDischarge ? ' active' : ''}`}
+              onClick={() => setShowDischarge(v => !v)}
+            >
+              Discharge
+            </button>
+            <span className="filter-sep" />
+            <button
+              className={`filter-chip filter-complete${showComplete ? ' active' : ''}`}
+              onClick={() => setShowComplete(v => !v)}
+            >
+              Complete
+            </button>
+            <button
+              className={`filter-chip filter-partial${showPartial ? ' active' : ''}`}
+              onClick={() => setShowPartial(v => !v)}
+            >
+              Partial
             </button>
           </div>
 
