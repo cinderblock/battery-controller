@@ -147,6 +147,38 @@ export function ChartView() {
   }, [state.activeRunId]);
 
   // ── Run filter helpers ──────────────────────────────────────────
+
+  /** Check whether a run looks like a "complete" cycle based on actual data.
+   *  Charge: started below midpoint voltage, ended at/near cutoff current.
+   *  Discharge: started above midpoint voltage, ended at/near cutoff voltage. */
+  const isRunComplete = useCallback((run: ChartRun, group: CellGroup | null): boolean => {
+    const n = run.voltage.length;
+    if (n === 0) return false;
+    const startV = run.voltage[0];
+    const endV = run.voltage[n - 1];
+    const endI = run.current[n - 1];
+    const mode = run.meta.mode;
+
+    // Derive voltage midpoint from cell group range (default LFP 2.8–3.65)
+    const vLow = group?.discharge_cutoff_v ?? 2.8;
+    const vHigh = group?.charge_voltage_v ?? 3.65;
+    const vMid = (vLow + vHigh) / 2;
+
+    if (mode === 'c-cv') {
+      // Charge complete: started below midpoint AND ended at cutoff current
+      const cutoffA = run.meta.setpoint_cutoff_current_a ?? group?.charge_cutoff_current_a ?? 2;
+      return startV < vMid && endI <= cutoffA * 1.1;
+    }
+    if (mode === 'd-cc' || mode === 'd-cp') {
+      // Discharge complete: started above midpoint AND ended at cutoff voltage
+      const cutoffV = run.meta.setpoint_cutoff_v ?? vLow;
+      return startV > vMid && endV <= cutoffV + 0.05;
+    }
+    return false;
+  }, []);
+
+  const selectedGroup = cellGroups.find(g => g.id === selectedGroupId) ?? null;
+
   const runPassesFilter = useCallback((run: ChartRun) => {
     // Still-running runs always pass
     if (run.meta.ended_at == null) return true;
@@ -158,12 +190,12 @@ export function ChartView() {
     if (isCharge && !showCharge) return false;
     if (isDischarge && !showDischarge) return false;
 
-    const isComplete = run.meta.end_reason === 'complete';
-    if (isComplete && !showComplete) return false;
-    if (!isComplete && !showPartial) return false;
+    const complete = isRunComplete(run, selectedGroup);
+    if (complete && !showComplete) return false;
+    if (!complete && !showPartial) return false;
 
     return true;
-  }, [showCharge, showDischarge, showComplete, showPartial]);
+  }, [showCharge, showDischarge, showComplete, showPartial, selectedGroup, isRunComplete]);
 
   // When filters or runs change, recompute visible runs
   useEffect(() => {
@@ -246,7 +278,6 @@ export function ChartView() {
   }, [runs, state.livePoints, visibleRuns, visibleMetrics, isTestActive, state.activeRunId, tempDataByRun, state.tempReadings, state.reading]);
 
   // ── Capacity chart data ───────────────────────────────────────
-  const selectedGroup = cellGroups.find(g => g.id === selectedGroupId) ?? null;
   const nominalMah = selectedGroup?.nominal_capacity_mah ?? 200000;
   const nominalAh = nominalMah / 1000;
 
