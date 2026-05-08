@@ -26,7 +26,6 @@ export interface DecodedReading {
   rawField7: number;
   setpointEcho: number;
   cutoffEcho: number;
-  stepByte: number;
   maxTimeEcho: number;
 }
 

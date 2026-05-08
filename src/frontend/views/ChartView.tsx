@@ -276,6 +276,29 @@ export function ChartView() {
     return lines;
   }, [activeRunMeta]);
 
+  // ── Scale ranges: align V and A axes to cell parameters ─────
+  const scaleRanges = useMemo(() => {
+    const ranges: Record<string, { min: number; max: number }> = {};
+    const group = selectedGroup;
+    if (group) {
+      // Voltage: discharge cutoff → charge voltage
+      if (group.discharge_cutoff_v != null && group.charge_voltage_v != null) {
+        ranges.V = { min: group.discharge_cutoff_v, max: group.charge_voltage_v };
+      }
+      // Current: 0 → max setpoint current across all loaded runs
+      let maxA = 0;
+      for (const r of runs) {
+        if (r.meta.setpoint_current_a != null && r.meta.setpoint_current_a > maxA) {
+          maxA = r.meta.setpoint_current_a;
+        }
+      }
+      if (maxA > 0) {
+        ranges.A = { min: 0, max: maxA };
+      }
+    }
+    return ranges;
+  }, [selectedGroup, runs]);
+
   // ── Toggle handlers ──────────────────────────────────────────
   const toggleMetric = useCallback((metric: MetricKey) => {
     setVisibleMetrics(prev => {
@@ -332,7 +355,7 @@ export function ChartView() {
             <div className="chart-loading">Loading runs...</div>
           ) : chartMode === 'time' ? (
             chartData.data[0]?.length ? (
-              <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} thresholds={thresholds} />
+              <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} thresholds={thresholds} scaleRanges={scaleRanges} />
             ) : (
               <div className="chart-empty">
                 {runs.length === 0
@@ -404,7 +427,7 @@ export function ChartView() {
               {state.stopping ? 'Stopping...' : 'Stop'}
             </button>
           ) : (
-            <button className="btn btn-new-run" onClick={() => setStartModalOpen(true)}>
+            <button className="btn btn-new-run" onClick={() => setStartModalOpen(true)} disabled={state.bridgeActive}>
               New Run
             </button>
           )}

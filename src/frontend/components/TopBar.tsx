@@ -143,7 +143,7 @@ export function TopBar() {
           )}
         </div>
 
-        {!bridgeActive && reading && (
+        {reading && (
           <div className="top-bar-readings">
             <span className="reading-val rv-voltage">
               <span className="reading-num">{reading.voltage.toFixed(3)}</span>
@@ -187,12 +187,6 @@ export function TopBar() {
               <span className="reading-val rv-raw">
                 <span className="reading-num">{reading.maxTimeEcho}</span>
                 <span className="reading-unit">tMax</span>
-              </span>
-            )}
-            {reading.stepByte != null && (
-              <span className="reading-val rv-raw">
-                <span className="reading-num">{reading.stepByte}</span>
-                <span className="reading-unit">step</span>
               </span>
             )}
             {reading.rawField7 != null && (
@@ -239,7 +233,7 @@ export function TopBar() {
 
       {bridgeActive && (
         <div className="disconnect-banner disconnect-bridge">
-          Serial proxy active — forwarding to TCP {49600}
+          Bridge mode — sniffing serial traffic
         </div>
       )}
       {!wsConnected && (

@@ -51,9 +51,7 @@ export interface DecodedReading {
   setpointEcho: number;
   /** Decoded cutoff voltage echo (bytes 12-13, ÷100 → V) */
   cutoffEcho: number;
-  /** Step/mode byte (byte 14) */
-  stepByte: number;
-  /** Max time or cutoff echo (byte 15) */
+  /** Max time or cutoff current echo (bytes 14-15, base-240) */
   maxTimeEcho: number;
 }
 
@@ -88,7 +86,7 @@ type SessionListener = (event: SessionEvent) => void;
 
 // ── State byte → mode mapping ──────────────────────────────────────
 
-function stateByteToMode(state: number): DeviceMode {
+export function stateByteToMode(state: number): DeviceMode {
   // Strip info offset if present
   const normalState = state >= INFO_STATE_OFFSET ? state - INFO_STATE_OFFSET : state;
 
@@ -152,7 +150,6 @@ export class DeviceSession {
   private rawField7 = 0;
   private setpointEcho = 0;
   private cutoffEcho = 0;
-  private stepByte = 0;
   private maxTimeEcho = 0;
   private lastStateByte = 0;
 
@@ -213,7 +210,7 @@ export class DeviceSession {
     this.scheduleInitProbe();
   }
 
-  /** Stop listening and clean up timers */
+  /** Stop listening and clean up timers. Resets state so start() reinitializes cleanly. */
   destroy(): void {
     this.unsubPacket?.();
     this.unsubConnection?.();
@@ -221,6 +218,11 @@ export class DeviceSession {
     this.stopWatchdog();
     this.clearCommandTimeout();
     this.clearInitTimer();
+
+    // Reset state machine so start() will send init and detect mid-test recovery
+    this.firstPacketReceived = false;
+    this.initSent = false;
+    this.deviceResponsive = false;
   }
 
   /** Subscribe to session events */
@@ -263,7 +265,6 @@ export class DeviceSession {
       rawField7: this.rawField7,
       setpointEcho: this.setpointEcho,
       cutoffEcho: this.cutoffEcho,
-      stepByte: this.stepByte,
       maxTimeEcho: this.maxTimeEcho,
     };
   }
@@ -300,8 +301,7 @@ export class DeviceSession {
     const field7raw = decodeBase240(payload[7], payload[8], 1);
     const setpointEcho = decodeBase240(payload[9], payload[10], EbcDivisors.current);
     const cutoffEcho = decodeBase240(payload[11], payload[12], EbcDivisors.setpointVoltage);
-    const stepByte = payload[13];
-    const maxTimeEcho = payload[14];
+    const maxTimeEcho = decodeBase240(payload[13], payload[14], 1);
 
     // Log field7 when non-zero to understand what it carries on high-capacity tests
     if (field7raw !== 0 && !isInfoPacket(payload[0])) {
@@ -365,7 +365,6 @@ export class DeviceSession {
     this.rawField7 = field7raw;
     this.setpointEcho = setpointEcho;
     this.cutoffEcho = cutoffEcho;
-    this.stepByte = stepByte;
     this.maxTimeEcho = maxTimeEcho;
     this.lastStateByte = stateByte;
 
@@ -436,7 +435,6 @@ export class DeviceSession {
       rawField7: this.rawField7,
       setpointEcho: this.setpointEcho,
       cutoffEcho: this.cutoffEcho,
-      stepByte: this.stepByte,
       maxTimeEcho: this.maxTimeEcho,
     };
 

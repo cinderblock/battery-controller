@@ -55,10 +55,17 @@ function createTooltipEl(): TooltipDOM {
 
 // ── Types ──────────────────────────────────────────────────────────
 
+/** Fixed range for a Y scale — aligns 0% and 100% across multiple scales */
+export interface ScaleRange {
+  min: number;
+  max: number;
+}
+
 export interface ChartProps {
   data: (number | null | undefined)[][];
   seriesInfo: ChartSeriesInfo[];
   thresholds?: ThresholdLine[];
+  scaleRanges?: Partial<Record<string, ScaleRange>>;
   className?: string;
 }
 
@@ -82,7 +89,7 @@ const METRIC_UNIT: Record<MetricKey, string> = {
 
 // ── Component ──────────────────────────────────────────────────────
 
-export function Chart({ data, seriesInfo, thresholds = [], className }: ChartProps) {
+export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, className }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const uplotRef = useRef<uPlot | null>(null);
   const tooltipRef = useRef<TooltipDOM | null>(null);
@@ -96,8 +103,13 @@ export function Chart({ data, seriesInfo, thresholds = [], className }: ChartPro
   const thresholdsRef = useRef(thresholds);
   thresholdsRef.current = thresholds;
 
-  // Build a stable key from series info to detect when series structure changes
-  const seriesKey = seriesInfo.map(s => `${s.runId}:${s.metric}:${s.isLive}`).join('|');
+  // Keep scaleRanges in a ref so buildOptions reads current value
+  const scaleRangesRef = useRef(scaleRanges);
+  scaleRangesRef.current = scaleRanges;
+
+  // Build a stable key from series info + scale ranges to detect when chart needs rebuild
+  const rangesKey = Object.entries(scaleRanges).map(([k, v]) => `${k}:${v.min}-${v.max}`).join('|');
+  const seriesKey = seriesInfo.map(s => `${s.runId}:${s.metric}:${s.isLive}`).join('|') + '||' + rangesKey;
 
   const buildOptions = useCallback((): uPlot.Options => {
     const seriesInfo = seriesInfoRef.current;
@@ -212,8 +224,12 @@ export function Chart({ data, seriesInfo, thresholds = [], className }: ChartPro
       },
       scales: {
         x: { time: false },
-        V: { auto: true },
-        A: { auto: true },
+        V: scaleRangesRef.current.V
+          ? { auto: false, range: [scaleRangesRef.current.V.min, scaleRangesRef.current.V.max] as [number, number] }
+          : { auto: true },
+        A: scaleRangesRef.current.A
+          ? { auto: false, range: [scaleRangesRef.current.A.min, scaleRangesRef.current.A.max] as [number, number] }
+          : { auto: true },
         W: { auto: true, range: (_u: uPlot, min: number, max: number) => [Math.max(0, min - 5), max + 5] as [number, number] },
         Ah: { auto: true, range: (_u: uPlot, min: number, max: number) => [0, max * 1.05] as [number, number] },
         '°C': { auto: true },
