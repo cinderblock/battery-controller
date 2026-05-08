@@ -10,9 +10,11 @@
 import homepage from '../frontend/index.html';
 import { logger } from '../utils/logger.ts';
 import { shutdown } from '../utils/shutdown.ts';
+import { parseFrame, decodeBase240, isInfoPacket, decodeTxFrame } from '../protocol/codec.ts';
+import { EbcDivisors } from '../protocol/constants.ts';
 import { SerialManager } from './serial.ts';
 import { startTcpBridge, startTcpBridgeStandalone, type TcpBridge } from './tcp-bridge.ts';
-import { DeviceSession, type DecodedReading, type RecoveryState, type SessionEvent } from './device-session.ts';
+import { DeviceSession, stateByteToMode, type DecodedReading, type RecoveryState, type SessionEvent } from './device-session.ts';
 import { TestRecorder, type TestSetpoints } from './test-recorder.ts';
 import { SettingsLock } from './settings-lock.ts';
 import { CycleRunner } from './cycle-runner.ts';
@@ -90,8 +92,20 @@ function broadcast(event: string, data: unknown): void {
 
 // ── JSON helpers ───────────────────────────────────────────────────
 
-function jsonResponse(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
+function jsonResponse(data: unknown, status = 200, req?: Request): Response {
+  const json = JSON.stringify(data);
+  // Gzip large responses when the client supports it
+  if (req && json.length > 4096 && req.headers.get('accept-encoding')?.includes('gzip')) {
+    const compressed = Bun.gzipSync(Buffer.from(json));
+    return new Response(compressed, {
+      status,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Encoding': 'gzip',
+      },
+    });
+  }
+  return new Response(json, {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
@@ -294,32 +308,102 @@ async function main() {
 
   // ── Bridge mode toggle ────────────────────────────────────────
   let activeBridge: TcpBridge | null = null;
+  let bridgeEnabling = false;
 
   async function enableBridge(): Promise<void> {
-    if (activeBridge) return;
+    if (activeBridge || bridgeEnabling) return;
+    bridgeEnabling = true;
 
-    // Tear down device pipeline — release the serial port
-    cycleRunner.stop();
-    recorder.stop();
-    session.destroy();
-    await serialManager.disconnect();
-
-    // Start the TCP bridge (opens serial port itself)
-    activeBridge = await startTcpBridge();
+    // Notify clients immediately so UI disables controls during transition
     broadcast('bridgeState', { active: true });
-    logger.info('Bridge mode enabled — serial port handed to TCP bridge');
+
+    try {
+      // Tear down device pipeline — release the serial port
+      cycleRunner.stop();
+      recorder.stop();
+      session.destroy();
+      await serialManager.disconnect();
+
+      // Start the TCP bridge with frame sniffing (opens serial port itself)
+      // skipPortConfig: SerialManager already configured stty 9600 8E1
+      activeBridge = await startTcpBridge({
+        skipPortConfig: true,
+        onFrame(direction, frameBytes) {
+          const parsed = parseFrame(frameBytes, direction);
+          if (!parsed?.checksumValid) return;
+          const p = parsed.payload;
+
+          if (direction === 'rx') {
+            const stateByte = p[0];
+            const isInfo = isInfoPacket(stateByte);
+            const current = decodeBase240(p[1], p[2], EbcDivisors.current);
+            const voltage = decodeBase240(p[3], p[4], EbcDivisors.voltage);
+            const capacityMah = decodeBase240(p[5], p[6], EbcDivisors.capacity);
+            const rawField7 = decodeBase240(p[7], p[8], 1);
+            const setpointEcho = decodeBase240(p[9], p[10], EbcDivisors.current);
+            const cutoffEcho = decodeBase240(p[11], p[12], EbcDivisors.setpointVoltage);
+            const maxTimeEcho = p[13] * 240 + p[14];
+
+            broadcast('bridgeReading', {
+              mode: stateByteToMode(stateByte),
+              stateByte,
+              voltage,
+              current,
+              power: voltage * current,
+              capacityMah,
+              capacityAh: capacityMah / 1000,
+              energyMwh: 0,
+              energyWh: 0,
+              elapsedS: 0,
+              timestamp: Date.now(),
+              isInfoPacket: isInfo,
+              rawField7,
+              setpointEcho,
+              cutoffEcho,
+              maxTimeEcho,
+            });
+          } else {
+            const decoded = decodeTxFrame(parsed, 'ebc');
+            broadcast('bridgeCommand', {
+              command: p[0],
+              commandName: decoded.commandName,
+              currentSetpoint: decoded.currentSetpoint,
+              cutoffVoltage: decoded.cutoffVoltage,
+              maxTime: decoded.maxTime,
+              timestamp: Date.now(),
+            });
+          }
+        },
+      });
+      logger.info('Bridge mode enabled — serial port handed to TCP bridge');
+    } catch (err) {
+      broadcast('bridgeState', { active: false });
+      throw err;
+    } finally {
+      bridgeEnabling = false;
+    }
   }
 
   async function disableBridge(): Promise<void> {
     if (!activeBridge) return;
+    logger.info('Disabling bridge mode...');
 
     // Stop the TCP bridge — closes serial port and TCP listener
     await activeBridge.stop();
     activeBridge = null;
+    logger.info('Bridge stopped, reconnecting serial...');
 
-    // Reconnect the device pipeline
-    await serialManager.connect();
+    // Reconnect the device pipeline (skip stty — bridge preserved the 9600 8E1 config)
+    await serialManager.connect({ skipPortConfig: true });
     session.start();
+
+    // Immediately poke the device — it may have stopped streaming
+    // after EB Tester's heartbeats ceased during bridge mode
+    logger.info('Sending init to restart device data stream...');
+    session.sendInit().catch((err) => {
+      logger.error('Init after bridge disable failed:', err);
+    });
+
     cycleRunner.start();
     recorder.start();
 
@@ -366,7 +450,7 @@ async function main() {
             deviceResponsive: session.isDeviceResponsive(),
             locked: settingsLock.isLocked(),
             cycleState: cycleRunner.getState(),
-            bridgeActive: activeBridge !== null,
+            bridgeActive: activeBridge !== null || bridgeEnabling,
             temperature: {
               channels: tempManager.getChannels(),
               readings: tempManager.getLastReadings(),
@@ -391,7 +475,7 @@ async function main() {
 
     // ── Test control ──────────────────────────────────────────
     if (pathname === '/api/test/start' && method === 'POST') {
-      if (activeBridge) return errorResponse('Cannot start test while bridge mode is active', 409);
+      if (activeBridge || bridgeEnabling) return errorResponse('Cannot start test while bridge mode is active', 409);
       const locked = requireUnlocked();
       if (locked) return locked;
 
@@ -514,7 +598,7 @@ async function main() {
         activeRunId: recorder.getActiveRunId(),
         deviceInfo: session.getDeviceInfo(),
         serialConnected: serialManager.isPortOpen(),
-        bridgeActive: activeBridge !== null,
+        bridgeActive: activeBridge !== null || bridgeEnabling,
       });
     }
 
@@ -573,9 +657,9 @@ async function main() {
       const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
       // If ?withData=1, return runs bundled with compact data points (single request)
       if (url.searchParams.get('withData') === '1') {
-        return jsonResponse(getRecentRunsWithData(limit));
+        return jsonResponse(getRecentRunsWithData(limit), 200, req);
       }
-      return jsonResponse(getRecentTestRuns(limit));
+      return jsonResponse(getRecentTestRuns(limit), 200, req);
     }
 
     // /api/runs/:id
@@ -949,7 +1033,7 @@ async function main() {
     }
 
     if (pathname === '/api/bridge/start' && method === 'POST') {
-      if (activeBridge) return errorResponse('Bridge already active', 409);
+      if (activeBridge || bridgeEnabling) return errorResponse('Bridge already active', 409);
       if (session.isRunning()) return errorResponse('Cannot enable bridge while a test is running', 409);
       try {
         await enableBridge();
@@ -1015,7 +1099,7 @@ async function main() {
       try { client.controller.enqueue(ping); }
       catch { client.closed = true; sseClients.delete(client); }
     }
-  }, 15_000);
+  }, 5_000);
 
   // ── Create server ─────────────────────────────────────────────
   const server = Bun.serve({
