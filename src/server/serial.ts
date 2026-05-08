@@ -57,12 +57,14 @@ export class SerialManager {
     private baudRate: number = 9600
   ) {}
 
-  async connect() {
+  async connect(options?: { skipPortConfig?: boolean }) {
     logger.info(`📟 Connecting to serial port: ${this.portPath} @ ${this.baudRate} baud`);
 
     try {
-      // Configure serial port using stty
-      await this.configurePort();
+      // Configure serial port using stty (skip if caller knows settings are already correct)
+      if (!options?.skipPortConfig) {
+        await this.configurePort();
+      }
 
       // Open the serial device file for reading and writing
       this.fileHandle = await open(this.portPath, 'r+');
@@ -87,6 +89,7 @@ export class SerialManager {
 
     const handle = this.fileHandle;
     this.fileHandle = null;
+    this.readBufferOffset = 0; // Clear stale partial frames for next connect
     await handle.close();
 
     logger.info('📴 Serial port disconnected');
@@ -107,41 +110,44 @@ export class SerialManager {
   private async doReading() {
     if (!this.fileHandle) throw new Error('Serial port not connected');
 
-    let consecutiveZeroReads = 0;
-
     while (this.fileHandle) {
-      // Blocks until data is available (stty min 1)
+      // Read with 1-second timeout (stty min 0 time 10).
+      // Returns 0 bytes on timeout — allows the loop to check this.fileHandle
+      // and exit cleanly on disconnect, rather than blocking forever.
       const { bytesRead } = await this.fileHandle.read(
         this.readBuffer,
         this.readBufferOffset,
         this.readBuffer.length - this.readBufferOffset
       );
 
-      if (bytesRead === 0) {
-        consecutiveZeroReads++;
-        if (consecutiveZeroReads >= 10) {
-          logger.error('Serial port returning no data after 10 attempts, disconnecting');
-          this.disconnect();
-          return;
-        }
-        await Bun.sleep(500);
-        continue;
-      }
+      if (bytesRead === 0) continue; // timeout, no data — check loop condition
 
-      consecutiveZeroReads = 0;
       this.readBufferOffset += bytesRead;
       this.parseBuffer();
     }
   }
 
   private parseBuffer(): void {
-    for (let i = 0; i < this.readBufferOffset - RxPacketLength; i++) {
+    let foundAny = false;
+    for (let i = 0; i <= this.readBufferOffset - RxPacketLength; i++) {
       if (!this.parsePacket(this.readBuffer.slice(i, i + RxPacketLength))) continue;
 
+      foundAny = true;
       const end = i + RxPacketLength;
       this.readBuffer.copy(this.readBuffer, 0, end, this.readBufferOffset);
       this.readBufferOffset -= end;
       i = -1; // restart loop
+    }
+
+    // If buffer is filling up with unparseable data (stale bytes, corruption),
+    // discard old bytes to make room for new reads. Keep only the tail which
+    // could be the start of a partial valid packet arriving next.
+    if (!foundAny && this.readBufferOffset > RxPacketLength * 4) {
+      const keep = RxPacketLength - 1;
+      const discard = this.readBufferOffset - keep;
+      this.readBuffer.copy(this.readBuffer, 0, discard, this.readBufferOffset);
+      this.readBufferOffset = keep;
+      logger.warn(`Discarded ${discard} unparseable bytes from serial buffer`);
     }
   }
 
@@ -199,9 +205,9 @@ export class SerialManager {
         'raw', // Raw mode
         '-echo', // No echo
         'min',
-        '1', // Wait for at least 1 character before returning reads
+        '0', // Return immediately with whatever is available
         'time',
-        '0', // No timeout
+        '10', // 1-second timeout (deciseconds) — returns 0 bytes on timeout
       ];
 
       const argsString = args.join(' ');

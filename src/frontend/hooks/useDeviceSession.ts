@@ -272,6 +272,13 @@ export function useDeviceSessionManager(): SessionContextValue {
       setState(s => ({ ...s, bridgeActive: data.active }));
     });
 
+    es.addEventListener('bridgeReading', (e) => {
+      let r: any;
+      try { r = JSON.parse(e.data); } catch { return; }
+      // Update reading from sniffed bridge traffic (don't change mode or accumulate chart points)
+      setState(s => ({ ...s, reading: r }));
+    });
+
     es.addEventListener('deviceResponsive', (e) => {
       let data: any;
       try { data = JSON.parse(e.data); } catch { return; }

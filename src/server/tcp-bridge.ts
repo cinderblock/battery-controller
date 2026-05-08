@@ -16,7 +16,8 @@ import { spawn } from 'node:child_process';
 import type { FileHandle } from 'node:fs/promises';
 import { open } from 'node:fs/promises';
 import type { Socket, TCPSocketListener } from 'bun';
-import { BaudRate } from '../protocol/constants.ts';
+import { scanForFrames } from '../protocol/codec.ts';
+import { BaudRate, RxPacketLength, TxPacketLength } from '../protocol/constants.ts';
 import { BridgeTcpPort } from '../run/config.ts';
 import { logger } from '../utils/logger.ts';
 
@@ -39,9 +40,9 @@ async function configureSerialPort(portPath: string): Promise<void> {
       'raw', // Raw mode
       '-echo', // No echo
       'min',
-      '1', // Wait for at least 1 character before returning reads
+      '0', // Return immediately with whatever is available
       'time',
-      '0', // No timeout
+      '10', // 1-second timeout (deciseconds) — returns 0 bytes on timeout
     ];
 
     logger.info(`[bridge] Configuring serial port: stty ${args.join(' ')}`);
@@ -64,6 +65,13 @@ async function configureSerialPort(portPath: string): Promise<void> {
 
 // ── Stoppable bridge instance ────────────────────────────────────
 
+export interface BridgeOptions {
+  /** Called when a complete frame is detected in either direction */
+  onFrame?: (direction: 'tx' | 'rx', frame: Uint8Array) => void;
+  /** Skip stty configuration (port already configured by SerialManager) */
+  skipPortConfig?: boolean;
+}
+
 export interface TcpBridge {
   /** Stop the bridge, close serial port and TCP listener */
   stop(): Promise<void>;
@@ -78,13 +86,15 @@ export interface TcpBridge {
  * - Listens for a single TCP client on the bridge port
  * - Forwards bytes bidirectionally with no parsing or buffering
  */
-export async function startTcpBridge(): Promise<TcpBridge> {
+export async function startTcpBridge(options: BridgeOptions = {}): Promise<TcpBridge> {
   logger.info(`[bridge] Starting TCP-serial bridge`);
   logger.info(`[bridge] Serial port: ${SERIAL_PORT}`);
   logger.info(`[bridge] TCP port: ${TCP_PORT}`);
 
-  // Configure serial port
-  await configureSerialPort(SERIAL_PORT);
+  // Configure serial port (skip if caller already configured it)
+  if (!options.skipPortConfig) {
+    await configureSerialPort(SERIAL_PORT);
+  }
 
   // Open serial port for read/write
   const serialHandle: FileHandle = await open(SERIAL_PORT, 'r+');
@@ -94,30 +104,40 @@ export async function startTcpBridge(): Promise<TcpBridge> {
   let activeClient: Socket<unknown> | null = null;
   let stopped = false;
 
+  // Frame sniff buffers (for passively decoding traffic without altering it)
+  let rxSniffBuffer = new Uint8Array(0);
+  let txSniffBuffer = new Uint8Array(0);
+
+  function appendBytes(existing: Uint8Array, incoming: Uint8Array): Uint8Array {
+    const combined = new Uint8Array(existing.length + incoming.length);
+    combined.set(existing);
+    combined.set(incoming, existing.length);
+    return combined;
+  }
+
   // Start reading from serial port and forwarding to TCP
   const serialReadBuffer = new Uint8Array(1024);
 
   async function serialReadLoop() {
-    let consecutiveZeroReads = 0;
-
     try {
       while (!stopped) {
         const { bytesRead } = await serialHandle.read(serialReadBuffer, 0, serialReadBuffer.length);
-        if (bytesRead === 0) {
-          consecutiveZeroReads++;
-          if (consecutiveZeroReads >= 10) {
-            logger.error('[bridge] Serial port returning no data after 10 attempts, closing');
-            break;
-          }
-          await Bun.sleep(500);
-          continue;
-        }
+        if (bytesRead === 0) continue; // timeout, no data — check loop condition
 
-        consecutiveZeroReads = 0;
         const data = serialReadBuffer.slice(0, bytesRead);
 
         if (activeClient) {
           activeClient.write(data);
+        }
+
+        // Sniff RX frames (device → host)
+        if (options.onFrame) {
+          rxSniffBuffer = appendBytes(rxSniffBuffer, data);
+          const result = scanForFrames(rxSniffBuffer, RxPacketLength);
+          rxSniffBuffer = result.remainder;
+          for (const frame of result.frames) {
+            try { options.onFrame('rx', frame); } catch { /* don't interrupt bridge */ }
+          }
         }
       }
     } catch (error) {
@@ -149,10 +169,21 @@ export async function startTcpBridge(): Promise<TcpBridge> {
       },
 
       data(_socket, data) {
+        const bytes = new Uint8Array(data);
         // Forward TCP data -> serial port (immediate, no buffering)
-        serialHandle.write(new Uint8Array(data)).catch(err => {
+        serialHandle.write(bytes).catch(err => {
           if (!stopped) logger.error('[bridge] Serial write error:', err);
         });
+
+        // Sniff TX frames (host → device)
+        if (options.onFrame) {
+          txSniffBuffer = appendBytes(txSniffBuffer, bytes);
+          const result = scanForFrames(txSniffBuffer, TxPacketLength);
+          txSniffBuffer = result.remainder;
+          for (const frame of result.frames) {
+            try { options.onFrame('tx', frame); } catch { /* don't interrupt bridge */ }
+          }
+        }
       },
 
       close(socket) {
