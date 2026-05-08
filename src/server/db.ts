@@ -511,9 +511,56 @@ export function getDataPointsForRun(runId: number): DataPoint[] {
  */
 export type CompactDataRow = [number, number, number, number, number, number];
 
+/**
+ * Downsampled row with min/max ranges per bucket:
+ * [elapsed_s, v_min, v_max, i_min, i_max, p_min, p_max, capacity_mah, energy_mwh]
+ */
+export type DownsampledDataRow = [number, number, number, number, number, number, number, number, number];
+
 export interface RunWithCompactData extends TestRun {
   /** Column order: [elapsed_s, voltage_v, current_a, power_w, capacity_mah, energy_mwh] */
-  d: CompactDataRow[];
+  d: CompactDataRow[] | DownsampledDataRow[];
+  /** True when d contains downsampled rows with min/max ranges */
+  downsampled?: boolean;
+}
+
+/** Max points per run before downsampling kicks in */
+const DOWNSAMPLE_THRESHOLD = 500;
+
+/**
+ * Downsample a full-resolution run into min/max range buckets.
+ * Each bucket covers a time window and emits one row with:
+ * [t_mid, v_min, v_max, i_min, i_max, p_min, p_max, cap_last, energy_last]
+ */
+function downsampleRun(rows: CompactDataRow[], maxPoints: number): DownsampledDataRow[] {
+  if (rows.length <= maxPoints) return rows as unknown as DownsampledDataRow[];
+  const bucketSize = rows.length / maxPoints;
+  const result: DownsampledDataRow[] = [];
+
+  for (let b = 0; b < maxPoints; b++) {
+    const start = Math.floor(b * bucketSize);
+    const end = Math.floor((b + 1) * bucketSize);
+    let vMin = Infinity, vMax = -Infinity;
+    let iMin = Infinity, iMax = -Infinity;
+    let pMin = Infinity, pMax = -Infinity;
+
+    for (let j = start; j < end; j++) {
+      const r = rows[j];
+      // r = [elapsed, voltage, current, power, cap, energy]
+      if (r[1] < vMin) vMin = r[1];
+      if (r[1] > vMax) vMax = r[1];
+      if (r[2] < iMin) iMin = r[2];
+      if (r[2] > iMax) iMax = r[2];
+      if (r[3] < pMin) pMin = r[3];
+      if (r[3] > pMax) pMax = r[3];
+    }
+
+    const mid = rows[Math.floor((start + end - 1) / 2)];
+    const last = rows[end - 1];
+    result.push([mid[0], vMin, vMax, iMin, iMax, pMin, pMax, last[4], last[5]]);
+  }
+
+  return result;
 }
 
 /** Fetch recent runs with compact data points in one go */
@@ -541,10 +588,13 @@ export function getRecentRunsWithData(limit: number = 50): RunWithCompactData[] 
     arr.push([p.elapsed_s, p.voltage_v, p.current_a, p.power_w, p.capacity_mah, p.energy_mwh]);
   }
 
-  return runs.map(run => ({
-    ...run,
-    d: pointsByRun.get(run.id) ?? [],
-  }));
+  return runs.map(run => {
+    const fullRes = pointsByRun.get(run.id) ?? [];
+    if (fullRes.length > DOWNSAMPLE_THRESHOLD) {
+      return { ...run, d: downsampleRun(fullRes, DOWNSAMPLE_THRESHOLD), downsampled: true };
+    }
+    return { ...run, d: fullRes };
+  });
 }
 
 export function getDataPointCount(runId: number): number {
