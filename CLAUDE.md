@@ -21,6 +21,7 @@ A replacement for ZKETech's "EB Tester" VB6 application. Controls ZKETech batter
 - **Frames**: `0xFA [payload] [checksum] 0xF8` — TX is 10 bytes, RX is 19 bytes
 - **Checksum**: XOR of payload bytes, reduced `% 240` (base-240 safe)
 - **Multi-byte values**: base-240 encoding (`hi * 240 + lo`), divided by a model-dependent divisor
+- **Capacity encoding quirk**: At ~10 Ah, the EBC-A40L switches from 1 mAh/unit to 10 mAh/unit (hi byte jumps +99). Hosts must detect and correct this — see `src/server/capacity-tracker.ts`
 - **Two device families**:
   - `ebc` (charger/discharger): current ÷100, idle state 0x02
   - `ebd` (electronic load): current ÷10,000, idle state 0x00

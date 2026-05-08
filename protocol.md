@@ -591,7 +591,7 @@ Byte 16:     Device ID            (0x0A = 10, same as normal packets — see Dev
 - **All payload values must be < 0xF0 (240)** to avoid colliding with the frame markers 0xFA and 0xF8.
 - **Parse the incoming stream continuously** — do not assume fixed-length alignment. Scan for 0xFA, validate length and checksum.
 - **Resend commands** if no expected response arrives within a reasonable timeout.
-- **The device can lock up** and stop responding. The only recovery is a USB replug.
+- **The device UART can lock up** if it receives malformed or unexpected bytes (e.g. partial frames, manufactured commands from a misbehaving host). When stuck, the device ignores all serial input — including valid init commands — but **continues running any active test autonomously** (discharge/charge continues uninterrupted). Recovery does *not* require a USB replug: sending flush sequences (bursts of `0x00`, `0xF8`, other token bytes) followed by the standard init command (`0x05`) can break the parser out of its stuck state, but the device may need **10–30+ minutes** of silence or repeated attempts before it responds again. Confirmed May 2026 on EBC-A40L — UART recovered without power cycle after ~30 minutes of flush attempts.
 - The VB6 application uses `MSComm1` (Microsoft Communications Control 6.0) with `InputMode = comInputModeBinary`.
 
 ## UI Measurements (from VB6 application)

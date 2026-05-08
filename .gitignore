@@ -36,6 +36,9 @@ recordings/
 scripts/probes/*
 !scripts/probes/README.md
 
+# Discovery — screenshots, notes, protocol investigations
+discovery/
+
 # Experiment artifacts
 tmp-ocr-test/
 test-*.png
