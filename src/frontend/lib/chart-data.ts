@@ -539,7 +539,7 @@ export function addTemperatureSeries(
     newSeriesInfo.push({
       runId: -2,
       metric: 'temperature',
-      label: ch.name ?? channelId,
+      label: ch.name ?? channelId.slice(-6),
       color: TEMP_COLORS[colorIdx % TEMP_COLORS.length],
       isLive: false,
       channelId,

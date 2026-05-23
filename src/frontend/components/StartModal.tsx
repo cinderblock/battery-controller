@@ -507,7 +507,7 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
                   const ch = state.tempChannels.find(c => c.id === chId);
                   return (
                     <div key={chId} className="wizard-temp-alert-row">
-                      <span className="wizard-temp-alert-name">{ch?.name ?? chId}</span>
+                      <span className="wizard-temp-alert-name">{ch?.name ?? chId.slice(-6)}</span>
                       <input
                         type="number"
                         value={val}

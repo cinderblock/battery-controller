@@ -206,7 +206,7 @@ export function TopBar() {
                 key={r.channelId}
                 className={`temp-live-chip${r.alertMaxC != null && r.tempC > r.alertMaxC ? ' alert' : ''}`}
               >
-                <span className="temp-label">{r.name ?? r.channelId.slice(0, 8)}</span>
+                <span className="temp-label">{r.name ?? r.channelId.slice(-6)}</span>
                 <span className="temp-value">{r.tempC.toFixed(1)}°</span>
               </span>
             ))}

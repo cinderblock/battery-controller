@@ -318,16 +318,14 @@ async function main() {
     broadcast('bridgeState', { active: true });
 
     try {
-      // Tear down device pipeline — release the serial port
+      // Tear down device pipeline — keep the serial file handle open
       cycleRunner.stop();
       recorder.stop();
       session.destroy();
-      await serialManager.disconnect();
+      const serialHandle = serialManager.takeHandle();
 
-      // Start the TCP bridge with frame sniffing (opens serial port itself)
-      // skipPortConfig: SerialManager already configured stty 9600 8E1
-      activeBridge = await startTcpBridge({
-        skipPortConfig: true,
+      // Start the TCP bridge on the same file handle (no close/reopen)
+      activeBridge = startTcpBridge(serialHandle, {
         onFrame(direction, frameBytes) {
           const parsed = parseFrame(frameBytes, direction);
           if (!parsed?.checksumValid) return;
@@ -388,13 +386,12 @@ async function main() {
     if (!activeBridge) return;
     logger.info('Disabling bridge mode...');
 
-    // Stop the TCP bridge — closes serial port and TCP listener
-    await activeBridge.stop();
+    // Stop the TCP bridge — get the serial file handle back (no close/reopen)
+    const serialHandle = await activeBridge.stop();
     activeBridge = null;
-    logger.info('Bridge stopped, reconnecting serial...');
 
-    // Reconnect the device pipeline (skip stty — bridge preserved the 9600 8E1 config)
-    await serialManager.connect({ skipPortConfig: true });
+    // Hand the handle back to the serial manager and resume reading
+    serialManager.resumeWithHandle(serialHandle);
     session.start();
 
     // Immediately poke the device — it may have stopped streaming
@@ -1113,6 +1110,7 @@ async function main() {
     routes: {
       '/': homepage,
       '/sequences': homepage, // SPA: same HTML, client-side routing
+      '/temperature': homepage,
     },
 
     async fetch(req, server) {
@@ -1166,7 +1164,8 @@ async function main() {
     sseClients.clear();
     stopCamera();
     if (activeBridge) {
-      await activeBridge.stop();
+      const handle = await activeBridge.stop();
+      await handle.close();
       activeBridge = null;
     } else {
       cycleRunner.stop();

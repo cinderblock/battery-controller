@@ -223,8 +223,8 @@ export function TemperatureSettings() {
               ) : (
                 <>
                   <div className="temp-channel-info">
-                    <span className="temp-channel-name">
-                      {ch.name ?? <em>{ch.id}</em>}
+                    <span className="temp-channel-name" title={ch.id}>
+                      {ch.name ?? <em>{ch.id.slice(-6)}</em>}
                     </span>
                     <span className="temp-channel-source">
                       {ch.sourceType === 'w1' ? '1-Wire' : 'HA'}
