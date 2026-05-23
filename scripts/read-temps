@@ -55,10 +55,14 @@ read_all() {
         raw=$(( -raw ))
       fi
       local whole=$(( raw / 1000 ))
-      local frac=$(( raw % 1000 ))
+      local frac=$(( (raw % 1000 + 50) / 100 ))
+      if [ "$frac" -ge 10 ]; then
+        whole=$(( whole + 1 ))
+        frac=0
+      fi
       local pwr="ext"
       [ "$ext" = "0" ] && pwr="par"
-      printf "%s  %s%d.%03d°C  %s  %s-bit  ...%s\n" \
+      printf "%s  %s%d.%d°C  %s  %s-bit  ...%s\n" \
         "$id" "$sign" "$whole" "$frac" "$pwr" "${res:-?}" "${id: -6}"
     else
       printf "%s  (no reading)\n" "$id"
