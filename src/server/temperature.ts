@@ -10,7 +10,7 @@
 
 import { logger } from '../utils/logger.ts';
 import { insertTempReading } from './db.ts';
-import { checkW1Available, discoverW1Devices, readW1Temperature } from './w1-adapter.ts';
+import { checkW1Available, discoverW1Devices, readAllW1Temperatures } from './w1-adapter.ts';
 import { readHaTemperature } from './ha-adapter.ts';
 import {
   getTempConfig,
@@ -219,42 +219,59 @@ export class TemperatureManager {
 
   private async readAll(): Promise<void> {
     const config = getTempConfig();
+    const enabled = config.channels.filter(ch => ch.enabled);
     const readings: TempChannelReading[] = [];
 
-    const readPromises = config.channels
-      .filter(ch => ch.enabled)
-      .map(async (ch) => {
-        const tempC = await this.readChannel(ch);
-        if (tempC === null) return;
+    // Batch-read all w1 sensors with a single bulk conversion
+    const w1Channels = enabled.filter(ch => ch.sourceType === 'w1' && !ch.unpluggedAt);
+    const w1DeviceIds = w1Channels.map(ch => (ch as W1ChannelConfig).deviceId);
+    const w1Temps = await readAllW1Temperatures(w1DeviceIds);
 
-        const dbId = getChannelDbId(ch.id);
-        if (dbId === null) return;
+    // Read HTTP channels in parallel
+    const httpChannels = enabled.filter(ch => ch.sourceType === 'http');
+    const httpResults = new Map<string, number>();
+    await Promise.all(httpChannels.map(async (ch) => {
+      const ha = config.homeAssistant;
+      if (!ha) return;
+      const temp = await readHaTemperature(ha, ch.entityId!);
+      if (temp !== null) httpResults.set(ch.id, temp);
+    }));
 
-        const reading: TempChannelReading = {
+    // Build readings from both sources
+    for (const ch of enabled) {
+      let tempC: number | undefined;
+      if (ch.sourceType === 'w1') {
+        tempC = w1Temps.get((ch as W1ChannelConfig).deviceId);
+      } else {
+        tempC = httpResults.get(ch.id);
+      }
+      if (tempC === undefined) continue;
+
+      const dbId = getChannelDbId(ch.id);
+      if (dbId === null) continue;
+
+      const reading: TempChannelReading = {
+        channelId: ch.id,
+        channelDbId: dbId,
+        name: ch.name,
+        tempC,
+        alertMaxC: this.getEffectiveAlertMax(ch),
+      };
+
+      readings.push(reading);
+      this.lastReadings.set(ch.id, reading);
+
+      const alertMax = this.getEffectiveAlertMax(ch);
+      if (alertMax !== null && tempC > alertMax) {
+        this.emit({
+          type: 'tempAlert',
           channelId: ch.id,
-          channelDbId: dbId,
           name: ch.name,
           tempC,
-          alertMaxC: this.getEffectiveAlertMax(ch),
-        };
-
-        readings.push(reading);
-        this.lastReadings.set(ch.id, reading);
-
-        // Check alert threshold
-        const alertMax = this.getEffectiveAlertMax(ch);
-        if (alertMax !== null && tempC > alertMax) {
-          this.emit({
-            type: 'tempAlert',
-            channelId: ch.id,
-            name: ch.name,
-            tempC,
-            alertMaxC: alertMax,
-          });
-        }
-      });
-
-    await Promise.all(readPromises);
+          alertMaxC: alertMax,
+        });
+      }
+    }
 
     if (readings.length > 0) {
       this.emit({ type: 'temperature', readings });
@@ -277,18 +294,4 @@ export class TemperatureManager {
     }
   }
 
-  private async readChannel(ch: ChannelConfig): Promise<number | null> {
-    if (ch.sourceType === 'w1') {
-      if (ch.unpluggedAt) return null;
-      return readW1Temperature(ch.deviceId);
-    }
-
-    if (ch.sourceType === 'http') {
-      const config = getTempConfig();
-      if (!config.homeAssistant) return null;
-      return readHaTemperature(config.homeAssistant, ch.entityId);
-    }
-
-    return null;
-  }
 }

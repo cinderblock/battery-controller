@@ -1,0 +1,101 @@
+#!/bin/bash
+# Read all DS18B20 1-Wire temperature sensors.
+# Uses therm_bulk_read for fast parallel conversion.
+#
+# Usage:
+#   read-temps              # one-shot readout
+#   read-temps --watch      # continuous, updates in-place (1s default)
+#   read-temps -w -n 2      # watch with 2s interval
+
+set -euo pipefail
+
+W1_DIR="/sys/bus/w1/devices"
+BUS_MASTER="$W1_DIR/w1_bus_master1"
+BULK_READ="$BUS_MASTER/therm_bulk_read"
+
+if [ ! -d "$W1_DIR" ]; then
+  echo "1-Wire not available (no $W1_DIR)" >&2
+  exit 1
+fi
+
+devices=($W1_DIR/28-*)
+if [ ${#devices[@]} -eq 0 ] || [ ! -d "${devices[0]}" ]; then
+  echo "No DS18B20 sensors found" >&2
+  exit 1
+fi
+
+# Set conv_time=0 for fast post-bulk reads (needs root, non-fatal if it fails)
+for dev in "${devices[@]}"; do
+  echo 0 > "$dev/conv_time" 2>/dev/null || true
+done
+
+read_all() {
+  # Re-discover in case sensors were plugged/unplugged
+  devices=($W1_DIR/28-*)
+  if [ ${#devices[@]} -eq 0 ] || [ ! -d "${devices[0]}" ]; then
+    echo "(no sensors)"
+    return
+  fi
+
+  # Bulk convert
+  if [ -w "$BULK_READ" ]; then
+    echo trigger > "$BULK_READ"
+    local i=0
+    while [ $i -lt 20 ]; do
+      [ "$(cat "$BULK_READ")" = "1" ] && break
+      sleep 0.05
+      i=$((i + 1))
+    done
+  fi
+
+  for dev in "${devices[@]}"; do
+    local id=$(basename "$dev")
+    local raw=$(cat "$dev/temperature" 2>/dev/null)
+    local ext=$(cat "$dev/ext_power" 2>/dev/null)
+    local res=$(cat "$dev/resolution" 2>/dev/null)
+
+    if [ -n "$raw" ] && [ "$raw" != "0" ]; then
+      local sign=""
+      if [ "$raw" -lt 0 ]; then
+        sign="-"
+        raw=$(( -raw ))
+      fi
+      local whole=$(( raw / 1000 ))
+      local frac=$(( raw % 1000 ))
+      local pwr="ext"
+      [ "$ext" = "0" ] && pwr="par"
+      printf "%s  %s%d.%03d°C  %s  %s-bit  ...%s\n" \
+        "$id" "$sign" "$whole" "$frac" "$pwr" "${res:-?}" "${id: -6}"
+    else
+      printf "%s  (no reading)\n" "$id"
+    fi
+  done
+}
+
+# Parse args
+WATCH=false
+INTERVAL=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --watch|-w) WATCH=true; shift ;;
+    -n) INTERVAL="${2:-1}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+if [ "$WATCH" = false ]; then
+  read_all
+  exit 0
+fi
+
+# Watch mode
+trap 'printf "\n"; exit 0' INT TERM
+while true; do
+  output=$(read_all)
+  count=$(echo "$output" | wc -l)
+  ts=$(date +%H:%M:%S)
+  printf "\033[2J\033[H"
+  printf "\033[2m%s  (%d sensors, every %ss — Ctrl-C to stop)\033[0m\n\n" "$ts" "$count" "$INTERVAL"
+  echo "$output"
+  sleep "$INTERVAL"
+done

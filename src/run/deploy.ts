@@ -144,6 +144,19 @@ async function deployEnvFile(config: DeployConfig, signal?: AbortSignal): Promis
   await writeRemoteFile(config.sshConfig, envContent, DeployEnvFile, true, signal);
 }
 
+async function deployScripts(config: DeployConfig, signal?: AbortSignal): Promise<void> {
+  logger.debug('Deploying CLI scripts...');
+
+  const readTemps = await Bun.file('scripts/read-temps').text();
+  await writeRemoteFilesStaged(config.sshConfig, [
+    { content: readTemps, remotePath: `${DeployAppDir}/read-temps` },
+  ], signal);
+  await sshExec(config.sshConfig, 'chmod', ['+x', `${DeployAppDir}/read-temps`], signal);
+  await sshExec(config.sshConfig, 'sudo', ['ln', '-sf', `${DeployAppDir}/read-temps`, '/usr/local/bin/read-temps'], signal);
+
+  logger.debug('CLI scripts deployed');
+}
+
 async function deployPackageFiles(config: DeployConfig, signal?: AbortSignal): Promise<void> {
   logger.debug('Transferring package files...');
 
@@ -316,8 +329,11 @@ async function performInitialDeploy(
     throw new Error('Server bundle missing from build result');
   }
   const appOutputs: BuildOutput[] = [{ filename: 'setup.js', content: setupContent }, ...serverOutputs];
-  await deployBuildOutputs(config, appOutputs, signal, ['package.json', 'bun.lock']);
+  await deployBuildOutputs(config, appOutputs, signal, ['package.json', 'bun.lock', 'read-temps']);
   log(`Files deployed (${appOutputs.length} file${appOutputs.length !== 1 ? 's' : ''})`, '✅');
+
+  // Deploy CLI scripts (read-temps etc.)
+  await deployScripts(config, signal);
 
   // Restart service to pick up the new bundle
   await restartService(config, DeployServiceName, signal);
@@ -391,7 +407,7 @@ function createIncrementalDeployHandler(config: DeployConfig) {
       if (outputs.length === 0) return;
 
       // Only cleanup remote files when server outputs are rebuilt; setup-only rebuilds must not delete the app bundle.
-      const cleanupPreserveFiles = options.server ? ['package.json'] : undefined;
+      const cleanupPreserveFiles = options.server ? ['package.json', 'read-temps'] : undefined;
       await deployBuildOutputs(config, outputs, signal, cleanupPreserveFiles);
 
       // Restart service to pick up new bundle
