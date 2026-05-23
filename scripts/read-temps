@@ -18,17 +18,6 @@ if [ ! -d "$W1_DIR" ]; then
   exit 1
 fi
 
-devices=($W1_DIR/28-*)
-if [ ${#devices[@]} -eq 0 ] || [ ! -d "${devices[0]}" ]; then
-  echo "No DS18B20 sensors found" >&2
-  exit 1
-fi
-
-# Set conv_time=0 for fast post-bulk reads
-for dev in "${devices[@]}"; do
-  echo 0 | sudo tee "$dev/conv_time" >/dev/null 2>&1 || true
-done
-
 read_all() {
   # Re-discover in case sensors were plugged/unplugged
   devices=($W1_DIR/28-*)
@@ -36,6 +25,11 @@ read_all() {
     echo "(no sensors)"
     return
   fi
+
+  # Set conv_time=0 for fast post-bulk reads (idempotent)
+  for dev in "${devices[@]}"; do
+    echo 0 | sudo tee "$dev/conv_time" >/dev/null 2>&1 || true
+  done
 
   # Bulk convert
   if [ -f "$BULK_READ" ]; then
@@ -84,6 +78,11 @@ while [ $# -gt 0 ]; do
 done
 
 if [ "$WATCH" = false ]; then
+  devices=($W1_DIR/28-*)
+  if [ ${#devices[@]} -eq 0 ] || [ ! -d "${devices[0]}" ]; then
+    echo "No DS18B20 sensors found" >&2
+    exit 1
+  fi
   read_all
   exit 0
 fi
