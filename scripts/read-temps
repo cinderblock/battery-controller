@@ -24,9 +24,9 @@ if [ ${#devices[@]} -eq 0 ] || [ ! -d "${devices[0]}" ]; then
   exit 1
 fi
 
-# Set conv_time=0 for fast post-bulk reads (needs root, non-fatal if it fails)
+# Set conv_time=0 for fast post-bulk reads
 for dev in "${devices[@]}"; do
-  echo 0 > "$dev/conv_time" 2>/dev/null || true
+  echo 0 | sudo tee "$dev/conv_time" >/dev/null 2>&1 || true
 done
 
 read_all() {
@@ -38,8 +38,8 @@ read_all() {
   fi
 
   # Bulk convert
-  if [ -w "$BULK_READ" ]; then
-    echo trigger > "$BULK_READ"
+  if [ -f "$BULK_READ" ]; then
+    echo trigger | sudo tee "$BULK_READ" >/dev/null
     local i=0
     while [ $i -lt 20 ]; do
       [ "$(cat "$BULK_READ")" = "1" ] && break
