@@ -134,6 +134,8 @@ export interface CycleState {
   status: CycleStatus;
   programId: number | null;
   programName: string | null;
+  /** Display name (label or barcode/serial) of the cell under test */
+  cellName: string | null;
   /** Flat execution index (position in the expanded step list) */
   currentExecIndex: number;
   totalExecSteps: number;
@@ -174,6 +176,9 @@ export class CycleRunner {
 
   // Cell capacity for C-rate resolution
   private capacityAh = 200; // default
+
+  // Display name (label or barcode) of the cell under test
+  private cellName: string | null = null;
 
   // Wait timer
   private waitTimer: Timer | null = null;
@@ -243,6 +248,7 @@ export class CycleRunner {
       status: this.status,
       programId: this.programId,
       programName: this.programName,
+      cellName: this.cellName,
       currentExecIndex: this.execIndex,
       totalExecSteps: this.execPlan.length,
       currentCycle: this.execPlan[this.execIndex]?.cycleNum ?? 0,
@@ -284,6 +290,11 @@ export class CycleRunner {
 
     // Look up cell capacity for C-rate resolution
     this.resolveCapacity(cellId);
+
+    // Point the recorder at this cell — otherwise runs are created with a
+    // stale pendingCellId from a previous scan/program (runs 109-110 were
+    // attributed to the prior cell this way)
+    this.recorder.setCellId(cellId);
 
     // Flatten loops into a linear execution plan
     this.execPlan = this.flattenSteps(migratedSteps);
@@ -381,11 +392,13 @@ export class CycleRunner {
 
   // ── Internal ─────────────────────────────────────────────────
 
-  /** Resolve cell capacity for C-rate steps */
+  /** Resolve cell capacity for C-rate steps and cache the cell's display name */
   private resolveCapacity(cellId: number | null): void {
+    this.cellName = null;
     if (cellId) {
       const cell = getCellById(cellId);
       if (cell) {
+        this.cellName = cell.label || cell.barcode;
         // Use cell's own capacity, or look up from cell group
         if (cell.nominal_capacity_mah) {
           this.capacityAh = cell.nominal_capacity_mah / 1000;
@@ -395,7 +408,7 @@ export class CycleRunner {
         }
       }
     }
-    logger.info(`C-rate resolution capacity: ${this.capacityAh} Ah`);
+    logger.info(`C-rate resolution capacity: ${this.capacityAh} Ah (cell: ${this.cellName ?? 'none'})`);
   }
 
   /** Resolve a step's currentA to actual amps, handling C-rate */
@@ -701,6 +714,7 @@ export class CycleRunner {
     this.status = 'idle';
     this.programId = null;
     this.programName = null;
+    this.cellName = null;
     this.execPlan = [];
     this.execIndex = 0;
     this.totalCycles = 1;

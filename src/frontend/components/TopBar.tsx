@@ -244,6 +244,11 @@ export function TopBar() {
         {cycleActive && cycleState && (
           <div className="top-bar-cycle">
             <span className="cycle-name">{cycleState.programName ?? 'Sequence'}</span>
+            {cycleState.cellName && (
+              <span className="cycle-cell" title="Cell under test">
+                {cycleState.cellName}
+              </span>
+            )}
             {cycleState.status === 'waiting' && waitRemaining !== null && (
               <span className="cycle-wait-countdown">Wait {formatCountdown(waitRemaining)}</span>
             )}

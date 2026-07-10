@@ -126,6 +126,8 @@ export interface CycleState {
   status: CycleStatus;
   programId: number | null;
   programName: string | null;
+  /** Display name (label or barcode/serial) of the cell under test */
+  cellName?: string | null;
   currentExecIndex: number;
   totalExecSteps: number;
   currentCycle: number;

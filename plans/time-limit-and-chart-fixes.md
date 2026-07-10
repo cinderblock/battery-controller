@@ -100,6 +100,20 @@
   the 100-most-recent runs), per-cell hide, "Load runs" for out-of-window cells,
   two-step cell deletion (escalates when the cell has runs — for the "asdf" cell).
 
+## Cell attribution repair (2026-07-10 ~16:00 PDT, applied to LIVE DB)
+
+- Backup first: `/home/pi/battery-backup-2026-07-10-cellfix.db` (sqlite .backup).
+- 46 NULL-cell runs attributed by era/program: runs before 2026-06-01 → cell 2
+  (1st cell, 100104-F02731); runs 93-108 → cell 3 (2nd cell, F02732); run 110
+  (live charge) 3→4 (3rd cell, F02726). Zero NULL runs remain (cell 2: 92,
+  cell 3: 17, cell 4: 1).
+- Root cause of the misattribution: startSequence never set recorder.pendingCellId
+  (only resumeProgram did), so runs got the previous scan's cell. Fixed in code
+  (committed, needs deploy). Rescanned F02726 via /api/cells/scan so the REST of
+  the live sequence records cell 4 without waiting for the deploy.
+- Undeployed commits pending: shutdown drain fix + startSequence cell fix +
+  TopBar cell-serial chip (cycleState.cellName).
+
 ## Deploy notes
 
 - `bun src/run/deploy.ts --once` is the one-shot deploy (fixed to exit; was hanging on
