@@ -79,7 +79,21 @@
 - [x] Frontend: live temp accumulation + chart plotting; temperature metric on by default
 - [x] biome format on touched files, tsc clean on touched files, 17 tests pass, bundles build
 - [x] Committed: 46f9e61 (server), 52d95a9 (frontend)
-- [ ] Deploy after user finishes current charge step manually; verify restart recovery picks the cycle back up
+- [x] End Step button (two-tap confirm) + POST /api/cycle/end-step + end_reason='step_ended_early' (fb4d751)
+- [x] TopBar temp chips link to /temperature settings page (fb4d751)
+- [x] Deployed 2026-07-10 ~13:46 + 13:59 PDT (two passes; second pushed camera-off env).
+      Verified: cycle program #15 recovered mid-charge (run #110 reopened, 4.3s gap,
+      time limit 480 min armed from setpoints), camera reports configured:false.
+- [x] Camera disabled: RTSP_URL/RTSP_FILTER commented out in .env.local; deploy.ts now
+      always writes the Pi env file so removals propagate, and --once mode exits (4d7a30f).
+
+## Deploy notes
+
+- `bun src/run/deploy.ts --once` is the one-shot deploy (fixed to exit; was hanging on
+  lingering handles). `bun run start` is the continuous watch-deploy.
+- Shutdown noise: during service restart, in-flight HTTP requests can hit "Cannot use a
+  closed database" in the journal — old process closes the DB before the socket drains.
+  Cosmetic; worth fixing someday (close server before DB in shutdown ordering).
 
 ## Session-collision note (2026-07-09)
 

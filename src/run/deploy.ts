@@ -18,10 +18,10 @@ import { buildWatchInMemory } from './build.ts';
 import {
   DeployAppDir,
   DeployBunBin,
+  DeployEnvFile,
   DeployHost,
   DeployKey,
   DeployPort,
-  DeployEnvFile,
   DeployServiceName,
   DeploySetupHome,
   DeploySetupPath,
@@ -134,12 +134,11 @@ async function deployEnvFile(config: DeployConfig, signal?: AbortSignal): Promis
     return;
   }
 
-  if (!envContent.trim()) {
-    logger.debug('No forwarded env vars found in .env.local');
-    return;
-  }
-
-  logger.debug(`Deploying env file with ${envContent.trim().split('\n').length} var(s)...`);
+  // Always write the file, even with zero forwarded vars — otherwise a var
+  // removed locally (e.g. RTSP_URL to disable the camera) would silently
+  // stay set on the Pi from a previous deploy.
+  const count = envContent.trim() ? envContent.trim().split('\n').length : 0;
+  logger.debug(`Deploying env file with ${count} var(s)...`);
   // /etc/default/ requires root — write to /tmp then sudo mv into place
   await writeRemoteFile(config.sshConfig, envContent, DeployEnvFile, true, signal);
 }
@@ -148,11 +147,18 @@ async function deployScripts(config: DeployConfig, signal?: AbortSignal): Promis
   logger.debug('Deploying CLI scripts...');
 
   const readTemps = await Bun.file('scripts/read-temps').text();
-  await writeRemoteFilesStaged(config.sshConfig, [
-    { content: readTemps, remotePath: `${DeployAppDir}/read-temps` },
-  ], signal);
+  await writeRemoteFilesStaged(
+    config.sshConfig,
+    [{ content: readTemps, remotePath: `${DeployAppDir}/read-temps` }],
+    signal
+  );
   await sshExec(config.sshConfig, 'chmod', ['+x', `${DeployAppDir}/read-temps`], signal);
-  await sshExec(config.sshConfig, 'sudo', ['ln', '-sf', `${DeployAppDir}/read-temps`, '/usr/local/bin/read-temps'], signal);
+  await sshExec(
+    config.sshConfig,
+    'sudo',
+    ['ln', '-sf', `${DeployAppDir}/read-temps`, '/usr/local/bin/read-temps'],
+    signal
+  );
 
   logger.debug('CLI scripts deployed');
 }
@@ -274,11 +280,7 @@ async function restartService(config: DeployConfig, serviceName: string, signal?
   }
 }
 
-async function checkStatus(
-  config: DeployConfig,
-  signal?: AbortSignal,
-  serviceName = DeployServiceName
-): Promise<void> {
+async function checkStatus(config: DeployConfig, signal?: AbortSignal, serviceName = DeployServiceName): Promise<void> {
   signal?.throwIfAborted();
   logger.debug('Checking deployment status...');
 
@@ -517,7 +519,9 @@ async function main() {
     buildCleanup();
     log('Deployment complete! Exiting (--once mode)', '✅');
     await closeSSHConnection();
-    return;
+    // Lingering handles (fs watcher / SSH) keep the event loop alive after
+    // main() returns — exit explicitly so --once actually terminates.
+    process.exit(0);
   }
 
   // Watch mode enabled: process any queued build, then keep running until SIGINT/SIGTERM.
