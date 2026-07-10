@@ -376,16 +376,17 @@ export function Chart({
       });
     }
 
-    // Temperature axis (right side)
+    // Temperature axis — left side, and it's the only y-axis on the
+    // standalone temperature chart, so it owns the horizontal grid
     if (usedScales.has('°C')) {
       axes.push({
         scale: '°C',
-        side: 1,
+        side: 3,
         values: (_u: uPlot, vals: number[]) => vals.map(v => v.toFixed(1) + '°C'),
         stroke: '#f44336',
-        grid: { show: false },
+        grid: { stroke: 'rgba(255,255,255,0.06)', width: 1 },
         ticks: { stroke: 'rgba(255,255,255,0.1)', width: 1 },
-        size: 50,
+        size: 55,
       });
     }
 

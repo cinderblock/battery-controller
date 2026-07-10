@@ -434,10 +434,11 @@ export function ChartView() {
   // two charts' axis gutters (axis sizes mirror Chart.tsx's axis configs)
   const mainLeftPx = (visibleMetrics.has('voltage') ? 65 : 0) + (visibleMetrics.has('current') ? 55 : 0);
   const mainRightPx = (visibleMetrics.has('power') ? 50 : 0) + (visibleMetrics.has('capacity') ? 55 : 0);
-  const tempRightPx = 50; // °C axis
-  const mainPadRight = showTempChart ? Math.max(0, tempRightPx - mainRightPx) : 0;
-  const tempPadLeft = mainLeftPx;
-  const tempPadRight = Math.max(0, mainRightPx - tempRightPx);
+  const tempLeftPx = 55; // °C axis (left side)
+  const mainPadLeft = showTempChart ? Math.max(0, tempLeftPx - mainLeftPx) : 0;
+  const mainPadRight = 0; // temp chart has no right axis
+  const tempPadLeft = Math.max(0, mainLeftPx - tempLeftPx);
+  const tempPadRight = mainRightPx;
 
   // ── Capacity chart data ───────────────────────────────────────
   const nominalMah = selectedGroup?.nominal_capacity_mah ?? 200000;
@@ -582,6 +583,7 @@ export function ChartView() {
                     scaleRanges={scaleRanges}
                     bands={chartData.bands}
                     syncKey="bc-time"
+                    padLeft={mainPadLeft}
                     padRight={mainPadRight}
                   />
                 </div>

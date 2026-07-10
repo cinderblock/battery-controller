@@ -637,7 +637,9 @@ export function buildTempChartData(
     const channelLabel = b.channelName ?? b.channelKey.slice(-6);
     const multiRun = (runsPerChannel.get(b.channelKey)?.size ?? 1) > 1;
     const baseColor = TEMP_COLORS[(channelOrder.get(b.channelKey) ?? 0) % TEMP_COLORS.length];
-    const alpha = isTestActive && !b.isLive ? 0.25 : 0.9;
+    // Match the main chart's dimming of historical runs during a live test,
+    // so a long-past run doesn't visually dominate the temperature panel
+    const alpha = isTestActive && !b.isLive ? 0.15 : 0.9;
 
     seriesInfo.push({
       runId: b.runId,
