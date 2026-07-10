@@ -1221,6 +1221,12 @@ async function main() {
   async function gracefulShutdown() {
     logger.info('Shutting down...');
     clearInterval(keepaliveInterval);
+
+    // Close SSE streams first so the server can drain, then stop accepting
+    // requests and wait for in-flight ones to finish BEFORE tearing down
+    // what they depend on — otherwise a request mid-flight during a deploy
+    // restart hits "Cannot use a closed database". Cap the drain wait so a
+    // stuck connection can't stall shutdown past systemd's patience.
     for (const client of sseClients) {
       try {
         client.controller.close();
@@ -1229,6 +1235,12 @@ async function main() {
       }
     }
     sseClients.clear();
+    try {
+      await Promise.race([server.stop(), Bun.sleep(2000)]);
+    } catch {
+      /* already stopped */
+    }
+
     stopCamera();
     if (activeBridge) {
       const handle = await activeBridge.stop();
@@ -1241,7 +1253,6 @@ async function main() {
       await serialManager.disconnect();
     }
     closeDb();
-    server.stop();
     shutdown(0);
   }
 

@@ -91,9 +91,10 @@
 
 - `bun src/run/deploy.ts --once` is the one-shot deploy (fixed to exit; was hanging on
   lingering handles). `bun run start` is the continuous watch-deploy.
-- Shutdown noise: during service restart, in-flight HTTP requests can hit "Cannot use a
-  closed database" in the journal — old process closes the DB before the socket drains.
-  Cosmetic; worth fixing someday (close server before DB in shutdown ordering).
+- Shutdown noise fixed (07e26ef, committed but NOT yet deployed): gracefulShutdown now
+  drains the HTTP server (2s cap) before tearing down session/recorder/DB, so deploy
+  restarts no longer log "Cannot use a closed database" for in-flight requests.
+  Deploy this with the next batch — do not restart the Pi service just for it.
 
 ## Session-collision note (2026-07-09)
 
