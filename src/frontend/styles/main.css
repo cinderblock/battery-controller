@@ -650,6 +650,21 @@ body {
   cursor: wait;
 }
 
+/* End current sequence step early — arms on first tap, confirms on second */
+.btn-end-step {
+  background: var(--surface-2);
+  border-color: #ff9800;
+  color: #ff9800;
+  font-weight: 600;
+}
+.btn-end-step:hover {
+  background: rgba(255, 152, 0, 0.15);
+}
+.btn-end-step.armed {
+  background: #ff9800;
+  color: #000;
+}
+
 .btn-start {
   background: var(--success);
   border-color: var(--success);
@@ -2741,11 +2756,18 @@ body {
   cursor: pointer;
 }
 
-/* Live temperature display in top bar */
+/* Live temperature display in top bar — links to /temperature settings */
 .temp-live-readings {
   display: flex;
   gap: 8px;
   align-items: center;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 4px;
+}
+
+.temp-live-readings:hover .temp-live-chip {
+  background: var(--surface-3, #333);
 }
 
 .temp-live-chip {

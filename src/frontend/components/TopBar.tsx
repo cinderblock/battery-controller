@@ -219,9 +219,9 @@ export function TopBar() {
           </div>
         )}
 
-        {/* Live temperature readings */}
+        {/* Live temperature readings — click through to channel/limit settings */}
         {state.tempReadings.length > 0 && (
-          <div className="temp-live-readings">
+          <a href="/temperature" className="temp-live-readings" title="Temperature channels & alert limits">
             {state.tempReadings.map(r => (
               <span
                 key={r.channelId}
@@ -237,7 +237,7 @@ export function TopBar() {
                 )}
               </span>
             ))}
-          </div>
+          </a>
         )}
 
         {/* Cycle info — inline in the header */}

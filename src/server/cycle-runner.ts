@@ -342,6 +342,43 @@ export class CycleRunner {
     this.reset();
   }
 
+  /**
+   * End the current step early and advance to the next one.
+   *
+   * - Wait step: cancel the timer, finalize the wait run, advance now.
+   * - Running test step: send stop; when the device idles, onSessionEvent
+   *   advances exactly as it does for a natural step completion.
+   *
+   * Throws when the cycle is between steps (device settling) — skipping
+   * mid-transition would race the queued executeCurrentStep call.
+   */
+  async endCurrentStep(): Promise<void> {
+    if (this.status === 'waiting') {
+      const { step } = this.execPlan[this.execIndex];
+      const remainingS = this.waitEndTime ? Math.max(0, (this.waitEndTime - Date.now()) / 1000) : 0;
+      const elapsedS = (step as StepWait).durationS - remainingS;
+
+      this.clearWaitTimer();
+      this.recorder.stopWaitRun();
+      this.stepDurations[this.execIndex] = Math.round(elapsedS);
+      logger.info(`Cycle step ${this.execIndex + 1} (wait) ended early after ${Math.round(elapsedS)}s`);
+
+      this.execIndex++;
+      this.status = 'running';
+      this.emit();
+      await this.executeCurrentStep();
+      return;
+    }
+
+    if (this.status === 'running' && this.session.isRunning()) {
+      logger.info(`Cycle step ${this.execIndex + 1} ending early (user request) — sending stop`);
+      await this.session.stop('step_ended_early');
+      return;
+    }
+
+    throw new Error('No step is currently running (cycle may be between steps)');
+  }
+
   // ── Internal ─────────────────────────────────────────────────
 
   /** Resolve cell capacity for C-rate steps */

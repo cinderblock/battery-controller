@@ -389,6 +389,7 @@ export class TestRecorder {
         const hostReason = this.session.consumeStopReason();
         if (hostReason === 'time_limit') return 'time_limit';
         if (hostReason === 'temp_alert') return 'temp_alert';
+        if (hostReason === 'step_ended_early') return 'step_ended_early';
         return 'manual_stop';
       }
       case 'fault':

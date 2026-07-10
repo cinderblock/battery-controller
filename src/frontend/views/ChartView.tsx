@@ -43,9 +43,39 @@ import { getDefaultReferenceCurves } from '../lib/lfp-reference-curves.ts';
 // ── Component ──────────────────────────────────────────────────────
 
 export function ChartView() {
-  const { state, stopTest, enableBridge, disableBridge } = useSession();
+  const { state, stopTest, endStep, enableBridge, disableBridge } = useSession();
   const isTestActive = state.mode === 'd-cc' || state.mode === 'd-cp' || state.mode === 'c-cv';
   const [bridgeLoading, setBridgeLoading] = useState(false);
+
+  // ── End-step-early button (two-tap confirm) ──────────────────
+  const cycleActive =
+    state.cycleState != null && (state.cycleState.status === 'running' || state.cycleState.status === 'waiting');
+  const [endStepArmed, setEndStepArmed] = useState(false);
+  const endStepArmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleEndStep = useCallback(async () => {
+    if (!endStepArmed) {
+      // First tap arms the button; it disarms itself after 4s
+      setEndStepArmed(true);
+      if (endStepArmTimer.current) clearTimeout(endStepArmTimer.current);
+      endStepArmTimer.current = setTimeout(() => setEndStepArmed(false), 4000);
+      return;
+    }
+    if (endStepArmTimer.current) clearTimeout(endStepArmTimer.current);
+    setEndStepArmed(false);
+    try {
+      await endStep();
+    } catch (err) {
+      console.error('End step failed:', err);
+    }
+  }, [endStepArmed, endStep]);
+
+  useEffect(
+    () => () => {
+      if (endStepArmTimer.current) clearTimeout(endStepArmTimer.current);
+    },
+    []
+  );
 
   // ── Layout refs ─────────────────────────────────────────────
   const chartViewRef = useRef<HTMLDivElement>(null);
@@ -635,9 +665,17 @@ export function ChartView() {
 
           <div className="bottom-spacer" />
 
-          {isTestActive ||
-          state.stopping ||
-          (state.cycleState && (state.cycleState.status === 'running' || state.cycleState.status === 'waiting')) ? (
+          {cycleActive && (
+            <button
+              className={`btn btn-end-step${endStepArmed ? ' armed' : ''}`}
+              onClick={handleEndStep}
+              title="Finish the current sequence step now and move on to the next one"
+            >
+              {endStepArmed ? 'Really end step?' : 'End Step'}
+            </button>
+          )}
+
+          {isTestActive || state.stopping || cycleActive ? (
             <button className="btn btn-stop" onClick={stopTest} disabled={state.stopping}>
               {state.stopping ? 'Stopping...' : 'Stop'}
             </button>

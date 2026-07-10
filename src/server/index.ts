@@ -902,6 +902,18 @@ async function main() {
       return jsonResponse({ ok: true });
     }
 
+    if (pathname === '/api/cycle/end-step' && method === 'POST') {
+      const locked = requireUnlocked();
+      if (locked) return locked;
+
+      try {
+        await cycleRunner.endCurrentStep();
+        return jsonResponse({ ok: true, state: cycleRunner.getState() });
+      } catch (e) {
+        return errorResponse(e instanceof Error ? e.message : 'Failed to end step', 409);
+      }
+    }
+
     // GET /api/cycle-programs/:id/timeline — full sequence timeline
     const timelineMatch = pathname.match(/^\/api\/cycle-programs\/(\d+)\/timeline$/);
     if (timelineMatch && method === 'GET') {

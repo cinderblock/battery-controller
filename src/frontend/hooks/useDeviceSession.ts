@@ -93,6 +93,8 @@ export interface SessionContextValue {
   state: SessionState;
   startTest: (params: StartTestParams) => Promise<void>;
   stopTest: () => Promise<void>;
+  /** End the current cycle step early and advance to the next one */
+  endStep: () => Promise<void>;
   continueTest: (params: ContinueTestParams) => Promise<void>;
   scanCell: (barcode: string, label?: string) => Promise<void>;
   enableBridge: () => Promise<void>;
@@ -446,6 +448,10 @@ export function useDeviceSessionManager(): SessionContextValue {
     }
   }, []);
 
+  const endStep = useCallback(async () => {
+    await apiPost('/api/cycle/end-step', {});
+  }, []);
+
   const continueTest = useCallback(async (params: ContinueTestParams) => {
     await apiPost('/api/test/continue', params);
   }, []);
@@ -466,6 +472,7 @@ export function useDeviceSessionManager(): SessionContextValue {
     state,
     startTest,
     stopTest,
+    endStep,
     continueTest,
     scanCell,
     enableBridge,
