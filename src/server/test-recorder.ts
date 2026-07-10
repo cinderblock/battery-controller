@@ -130,6 +130,19 @@ export class TestRecorder {
     return this.runStartTime;
   }
 
+  /**
+   * Elapsed seconds within the active run, on the same clock as data points:
+   * device elapsed for test runs (correct across recovery, where
+   * runStartTime resets to the reopen time), wall clock for wait runs.
+   */
+  getActiveRunElapsedS(): number | null {
+    if (this.activeRunId === null) return null;
+    if (this.activeRunMode === ('wait' as DeviceMode)) {
+      return this.waitStartTime ? (Date.now() - this.waitStartTime) / 1000 : null;
+    }
+    return this.session.getReading().elapsedS;
+  }
+
   /** Set whether the next run should be excluded from capacity calculations */
   setExcludeFromCapacity(exclude: boolean): void {
     this.pendingExcludeFromCapacity = exclude;

@@ -66,6 +66,8 @@ type TempEventListener = (event: TempEvent) => void;
 export interface RunContext {
   getActiveRunId(): number | null;
   getRunStartTime(): number | null;
+  /** Elapsed seconds within the active run, aligned with data-point elapsed_s */
+  getActiveRunElapsedS(): number | null;
 }
 
 // ── TemperatureManager ────────────────────────────────────────────
@@ -303,10 +305,11 @@ export class TemperatureManager {
     const runId = this.runContext?.getActiveRunId();
     if (runId === null || runId === undefined) return;
 
-    const startTime = this.runContext?.getRunStartTime();
-    if (startTime === null || startTime === undefined) return;
-
-    const elapsedS = (Date.now() - startTime) / 1000;
+    // Use the run's own elapsed clock (device elapsed for test runs) so temp
+    // readings line up with data points — wall-clock-since-runStartTime
+    // diverges on recovered runs, where runStartTime resets to reopen time.
+    const elapsedS = this.runContext?.getActiveRunElapsedS();
+    if (elapsedS === null || elapsedS === undefined) return;
 
     for (const r of readings) {
       insertTempReading(runId, r.channelDbId, r.tempC, elapsedS);

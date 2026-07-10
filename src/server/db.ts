@@ -60,9 +60,8 @@ function runMigrations(db: Database): void {
     version INTEGER PRIMARY KEY
   )`);
 
-  const currentVersion = db.query<{ version: number }, []>(
-    'SELECT MAX(version) as version FROM schema_version'
-  ).get()?.version ?? 0;
+  const currentVersion =
+    db.query<{ version: number }, []>('SELECT MAX(version) as version FROM schema_version').get()?.version ?? 0;
 
   const migrations: { version: number; sql: string }[] = [
     {
@@ -271,9 +270,7 @@ export interface Cell {
 
 export function upsertCell(barcode: string, label?: string | null): Cell {
   const db = getDb();
-  const existing = db.query<Cell, [string]>(
-    'SELECT * FROM cells WHERE barcode = ?'
-  ).get(barcode);
+  const existing = db.query<Cell, [string]>('SELECT * FROM cells WHERE barcode = ?').get(barcode);
 
   if (existing) {
     if (label !== undefined) {
@@ -283,13 +280,8 @@ export function upsertCell(barcode: string, label?: string | null): Cell {
     return existing;
   }
 
-  const result = db.run(
-    'INSERT INTO cells (barcode, label) VALUES (?, ?)',
-    [barcode, label ?? null]
-  );
-  return db.query<Cell, [number]>('SELECT * FROM cells WHERE id = ?').get(
-    result.lastInsertRowid as number
-  )!;
+  const result = db.run('INSERT INTO cells (barcode, label) VALUES (?, ?)', [barcode, label ?? null]);
+  return db.query<Cell, [number]>('SELECT * FROM cells WHERE id = ?').get(result.lastInsertRowid as number)!;
 }
 
 export function getCells(): Cell[] {
@@ -302,6 +294,38 @@ export function getRecentCells(limit = 1): Cell[] {
 
 export function getCellById(id: number): Cell | null {
   return getDb().query<Cell, [number]>('SELECT * FROM cells WHERE id = ?').get(id) ?? null;
+}
+
+export function getRunCountForCell(cellId: number): number {
+  return (
+    getDb().query<{ count: number }, [number]>('SELECT COUNT(*) as count FROM test_runs WHERE cell_id = ?').get(cellId)
+      ?.count ?? 0
+  );
+}
+
+/**
+ * Delete a cell. Refuses (returns the run count) when the cell has recorded
+ * runs unless `force` is set, in which case the runs and all their data
+ * points and temperature readings are deleted too.
+ */
+export function deleteCell(cellId: number, force = false): { deleted: boolean; runCount: number } {
+  const db = getDb();
+  const runCount = getRunCountForCell(cellId);
+  if (runCount > 0 && !force) {
+    return { deleted: false, runCount };
+  }
+
+  const txn = db.transaction(() => {
+    if (runCount > 0) {
+      db.run('DELETE FROM temperature_readings WHERE run_id IN (SELECT id FROM test_runs WHERE cell_id = ?)', [cellId]);
+      db.run('DELETE FROM data_points WHERE run_id IN (SELECT id FROM test_runs WHERE cell_id = ?)', [cellId]);
+      db.run('DELETE FROM test_runs WHERE cell_id = ?', [cellId]);
+    }
+    db.run('DELETE FROM cells WHERE id = ?', [cellId]);
+  });
+  txn();
+
+  return { deleted: true, runCount };
 }
 
 export function getCellByBarcode(barcode: string): Cell | null {
@@ -398,9 +422,7 @@ export function createTestRun(params: CreateTestRunParams): TestRun {
       params.cycleIteration ?? null,
     ]
   );
-  return db.query<TestRun, [number]>('SELECT * FROM test_runs WHERE id = ?').get(
-    result.lastInsertRowid as number
-  )!;
+  return db.query<TestRun, [number]>('SELECT * FROM test_runs WHERE id = ?').get(result.lastInsertRowid as number)!;
 }
 
 export function finalizeTestRun(
@@ -421,14 +443,24 @@ export function finalizeTestRun(
        peak_voltage_v = ?, min_voltage_v = ?, peak_current_a = ?,
        duration_s = ?, data_point_count = ?
      WHERE id = ?`,
-    [endReason, finalCapacityMah, finalEnergyMwh, peakVoltageV, minVoltageV, peakCurrentA, durationS, dataPointCount, runId]
+    [
+      endReason,
+      finalCapacityMah,
+      finalEnergyMwh,
+      peakVoltageV,
+      minVoltageV,
+      peakCurrentA,
+      durationS,
+      dataPointCount,
+      runId,
+    ]
   );
 }
 
 export function getTestRunsForCell(cellId: number): TestRun[] {
-  return getDb().query<TestRun, [number]>(
-    'SELECT * FROM test_runs WHERE cell_id = ? ORDER BY started_at DESC'
-  ).all(cellId);
+  return getDb()
+    .query<TestRun, [number]>('SELECT * FROM test_runs WHERE cell_id = ? ORDER BY started_at DESC')
+    .all(cellId);
 }
 
 export function getTestRun(id: number): TestRun | null {
@@ -436,9 +468,7 @@ export function getTestRun(id: number): TestRun | null {
 }
 
 export function getRecentTestRuns(limit: number = 50): TestRun[] {
-  return getDb().query<TestRun, [number]>(
-    'SELECT * FROM test_runs ORDER BY started_at DESC LIMIT ?'
-  ).all(limit);
+  return getDb().query<TestRun, [number]>('SELECT * FROM test_runs ORDER BY started_at DESC LIMIT ?').all(limit);
 }
 
 /** Mark incomplete runs and cycle programs from a previous crash */
@@ -450,9 +480,12 @@ export function markIncompleteRuns(): { runs: number; cycles: number } {
   ).changes;
   // Note: cycle programs are NOT aborted here. The CycleRunner.start() method
   // handles recovery — it will either resume the program or abort it if recovery fails.
-  const cycles = db.query<{ count: number }, []>(
-    `SELECT COUNT(*) as count FROM cycle_programs WHERE status IN ('running', 'pending')`
-  ).get()?.count ?? 0;
+  const cycles =
+    db
+      .query<{ count: number }, []>(
+        `SELECT COUNT(*) as count FROM cycle_programs WHERE status IN ('running', 'pending')`
+      )
+      .get()?.count ?? 0;
   return { runs, cycles };
 }
 
@@ -494,15 +527,11 @@ export function insertDataPoint(
   energyMwh: number,
   stateByte: number
 ): void {
-  insertDataPointStmt.get(getDb()).run(
-    runId, elapsedS, voltageV, currentA, powerW, capacityMah, energyMwh, stateByte
-  );
+  insertDataPointStmt.get(getDb()).run(runId, elapsedS, voltageV, currentA, powerW, capacityMah, energyMwh, stateByte);
 }
 
 export function getDataPointsForRun(runId: number): DataPoint[] {
-  return getDb().query<DataPoint, [number]>(
-    'SELECT * FROM data_points WHERE run_id = ? ORDER BY elapsed_s'
-  ).all(runId);
+  return getDb().query<DataPoint, [number]>('SELECT * FROM data_points WHERE run_id = ? ORDER BY elapsed_s').all(runId);
 }
 
 /**
@@ -540,9 +569,12 @@ function downsampleRun(rows: CompactDataRow[], maxPoints: number): DownsampledDa
   for (let b = 0; b < maxPoints; b++) {
     const start = Math.floor(b * bucketSize);
     const end = Math.floor((b + 1) * bucketSize);
-    let vMin = Infinity, vMax = -Infinity;
-    let iMin = Infinity, iMax = -Infinity;
-    let pMin = Infinity, pMax = -Infinity;
+    let vMin = Infinity,
+      vMax = -Infinity;
+    let iMin = Infinity,
+      iMax = -Infinity;
+    let pMin = Infinity,
+      pMax = -Infinity;
 
     for (let j = start; j < end; j++) {
       const r = rows[j];
@@ -563,28 +595,49 @@ function downsampleRun(rows: CompactDataRow[], maxPoints: number): DownsampledDa
   return result;
 }
 
-/** Fetch recent runs with compact data points in one go */
-export function getRecentRunsWithData(limit: number = 50): RunWithCompactData[] {
+/** Fetch recent runs with compact data points in one go, optionally for a single cell */
+export function getRecentRunsWithData(limit: number = 50, cellId?: number | null): RunWithCompactData[] {
   const db = getDb();
-  const runs = db.query<TestRun, [number]>(
-    'SELECT * FROM test_runs ORDER BY started_at DESC LIMIT ?'
-  ).all(limit);
+  const runs =
+    cellId !== undefined && cellId !== null
+      ? db
+          .query<TestRun, [number, number]>(
+            'SELECT * FROM test_runs WHERE cell_id = ? ORDER BY started_at DESC LIMIT ?'
+          )
+          .all(cellId, limit)
+      : db.query<TestRun, [number]>('SELECT * FROM test_runs ORDER BY started_at DESC LIMIT ?').all(limit);
 
   if (runs.length === 0) return [];
 
   // Single query for only the columns we need, in compact form
   const runIds = runs.map(r => r.id);
   const placeholders = runIds.map(() => '?').join(',');
-  const allPoints = db.query<{ run_id: number; elapsed_s: number; voltage_v: number; current_a: number; power_w: number; capacity_mah: number; energy_mwh: number }, number[]>(
-    `SELECT run_id, elapsed_s, voltage_v, current_a, power_w, capacity_mah, energy_mwh
+  const allPoints = db
+    .query<
+      {
+        run_id: number;
+        elapsed_s: number;
+        voltage_v: number;
+        current_a: number;
+        power_w: number;
+        capacity_mah: number;
+        energy_mwh: number;
+      },
+      number[]
+    >(
+      `SELECT run_id, elapsed_s, voltage_v, current_a, power_w, capacity_mah, energy_mwh
      FROM data_points WHERE run_id IN (${placeholders}) ORDER BY run_id, elapsed_s`
-  ).all(...runIds);
+    )
+    .all(...runIds);
 
   // Group as compact arrays by run_id
   const pointsByRun = new Map<number, CompactDataRow[]>();
   for (const p of allPoints) {
     let arr = pointsByRun.get(p.run_id);
-    if (!arr) { arr = []; pointsByRun.set(p.run_id, arr); }
+    if (!arr) {
+      arr = [];
+      pointsByRun.set(p.run_id, arr);
+    }
     arr.push([p.elapsed_s, p.voltage_v, p.current_a, p.power_w, p.capacity_mah, p.energy_mwh]);
   }
 
@@ -598,43 +651,51 @@ export function getRecentRunsWithData(limit: number = 50): RunWithCompactData[] 
 }
 
 export function getDataPointCount(runId: number): number {
-  return getDb().query<{ count: number }, [number]>(
-    'SELECT COUNT(*) as count FROM data_points WHERE run_id = ?'
-  ).get(runId)?.count ?? 0;
+  return (
+    getDb().query<{ count: number }, [number]>('SELECT COUNT(*) as count FROM data_points WHERE run_id = ?').get(runId)
+      ?.count ?? 0
+  );
 }
 
 /** Find the most recent run closed by a service restart/shutdown with matching mode */
 export function getLastServiceRestartRun(mode: string): TestRun | null {
-  return getDb().query<TestRun, [string]>(
-    `SELECT * FROM test_runs
+  return (
+    getDb()
+      .query<TestRun, [string]>(
+        `SELECT * FROM test_runs
      WHERE end_reason IN ('service_restart', 'service_shutdown') AND mode = ?
      ORDER BY id DESC LIMIT 1`
-  ).get(mode) ?? null;
+      )
+      .get(mode) ?? null
+  );
 }
 
 /** Get the last data point for a run (by insertion order) */
 export function getLastDataPointForRun(runId: number): DataPoint | null {
-  return getDb().query<DataPoint, [number]>(
-    'SELECT * FROM data_points WHERE run_id = ? ORDER BY id DESC LIMIT 1'
-  ).get(runId) ?? null;
+  return (
+    getDb()
+      .query<DataPoint, [number]>('SELECT * FROM data_points WHERE run_id = ? ORDER BY id DESC LIMIT 1')
+      .get(runId) ?? null
+  );
 }
 
 /** Get aggregate peak/min stats from all data points in a run */
-export function getRunPeakStats(runId: number): { peakVoltage: number; minVoltage: number; peakCurrent: number } | null {
-  const row = getDb().query<{ peak_v: number; min_v: number; peak_i: number }, [number]>(
-    `SELECT MAX(voltage_v) as peak_v, MIN(voltage_v) as min_v, MAX(current_a) as peak_i
+export function getRunPeakStats(
+  runId: number
+): { peakVoltage: number; minVoltage: number; peakCurrent: number } | null {
+  const row = getDb()
+    .query<{ peak_v: number; min_v: number; peak_i: number }, [number]>(
+      `SELECT MAX(voltage_v) as peak_v, MIN(voltage_v) as min_v, MAX(current_a) as peak_i
      FROM data_points WHERE run_id = ?`
-  ).get(runId);
+    )
+    .get(runId);
   if (!row || row.peak_v == null) return null;
   return { peakVoltage: row.peak_v, minVoltage: row.min_v, peakCurrent: row.peak_i };
 }
 
 /** Reopen a service_restart run for continued recording */
 export function reopenRun(runId: number): void {
-  getDb().run(
-    'UPDATE test_runs SET ended_at = NULL, end_reason = NULL WHERE id = ?',
-    [runId]
-  );
+  getDb().run('UPDATE test_runs SET ended_at = NULL, end_reason = NULL WHERE id = ?', [runId]);
 }
 
 // ── Sequence operations ─────────────────────────────────────────────
@@ -658,20 +719,20 @@ export function getSequence(id: number): Sequence | null {
 
 export function createSequence(name: string, stepsJson: string, cellGroupId?: number | null): Sequence {
   const db = getDb();
-  const result = db.run(
-    'INSERT INTO sequences (name, steps_json, cell_group_id) VALUES (?, ?, ?)',
-    [name, stepsJson, cellGroupId ?? null]
-  );
-  return db.query<Sequence, [number]>('SELECT * FROM sequences WHERE id = ?').get(
-    result.lastInsertRowid as number
-  )!;
+  const result = db.run('INSERT INTO sequences (name, steps_json, cell_group_id) VALUES (?, ?, ?)', [
+    name,
+    stepsJson,
+    cellGroupId ?? null,
+  ]);
+  return db.query<Sequence, [number]>('SELECT * FROM sequences WHERE id = ?').get(result.lastInsertRowid as number)!;
 }
 
 export function updateSequence(id: number, name: string, stepsJson: string): void {
-  getDb().run(
-    `UPDATE sequences SET name = ?, steps_json = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`,
-    [name, stepsJson, id]
-  );
+  getDb().run(`UPDATE sequences SET name = ?, steps_json = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [
+    name,
+    stepsJson,
+    id,
+  ]);
 }
 
 export function deleteSequence(id: number): void {
@@ -695,16 +756,20 @@ export interface CycleProgram {
 
 export function createCycleProgram(cellId: number | null, name: string | null, stepsJson: string): CycleProgram {
   const db = getDb();
-  const result = db.run(
-    'INSERT INTO cycle_programs (cell_id, name, steps_json) VALUES (?, ?, ?)',
-    [cellId, name, stepsJson]
-  );
-  return db.query<CycleProgram, [number]>('SELECT * FROM cycle_programs WHERE id = ?').get(
-    result.lastInsertRowid as number
-  )!;
+  const result = db.run('INSERT INTO cycle_programs (cell_id, name, steps_json) VALUES (?, ?, ?)', [
+    cellId,
+    name,
+    stepsJson,
+  ]);
+  return db
+    .query<CycleProgram, [number]>('SELECT * FROM cycle_programs WHERE id = ?')
+    .get(result.lastInsertRowid as number)!;
 }
 
-export function updateCycleProgram(id: number, updates: Partial<Pick<CycleProgram, 'status' | 'current_step' | 'current_cycle' | 'started_at' | 'ended_at'>>): void {
+export function updateCycleProgram(
+  id: number,
+  updates: Partial<Pick<CycleProgram, 'status' | 'current_step' | 'current_cycle' | 'started_at' | 'ended_at'>>
+): void {
   const sets: string[] = [];
   const vals: (string | number | null)[] = [];
   for (const [key, val] of Object.entries(updates)) {
@@ -717,44 +782,39 @@ export function updateCycleProgram(id: number, updates: Partial<Pick<CycleProgra
 }
 
 export function getActiveCycleProgram(): CycleProgram | null {
-  return getDb().query<CycleProgram, []>(
-    'SELECT * FROM cycle_programs WHERE status = \'running\' LIMIT 1'
-  ).get() ?? null;
+  return getDb().query<CycleProgram, []>("SELECT * FROM cycle_programs WHERE status = 'running' LIMIT 1").get() ?? null;
 }
 
 export function getCycleProgram(id: number): CycleProgram | null {
-  return getDb().query<CycleProgram, [number]>(
-    'SELECT * FROM cycle_programs WHERE id = ?'
-  ).get(id) ?? null;
+  return getDb().query<CycleProgram, [number]>('SELECT * FROM cycle_programs WHERE id = ?').get(id) ?? null;
 }
 
 /** All test runs for a cycle program, ordered by start time */
 export function getRunsForCycleProgram(programId: number): TestRun[] {
-  return getDb().query<TestRun, [number]>(
-    'SELECT * FROM test_runs WHERE cycle_program_id = ? ORDER BY started_at ASC'
-  ).all(programId);
+  return getDb()
+    .query<TestRun, [number]>('SELECT * FROM test_runs WHERE cycle_program_id = ? ORDER BY started_at ASC')
+    .all(programId);
 }
 
 /** Get the most recent test run for a specific cycle step (used for wait resume) */
 export function getCycleStepRun(programId: number, stepIndex: number): TestRun | null {
-  return getDb().query<TestRun, [number, number]>(
-    'SELECT * FROM test_runs WHERE cycle_program_id = ? AND cycle_step_index = ? ORDER BY started_at DESC LIMIT 1'
-  ).get(programId, stepIndex) ?? null;
+  return (
+    getDb()
+      .query<TestRun, [number, number]>(
+        'SELECT * FROM test_runs WHERE cycle_program_id = ? AND cycle_step_index = ? ORDER BY started_at DESC LIMIT 1'
+      )
+      .get(programId, stepIndex) ?? null
+  );
 }
 
 // ── Settings operations ─────────────────────────────────────────────
 
 export function getSetting(key: string): string | null {
-  return getDb().query<{ value: string }, [string]>(
-    'SELECT value FROM settings WHERE key = ?'
-  ).get(key)?.value ?? null;
+  return getDb().query<{ value: string }, [string]>('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
 }
 
 export function setSetting(key: string, value: string): void {
-  getDb().run(
-    'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
-    [key, value]
-  );
+  getDb().run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [key, value]);
 }
 
 // ── Cell group operations ───────────────────────────────────────────
@@ -779,47 +839,46 @@ export function getCellGroup(id: number): CellGroup | null {
 }
 
 export function getCellsInGroup(groupId: number): Cell[] {
-  return getDb().query<Cell, [number]>(
-    'SELECT * FROM cells WHERE cell_group_id = ? ORDER BY label, barcode'
-  ).all(groupId);
+  return getDb()
+    .query<Cell, [number]>('SELECT * FROM cells WHERE cell_group_id = ? ORDER BY label, barcode')
+    .all(groupId);
 }
 
 export function setCellGroup(cellId: number, groupId: number | null): void {
-  getDb().run(
-    `UPDATE cells SET cell_group_id = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`,
-    [groupId, cellId]
-  );
+  getDb().run(`UPDATE cells SET cell_group_id = ?, updated_at = ${SQL_NOW_UTC} WHERE id = ?`, [groupId, cellId]);
 }
 
 /** Completed discharge runs for a cell, ordered by date (excludes setup/teardown) */
 export function getCompletedDischargeRuns(cellId: number): TestRun[] {
-  return getDb().query<TestRun, [number]>(
-    `SELECT * FROM test_runs
+  return getDb()
+    .query<TestRun, [number]>(
+      `SELECT * FROM test_runs
      WHERE cell_id = ? AND mode = 'd-cc'
        AND final_capacity_mah IS NOT NULL AND final_capacity_mah > 0
        AND ended_at IS NOT NULL
        AND (exclude_from_capacity IS NULL OR exclude_from_capacity = 0)
      ORDER BY started_at ASC`
-  ).all(cellId);
+    )
+    .all(cellId);
 }
 
 /** All completed discharge runs (for fleet analysis, excludes setup/teardown) */
 export function getAllCompletedDischargeRuns(): TestRun[] {
-  return getDb().query<TestRun, []>(
-    `SELECT * FROM test_runs
+  return getDb()
+    .query<TestRun, []>(
+      `SELECT * FROM test_runs
      WHERE mode = 'd-cc'
        AND final_capacity_mah IS NOT NULL AND final_capacity_mah > 0
        AND ended_at IS NOT NULL
        AND (exclude_from_capacity IS NULL OR exclude_from_capacity = 0)
      ORDER BY started_at ASC`
-  ).all();
+    )
+    .all();
 }
 
 export function ensureDefaultCellGroup(): CellGroup {
   const db = getDb();
-  const existing = db.query<CellGroup, [string]>(
-    'SELECT * FROM cell_groups WHERE name = ?'
-  ).get('TS-LFP200AHA');
+  const existing = db.query<CellGroup, [string]>('SELECT * FROM cell_groups WHERE name = ?').get('TS-LFP200AHA');
 
   if (existing) return existing;
 
@@ -827,9 +886,7 @@ export function ensureDefaultCellGroup(): CellGroup {
     `INSERT INTO cell_groups (name, nominal_capacity_mah, chemistry, charge_voltage_v, discharge_cutoff_v, charge_cutoff_current_a)
      VALUES ('TS-LFP200AHA', 200000, 'LiFePO4', 3.65, 2.50, 2.00)`
   );
-  return db.query<CellGroup, [number]>('SELECT * FROM cell_groups WHERE id = ?').get(
-    result.lastInsertRowid as number
-  )!;
+  return db.query<CellGroup, [number]>('SELECT * FROM cell_groups WHERE id = ?').get(result.lastInsertRowid as number)!;
 }
 
 export function createCellGroup(
@@ -838,17 +895,22 @@ export function createCellGroup(
   chemistry: string,
   chargeVoltageV?: number | null,
   dischargeCutoffV?: number | null,
-  chargeCutoffCurrentA?: number | null,
+  chargeCutoffCurrentA?: number | null
 ): CellGroup {
   const db = getDb();
   const result = db.run(
     `INSERT INTO cell_groups (name, nominal_capacity_mah, chemistry, charge_voltage_v, discharge_cutoff_v, charge_cutoff_current_a)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [name, nominalCapacityMah, chemistry, chargeVoltageV ?? null, dischargeCutoffV ?? null, chargeCutoffCurrentA ?? null]
+    [
+      name,
+      nominalCapacityMah,
+      chemistry,
+      chargeVoltageV ?? null,
+      dischargeCutoffV ?? null,
+      chargeCutoffCurrentA ?? null,
+    ]
   );
-  return db.query<CellGroup, [number]>('SELECT * FROM cell_groups WHERE id = ?').get(
-    result.lastInsertRowid as number
-  )!;
+  return db.query<CellGroup, [number]>('SELECT * FROM cell_groups WHERE id = ?').get(result.lastInsertRowid as number)!;
 }
 
 // ── Temperature channel operations ─────────────────────────────────
@@ -872,16 +934,10 @@ export function getTempChannels(): TempChannel[] {
 }
 
 export function getTempChannelByKey(key: string): TempChannel | null {
-  return getDb().query<TempChannel, [string]>(
-    'SELECT * FROM temp_channels WHERE channel_key = ?'
-  ).get(key) ?? null;
+  return getDb().query<TempChannel, [string]>('SELECT * FROM temp_channels WHERE channel_key = ?').get(key) ?? null;
 }
 
-export function upsertTempChannel(
-  channelKey: string,
-  sourceType: string,
-  sourceConfig: string,
-): TempChannel {
+export function upsertTempChannel(channelKey: string, sourceType: string, sourceConfig: string): TempChannel {
   const db = getDb();
   const existing = getTempChannelByKey(channelKey);
   if (existing) return existing;
@@ -896,15 +952,24 @@ export function upsertTempChannel(
 
 export function updateTempChannel(
   id: number,
-  updates: { name?: string | null; enabled?: boolean; alertMaxC?: number | null },
+  updates: { name?: string | null; enabled?: boolean; alertMaxC?: number | null }
 ): void {
   const db = getDb();
   const sets: string[] = [];
   const params: (string | number | null)[] = [];
 
-  if (updates.name !== undefined) { sets.push('name = ?'); params.push(updates.name); }
-  if (updates.enabled !== undefined) { sets.push('enabled = ?'); params.push(updates.enabled ? 1 : 0); }
-  if (updates.alertMaxC !== undefined) { sets.push('alert_max_c = ?'); params.push(updates.alertMaxC); }
+  if (updates.name !== undefined) {
+    sets.push('name = ?');
+    params.push(updates.name);
+  }
+  if (updates.enabled !== undefined) {
+    sets.push('enabled = ?');
+    params.push(updates.enabled ? 1 : 0);
+  }
+  if (updates.alertMaxC !== undefined) {
+    sets.push('alert_max_c = ?');
+    params.push(updates.alertMaxC);
+  }
 
   if (sets.length === 0) return;
   params.push(id);
@@ -912,17 +977,15 @@ export function updateTempChannel(
 }
 
 export function updateTempChannelSeen(channelKey: string): void {
-  getDb().run(
-    `UPDATE temp_channels SET last_seen_at = ${SQL_NOW_UTC}, unplugged_at = NULL WHERE channel_key = ?`,
-    [channelKey]
-  );
+  getDb().run(`UPDATE temp_channels SET last_seen_at = ${SQL_NOW_UTC}, unplugged_at = NULL WHERE channel_key = ?`, [
+    channelKey,
+  ]);
 }
 
 export function markTempChannelUnplugged(channelKey: string): void {
-  getDb().run(
-    `UPDATE temp_channels SET unplugged_at = ${SQL_NOW_UTC} WHERE channel_key = ? AND unplugged_at IS NULL`,
-    [channelKey]
-  );
+  getDb().run(`UPDATE temp_channels SET unplugged_at = ${SQL_NOW_UTC} WHERE channel_key = ? AND unplugged_at IS NULL`, [
+    channelKey,
+  ]);
 }
 
 export function deleteTempChannel(id: number): void {
@@ -942,12 +1005,7 @@ export interface TempReading {
   recorded_at: string;
 }
 
-export function insertTempReading(
-  runId: number,
-  channelId: number,
-  tempC: number,
-  elapsedS: number,
-): void {
+export function insertTempReading(runId: number, channelId: number, tempC: number, elapsedS: number): void {
   getDb().run(
     `INSERT INTO temperature_readings (run_id, channel_id, temp_c, elapsed_s)
      VALUES (?, ?, ?, ?)`,
@@ -955,12 +1013,16 @@ export function insertTempReading(
   );
 }
 
-export function getTempReadingsForRun(runId: number): (TempReading & { channel_key: string; channel_name: string | null })[] {
-  return getDb().query<TempReading & { channel_key: string; channel_name: string | null }, [number]>(
-    `SELECT tr.*, tc.channel_key, tc.name as channel_name
+export function getTempReadingsForRun(
+  runId: number
+): (TempReading & { channel_key: string; channel_name: string | null })[] {
+  return getDb()
+    .query<TempReading & { channel_key: string; channel_name: string | null }, [number]>(
+      `SELECT tr.*, tc.channel_key, tc.name as channel_name
      FROM temperature_readings tr
      JOIN temp_channels tc ON tr.channel_id = tc.id
      WHERE tr.run_id = ?
      ORDER BY tr.elapsed_s, tc.channel_key`
-  ).all(runId);
+    )
+    .all(runId);
 }

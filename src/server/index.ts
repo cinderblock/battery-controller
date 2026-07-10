@@ -19,6 +19,7 @@ import {
   closeDb,
   createCellGroup,
   createSequence,
+  deleteCell,
   deleteSequence,
   ensureDefaultCellGroup,
   getCellByBarcode,
@@ -682,14 +683,43 @@ async function main() {
       if (!cell) return errorResponse('Cell not found', 404);
       return jsonResponse(cell);
     }
+    if (cellByIdMatch && method === 'DELETE') {
+      const locked = requireUnlocked();
+      if (locked) return locked;
+
+      const cellId = parseInt(cellByIdMatch[1], 10);
+      const cell = getCellById(cellId);
+      if (!cell) return errorResponse('Cell not found', 404);
+
+      const url = new URL(req.url);
+      const force = url.searchParams.get('force') === '1';
+      const result = deleteCell(cellId, force);
+      if (!result.deleted) {
+        return jsonResponse(
+          {
+            error: `Cell has ${result.runCount} recorded run(s). Pass force=1 to delete them too.`,
+            runCount: result.runCount,
+          },
+          409
+        );
+      }
+      logger.info(
+        `Deleted cell #${cellId} (${cell.label || cell.barcode})${result.runCount > 0 ? ` and ${result.runCount} run(s)` : ''}`
+      );
+      return jsonResponse({ ok: true, deletedRuns: result.runCount });
+    }
 
     // ── Test run queries ──────────────────────────────────────
     if (pathname === '/api/runs/recent' && method === 'GET') {
       const url = new URL(req.url);
       const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
+      // Optional ?cellId=N — only that cell's runs (lets the UI load runs
+      // older than the global recent window, e.g. a cell tested a month ago)
+      const cellIdParam = url.searchParams.get('cellId');
+      const cellId = cellIdParam !== null ? parseInt(cellIdParam, 10) : undefined;
       // If ?withData=1, return runs bundled with compact data points (single request)
       if (url.searchParams.get('withData') === '1') {
-        return jsonResponse(getRecentRunsWithData(limit), 200, req);
+        return jsonResponse(getRecentRunsWithData(limit, cellId), 200, req);
       }
       return jsonResponse(getRecentTestRuns(limit), 200, req);
     }
