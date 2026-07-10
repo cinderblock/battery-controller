@@ -43,6 +43,42 @@ function seriesValueAt(xs: number[], ys: (number | null | undefined)[] | undefin
   return (ys[lo] as number) + t * ((ys[hi] as number) - (ys[lo] as number));
 }
 
+// ── Zoom sync ──────────────────────────────────────────────────────
+// uPlot's cursor.sync shares only the crosshair; drag-zoom emits setScale,
+// which we mirror to every other chart registered under the same key.
+
+const zoomSyncGroups = new Map<string, Set<uPlot>>();
+let zoomSyncInProgress = false;
+
+function registerZoomSync(key: string, u: uPlot): () => void {
+  let group = zoomSyncGroups.get(key);
+  if (!group) {
+    group = new Set();
+    zoomSyncGroups.set(key, group);
+  }
+  group.add(u);
+  return () => {
+    group.delete(u);
+    if (group.size === 0) zoomSyncGroups.delete(key);
+  };
+}
+
+function propagateXZoom(key: string, source: uPlot): void {
+  if (zoomSyncInProgress) return;
+  const group = zoomSyncGroups.get(key);
+  if (!group) return;
+  const { min, max } = source.scales.x;
+  if (min == null || max == null) return;
+  zoomSyncInProgress = true;
+  try {
+    for (const peer of group) {
+      if (peer !== source) peer.setScale('x', { min, max });
+    }
+  } finally {
+    zoomSyncInProgress = false;
+  }
+}
+
 /** Per-chart focused-series tracking so we only call setSeries on change */
 const focusedSeriesByChart = new WeakMap<uPlot, number>();
 
@@ -110,6 +146,11 @@ export interface ChartProps {
   scaleRanges?: Partial<Record<string, ScaleRange>>;
   bands?: BandDef[];
   className?: string;
+  /** Charts sharing a syncKey share crosshair position and x-axis zoom */
+  syncKey?: string;
+  /** Extra left/right padding (px) to align plot areas of stacked charts */
+  padLeft?: number;
+  padRight?: number;
 }
 
 // ── Scale config ───────────────────────────────────────────────────
@@ -139,6 +180,9 @@ export function Chart({
   scaleRanges = {},
   bands: bandDefs = [],
   className,
+  syncKey,
+  padLeft = 0,
+  padRight = 0,
 }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const uplotRef = useRef<uPlot | null>(null);
@@ -161,12 +205,22 @@ export function Chart({
   const bandDefsRef = useRef(bandDefs);
   bandDefsRef.current = bandDefs;
 
+  // Sync + padding props, read at build time via refs (buildOptions is memoized)
+  const syncKeyRef = useRef(syncKey);
+  syncKeyRef.current = syncKey;
+  const padRef = useRef({ padLeft, padRight });
+  padRef.current = { padLeft, padRight };
+
   // Build a stable key from series info + scale ranges to detect when chart needs rebuild
   const rangesKey = Object.entries(scaleRanges)
     .filter((e): e is [string, ScaleRange] => e[1] != null)
     .map(([k, v]) => `${k}:${v.min}-${v.max}`)
     .join('|');
-  const seriesKey = seriesInfo.map(s => `${s.runId}:${s.metric}:${s.isLive}`).join('|') + '||' + rangesKey;
+  const seriesKey =
+    seriesInfo.map(s => `${s.runId}:${s.metric}:${s.isLive}`).join('|') +
+    '||' +
+    rangesKey +
+    `||pad:${padLeft},${padRight}`;
 
   const buildOptions = useCallback((): uPlot.Options => {
     const seriesInfo = seriesInfoRef.current;
@@ -279,12 +333,19 @@ export function Chart({
 
     const tooltip = tooltipRef.current;
 
+    const sync = syncKeyRef.current;
+    const { padLeft: extraLeft, padRight: extraRight } = padRef.current;
+
     return {
       width,
       height,
+      // [top, right, bottom, left] — null = uPlot's auto padding; extra
+      // left/right padding aligns plot areas of vertically stacked charts
+      padding: [null, extraRight > 0 ? extraRight : null, null, extraLeft > 0 ? extraLeft : null],
       cursor: {
         drag: { x: true, y: false, setScale: true },
         points: { size: 6, fill: '#fff' },
+        ...(sync ? { sync: { key: sync } } : {}),
       },
       focus: { alpha: FOCUS_ALPHA },
       scales: {
@@ -307,6 +368,11 @@ export function Chart({
       bands: uBands,
       legend: { show: false }, // We build our own legend panel
       hooks: {
+        setScale: [
+          (u: uPlot, scaleKey: string) => {
+            if (scaleKey === 'x' && sync) propagateXZoom(sync, u);
+          },
+        ],
         draw: [
           (u: uPlot) => {
             const lines = thresholdsRef.current;
@@ -468,8 +534,10 @@ export function Chart({
     const opts = buildOptions();
     const u = new uPlot(opts, data as uPlot.AlignedData, container);
     uplotRef.current = u;
+    const unregisterZoomSync = syncKeyRef.current ? registerZoomSync(syncKeyRef.current, u) : null;
 
     return () => {
+      unregisterZoomSync?.();
       u.destroy();
       uplotRef.current = null;
       prevSeriesKeyRef.current = '';

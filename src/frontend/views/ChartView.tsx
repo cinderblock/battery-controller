@@ -18,14 +18,15 @@ import {
 } from '../api-client.ts';
 import { CameraView } from '../components/CameraView.tsx';
 import { CapacityChart } from '../components/CapacityChart.tsx';
+import { CellSelectModal } from '../components/CellSelectModal.tsx';
 import { Chart } from '../components/Chart.tsx';
 import { LegendPanel } from '../components/LegendPanel.tsx';
 import { StartModal } from '../components/StartModal.tsx';
 import { TopBar } from '../components/TopBar.tsx';
 import { useSession } from '../hooks/useDeviceSession.ts';
 import {
-  addTemperatureSeries,
   buildRunColorMap,
+  buildTempChartData,
   type ChartRun,
   type ColorBy,
   compactDataToChartRun,
@@ -123,17 +124,24 @@ export function ChartView() {
   const [showComplete, setShowComplete] = useState(true);
   const [showPartial, setShowPartial] = useState(true);
   const [daysPast, setDaysPast] = useState(7); // Show runs from last N days (0 = all)
-  /** Filter runs to a single cell ('all' = every run, -1 = runs with no cell) */
-  const [cellFilter, setCellFilter] = useState<'all' | number>('all');
   const [colorBy, setColorBy] = useState<ColorBy>('run');
 
-  // ── Cells (for the cell filter dropdown labels) ───────────────
+  // ── Cell visibility (Cells modal) ─────────────────────────────
   const [cells, setCells] = useState<Cell[]>([]);
-  useEffect(() => {
-    api<Cell[]>('/api/cells')
+  const [cellsModalOpen, setCellsModalOpen] = useState(false);
+  /** Cell ids whose runs are hidden (-1 = runs with no cell) */
+  const [hiddenCellIds, setHiddenCellIds] = useState<Set<number>>(() => new Set());
+  /** Cell whose runs are currently being fetched on demand */
+  const [loadingCellId, setLoadingCellId] = useState<number | null>(null);
+
+  const loadCells = useCallback(() => {
+    return api<Cell[]>('/api/cells')
       .then(setCells)
       .catch(() => {});
   }, []);
+  useEffect(() => {
+    loadCells();
+  }, [loadCells]);
 
   // ── Auto-detect cell insertion ────────────────────────────────
   // When the device is idle and voltage jumps from near-zero to cell range,
@@ -252,15 +260,12 @@ export function ChartView() {
         if (runDate < cutoff) return false;
       }
 
-      // Cell filter
-      if (cellFilter !== 'all') {
-        const runCell = run.meta.cell_id ?? -1;
-        if (runCell !== cellFilter) return false;
-      }
+      // Cell visibility (managed via the Cells modal; -1 = runs with no cell)
+      if (hiddenCellIds.has(run.meta.cell_id ?? -1)) return false;
 
       return true;
     },
-    [showCharge, showDischarge, showComplete, showPartial, daysPast, cellFilter, selectedGroup, isRunComplete]
+    [showCharge, showDischarge, showComplete, showPartial, daysPast, hiddenCellIds, selectedGroup, isRunComplete]
   );
 
   // When filters or runs change, recompute visible runs
@@ -269,31 +274,106 @@ export function ChartView() {
   }, [runs, runPassesFilter]);
 
   // ── Load historical runs ──────────────────────────────────────
+
+  /** Convert API runs-with-data to ChartRuns */
+  const toChartRuns = useCallback((runsWithData: TestRunWithData[]): ChartRun[] => {
+    const chartRuns: ChartRun[] = [];
+    for (const rwd of runsWithData) {
+      if (rwd.d.length === 0) continue;
+      const label = rwd.cell_id ? `Cell #${rwd.cell_id}` : `Run #${rwd.id}`;
+      chartRuns.push(compactDataToChartRun(rwd, rwd.d, label, rwd.downsampled));
+    }
+    return chartRuns;
+  }, []);
+
+  /** Fetch temperature data for the given runs into a map */
+  const fetchTemps = useCallback(async (chartRuns: ChartRun[]): Promise<Map<number, TempDataPoint[]>> => {
+    const tempMap = new Map<number, TempDataPoint[]>();
+    await Promise.all(
+      chartRuns.map(run =>
+        api<TempDataPoint[]>(`/api/runs/${run.id}/temperature`)
+          .then(data => {
+            if (data.length > 0) tempMap.set(run.id, data);
+          })
+          .catch(() => {})
+      )
+    );
+    return tempMap;
+  }, []);
+
   const loadRuns = useCallback(() => {
     return api<TestRunWithData[]>('/api/runs/recent?limit=100&withData=1')
       .then(async runsWithData => {
-        const chartRuns: ChartRun[] = [];
-        for (const rwd of runsWithData) {
-          if (rwd.d.length === 0) continue;
-          const label = rwd.cell_id ? `Cell #${rwd.cell_id}` : `Run #${rwd.id}`;
-          chartRuns.push(compactDataToChartRun(rwd, rwd.d, label, rwd.downsampled));
-        }
-        setRuns(chartRuns);
-
-        // Fetch temperature data for all runs in parallel
-        const tempMap = new Map<number, TempDataPoint[]>();
-        const tempFetches = chartRuns.map(run =>
-          api<TempDataPoint[]>(`/api/runs/${run.id}/temperature`)
-            .then(data => {
-              if (data.length > 0) tempMap.set(run.id, data);
-            })
-            .catch(() => {})
-        );
-        await Promise.all(tempFetches);
-        setTempDataByRun(tempMap);
+        const chartRuns = toChartRuns(runsWithData);
+        setRuns(prev => {
+          // Keep any per-cell runs loaded on demand that fall outside the
+          // recent window (their cells are still checked in the modal)
+          const ids = new Set(chartRuns.map(r => r.id));
+          const extras = prev.filter(r => !ids.has(r.id));
+          return [...chartRuns, ...extras];
+        });
+        const tempMap = await fetchTemps(chartRuns);
+        setTempDataByRun(prev => {
+          const merged = new Map(prev);
+          for (const [id, points] of tempMap) merged.set(id, points);
+          return merged;
+        });
       })
       .catch(() => {});
-  }, []);
+  }, [toChartRuns, fetchTemps]);
+
+  /** Load an out-of-window cell's runs on demand (Cells modal check) */
+  const loadRunsForCell = useCallback(
+    async (cellId: number) => {
+      setLoadingCellId(cellId);
+      try {
+        const runsWithData = await api<TestRunWithData[]>(`/api/runs/recent?limit=200&withData=1&cellId=${cellId}`);
+        const chartRuns = toChartRuns(runsWithData);
+        setRuns(prev => {
+          const existing = new Set(prev.map(r => r.id));
+          const fresh = chartRuns.filter(r => !existing.has(r.id));
+          return fresh.length > 0 ? [...prev, ...fresh] : prev;
+        });
+        const tempMap = await fetchTemps(chartRuns);
+        setTempDataByRun(prev => {
+          const merged = new Map(prev);
+          for (const [id, points] of tempMap) merged.set(id, points);
+          return merged;
+        });
+      } catch (err) {
+        console.error(`Failed to load runs for cell #${cellId}:`, err);
+      } finally {
+        setLoadingCellId(null);
+      }
+    },
+    [toChartRuns, fetchTemps]
+  );
+
+  /** Toggle a cell's visibility; load its runs when first shown */
+  const toggleCellVisibility = useCallback(
+    (cellId: number) => {
+      // Showing a cell that has no loaded runs → fetch them
+      const showing = hiddenCellIds.has(cellId);
+      if (showing && cellId >= 0 && !runs.some(r => r.meta.cell_id === cellId)) {
+        loadRunsForCell(cellId);
+      }
+      setHiddenCellIds(prev => {
+        const next = new Set(prev);
+        if (next.has(cellId)) next.delete(cellId);
+        else next.add(cellId);
+        return next;
+      });
+    },
+    [hiddenCellIds, runs, loadRunsForCell]
+  );
+
+  const handleCellDeleted = useCallback(
+    (cellId: number) => {
+      setRuns(prev => prev.filter(r => r.meta.cell_id !== cellId));
+      loadCells();
+    },
+    [loadCells]
+  );
 
   useEffect(() => {
     setLoading(true);
@@ -319,27 +399,19 @@ export function ChartView() {
   // ── Stable run → color assignment (chart series + legend agree) ──
   const runColorMap = useMemo(() => buildRunColorMap(runs, colorBy), [runs, colorBy]);
 
-  // ── Cell filter options: cells that actually have runs loaded ────
-  const cellOptions = useMemo(() => {
-    const ids = new Set<number>();
-    let hasNoCellRuns = false;
+  // ── Loaded run counts per cell (for the Cells modal) ─────────────
+  const loadedRunCounts = useMemo(() => {
+    const counts = new Map<number, number>();
     for (const run of runs) {
-      if (run.meta.cell_id != null) ids.add(run.meta.cell_id);
-      else hasNoCellRuns = true;
+      const key = run.meta.cell_id ?? -1;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
     }
-    const options = Array.from(ids)
-      .sort((a, b) => a - b)
-      .map(id => {
-        const cell = cells.find(c => c.id === id);
-        return { id, label: cell ? cell.label || cell.barcode : `Cell #${id}` };
-      });
-    if (hasNoCellRuns) options.push({ id: -1, label: 'No cell' });
-    return options;
-  }, [runs, cells]);
+    return counts;
+  }, [runs]);
 
-  // ── Merge data for chart ──────────────────────────────────────
+  // ── Merge data for chart (V/I/W/Ah — temps get their own chart) ──
   const chartData = useMemo((): MergedChartData => {
-    const base = mergeRunsForChart(
+    return mergeRunsForChart(
       runs,
       state.livePoints,
       visibleRuns,
@@ -348,42 +420,24 @@ export function ChartView() {
       state.activeRunId,
       runColorMap
     );
+  }, [runs, state.livePoints, visibleRuns, visibleMetrics, isTestActive, state.activeRunId, runColorMap]);
 
-    // Merge temperature data if temperature metric is visible
-    if (!visibleMetrics.has('temperature')) return base;
+  // ── Temperature chart (separate, x-synced below the main chart) ──
+  const tempChartData = useMemo((): MergedChartData => {
+    if (!visibleMetrics.has('temperature')) return { data: [[]], seriesInfo: [] };
+    return buildTempChartData(runs, visibleRuns, tempDataByRun, state.liveTempPoints, state.activeRunId, isTestActive);
+  }, [runs, visibleRuns, visibleMetrics, tempDataByRun, state.liveTempPoints, state.activeRunId, isTestActive]);
 
-    // Collect temperature data from all visible runs
-    const allTempPoints: TempDataPoint[] = [];
-    for (const run of runs) {
-      if (visibleRuns && !visibleRuns.has(run.id)) continue;
-      const runTemp = tempDataByRun.get(run.id);
-      if (runTemp) allTempPoints.push(...runTemp);
-    }
+  const showTempChart = tempChartData.seriesInfo.length > 0 && (tempChartData.data[0]?.length ?? 0) > 0;
 
-    // Live temperature history accumulated during the active test
-    if (isTestActive) {
-      for (const p of state.liveTempPoints) {
-        allTempPoints.push({
-          channel_key: p.channelId,
-          channel_name: p.name,
-          elapsed_s: p.t,
-          temp_c: p.v,
-        });
-      }
-    }
-
-    return addTemperatureSeries(base, allTempPoints);
-  }, [
-    runs,
-    state.livePoints,
-    visibleRuns,
-    visibleMetrics,
-    isTestActive,
-    state.activeRunId,
-    runColorMap,
-    tempDataByRun,
-    state.liveTempPoints,
-  ]);
+  // Align the stacked charts' plot areas: pad each side to the wider of the
+  // two charts' axis gutters (axis sizes mirror Chart.tsx's axis configs)
+  const mainLeftPx = (visibleMetrics.has('voltage') ? 65 : 0) + (visibleMetrics.has('current') ? 55 : 0);
+  const mainRightPx = (visibleMetrics.has('power') ? 50 : 0) + (visibleMetrics.has('capacity') ? 55 : 0);
+  const tempRightPx = 50; // °C axis
+  const mainPadRight = showTempChart ? Math.max(0, tempRightPx - mainRightPx) : 0;
+  const tempPadLeft = mainLeftPx;
+  const tempPadRight = Math.max(0, mainRightPx - tempRightPx);
 
   // ── Capacity chart data ───────────────────────────────────────
   const nominalMah = selectedGroup?.nominal_capacity_mah ?? 200000;
@@ -519,13 +573,30 @@ export function ChartView() {
             <div className="chart-loading">Loading runs...</div>
           ) : chartMode === 'time' ? (
             chartData.data[0]?.length ? (
-              <Chart
-                data={chartData.data}
-                seriesInfo={chartData.seriesInfo}
-                thresholds={thresholds}
-                scaleRanges={scaleRanges}
-                bands={chartData.bands}
-              />
+              <div className="chart-stack">
+                <div className="chart-stack-main">
+                  <Chart
+                    data={chartData.data}
+                    seriesInfo={chartData.seriesInfo}
+                    thresholds={thresholds}
+                    scaleRanges={scaleRanges}
+                    bands={chartData.bands}
+                    syncKey="bc-time"
+                    padRight={mainPadRight}
+                  />
+                </div>
+                {showTempChart && (
+                  <div className="chart-stack-temps">
+                    <Chart
+                      data={tempChartData.data}
+                      seriesInfo={tempChartData.seriesInfo}
+                      syncKey="bc-time"
+                      padLeft={tempPadLeft}
+                      padRight={tempPadRight}
+                    />
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="chart-empty">
                 {runs.length === 0
@@ -607,19 +678,13 @@ export function ChartView() {
               <option value="7">Last 7d</option>
               <option value="30">Last 30d</option>
             </select>
-            <select
-              className="filter-select"
-              value={cellFilter}
-              onChange={e => setCellFilter(e.target.value === 'all' ? 'all' : parseInt(e.target.value, 10))}
-              title="Show runs for a single cell"
+            <button
+              className={`filter-chip${hiddenCellIds.size > 0 ? ' active' : ''}`}
+              onClick={() => setCellsModalOpen(true)}
+              title="Choose which cells' runs are plotted"
             >
-              <option value="all">All cells</option>
-              {cellOptions.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
+              Cells{hiddenCellIds.size > 0 ? ` (${hiddenCellIds.size} hidden)` : '…'}
+            </button>
             <select
               className="filter-select"
               value={colorBy}
@@ -724,6 +789,18 @@ export function ChartView() {
           onClose={() => setStartModalOpen(false)}
           cellGroups={cellGroups}
           selectedGroupId={selectedGroupId}
+        />
+
+        <CellSelectModal
+          open={cellsModalOpen}
+          onClose={() => setCellsModalOpen(false)}
+          cells={cells}
+          loadedRunCounts={loadedRunCounts}
+          hiddenCellIds={hiddenCellIds}
+          onToggleCell={toggleCellVisibility}
+          onLoadCell={loadRunsForCell}
+          loadingCellId={loadingCellId}
+          onCellDeleted={handleCellDeleted}
         />
       </div>
     </div>

@@ -87,6 +87,19 @@
 - [x] Camera disabled: RTSP_URL/RTSP_FILTER commented out in .env.local; deploy.ts now
       always writes the Pi env file so removals propagate, and --once mode exits (4d7a30f).
 
+## Round 2 (2026-07-10, committed, NOT deployed — user will say when)
+
+- 7722b40 (server): ?cellId= on /api/runs/recent; DELETE /api/cells/:id (+force);
+  temp readings persist on the run's elapsed clock (device elapsed), fixing drift
+  on recovered runs.
+- b3f46db (frontend): temps on a separate chart below the main one, x-synced
+  (crosshair + drag-zoom, plot areas padded to align). Temp series per (run,
+  channel) — the old per-channel merge concatenated points across runs' separate
+  elapsed axes, which is why the temp timebase looked wrong. Cells modal replaces
+  the cell dropdown: lists ALL cells (cell #1 was missing because it derived from
+  the 100-most-recent runs), per-cell hide, "Load runs" for out-of-window cells,
+  two-step cell deletion (escalates when the cell has runs — for the "asdf" cell).
+
 ## Deploy notes
 
 - `bun src/run/deploy.ts --once` is the one-shot deploy (fixed to exit; was hanging on

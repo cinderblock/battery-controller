@@ -11,7 +11,7 @@
  */
 
 import type { DataPoint, TestRun } from '../api-client.ts';
-import type { LivePoint } from '../hooks/useDeviceSession.ts';
+import type { LivePoint, LiveTempPoint } from '../hooks/useDeviceSession.ts';
 import { ocvToSoc, type ReferenceCurve } from './lfp-reference-curves.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -516,77 +516,140 @@ export interface TempDataPoint {
 }
 
 /**
- * Add temperature series to an existing merged chart dataset.
- * Temperature data (historical per-run points and any accumulated live
- * points, already combined by the caller) is merged into the same time axis.
+ * Build the dataset for the standalone temperature chart.
+ *
+ * Each (run, channel) pair becomes its own series — every run has its own
+ * elapsed-time axis, so merging a channel's points ACROSS runs into one
+ * series (as the old in-chart merge did) drew lines connecting unrelated
+ * runs and made the timebase look wrong. Channel identity is conveyed by
+ * color; runs are distinguished per series (dimmed while a test is live,
+ * matching the main chart's treatment of historical runs).
  */
-export function addTemperatureSeries(existing: MergedChartData, tempData: TempDataPoint[]): MergedChartData {
-  if (tempData.length === 0) {
-    return existing;
+export function buildTempChartData(
+  runs: ChartRun[],
+  visibleRuns: Set<number> | null,
+  tempDataByRun: Map<number, TempDataPoint[]>,
+  liveTempPoints: LiveTempPoint[],
+  activeRunId: number | null | undefined,
+  isTestActive: boolean
+): MergedChartData {
+  // Collect per-(run, channel) point lists
+  interface SeriesBucket {
+    runId: number;
+    runLabel: string;
+    channelKey: string;
+    channelName: string | null;
+    isLive: boolean;
+    points: { t: number; v: number }[];
   }
+  const buckets = new Map<string, SeriesBucket>();
+  const channelOrder = new Map<string, number>(); // channelKey → color index
 
-  // Group by channel
-  const byChannel = new Map<string, { name: string | null; points: { t: number; v: number }[] }>();
-  for (const p of tempData) {
-    let ch = byChannel.get(p.channel_key);
-    if (!ch) {
-      ch = { name: p.channel_name, points: [] };
-      byChannel.set(p.channel_key, ch);
+  const channelIdx = (key: string): number => {
+    let idx = channelOrder.get(key);
+    if (idx === undefined) {
+      idx = channelOrder.size;
+      channelOrder.set(key, idx);
     }
-    ch.points.push({ t: p.elapsed_s, v: p.temp_c });
+    return idx;
+  };
+
+  for (const run of runs) {
+    if (visibleRuns && !visibleRuns.has(run.id)) continue;
+    const tempPoints = tempDataByRun.get(run.id);
+    if (!tempPoints || tempPoints.length === 0) continue;
+
+    for (const p of tempPoints) {
+      channelIdx(p.channel_key);
+      const key = `${run.id}|${p.channel_key}`;
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = {
+          runId: run.id,
+          runLabel: run.label,
+          channelKey: p.channel_key,
+          channelName: p.channel_name,
+          isLive: isTestActive && run.id === activeRunId,
+          points: [],
+        };
+        buckets.set(key, bucket);
+      }
+      bucket.points.push({ t: p.elapsed_s, v: p.temp_c });
+    }
   }
 
-  if (byChannel.size === 0) return existing;
-
-  // Rebuild time index (existing X + temperature timestamps)
-  const xValues = existing.data[0] as number[];
-  const timeSet = new Set(xValues);
-  for (const ch of byChannel.values()) {
-    for (const p of ch.points) timeSet.add(p.t);
+  // Live accumulated points extend (or create) the active run's series
+  if (isTestActive) {
+    for (const p of liveTempPoints) {
+      channelIdx(p.channelId);
+      const key = `${activeRunId ?? -1}|${p.channelId}`;
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = {
+          runId: activeRunId ?? -1,
+          runLabel: 'Live',
+          channelKey: p.channelId,
+          channelName: p.name,
+          isLive: true,
+          points: [],
+        };
+        buckets.set(key, bucket);
+      }
+      bucket.points.push({ t: p.t, v: p.v });
+    }
   }
-  const newX = Array.from(timeSet).sort((a, b) => a - b);
-  const n = newX.length;
 
+  if (buckets.size === 0) {
+    return { data: [[]], seriesInfo: [] };
+  }
+
+  // Union time axis
+  const timeSet = new Set<number>();
+  for (const b of buckets.values()) {
+    for (const p of b.points) timeSet.add(p.t);
+  }
+  const xValues = Array.from(timeSet).sort((a, b) => a - b);
   const timeIndex = new Map<number, number>();
-  for (let i = 0; i < n; i++) timeIndex.set(newX[i], i);
+  for (let i = 0; i < xValues.length; i++) timeIndex.set(xValues[i], i);
 
-  // Remap existing series to new X axis
-  const oldTimeIndex = new Map<number, number>();
-  for (let i = 0; i < xValues.length; i++) oldTimeIndex.set(xValues[i], i);
-
-  const newData: (number | null | undefined)[][] = [newX];
-  for (let s = 1; s < existing.data.length; s++) {
-    const oldSeries = existing.data[s];
-    const newSeries = new Array<number | null | undefined>(n).fill(undefined);
-    for (let i = 0; i < xValues.length; i++) {
-      const newIdx = timeIndex.get(xValues[i]);
-      if (newIdx !== undefined) newSeries[newIdx] = oldSeries[i];
+  // Do run labels matter? Only when a channel appears in more than one run.
+  const runsPerChannel = new Map<string, Set<number>>();
+  for (const b of buckets.values()) {
+    let set = runsPerChannel.get(b.channelKey);
+    if (!set) {
+      set = new Set();
+      runsPerChannel.set(b.channelKey, set);
     }
-    newData.push(newSeries);
+    set.add(b.runId);
   }
 
-  // Add temperature series
-  const newSeriesInfo = [...existing.seriesInfo];
-  let colorIdx = 0;
-  for (const [channelId, ch] of byChannel) {
-    const values = new Array<number | null | undefined>(n).fill(undefined);
-    for (const p of ch.points) {
+  const data: (number | null | undefined)[][] = [xValues];
+  const seriesInfo: ChartSeriesInfo[] = [];
+
+  for (const b of buckets.values()) {
+    const values = new Array<number | null | undefined>(xValues.length).fill(undefined);
+    for (const p of b.points) {
       const idx = timeIndex.get(p.t);
       if (idx !== undefined) values[idx] = p.v;
     }
-    newData.push(values);
-    newSeriesInfo.push({
-      runId: -2,
+    data.push(values);
+
+    const channelLabel = b.channelName ?? b.channelKey.slice(-6);
+    const multiRun = (runsPerChannel.get(b.channelKey)?.size ?? 1) > 1;
+    const baseColor = TEMP_COLORS[(channelOrder.get(b.channelKey) ?? 0) % TEMP_COLORS.length];
+    const alpha = isTestActive && !b.isLive ? 0.25 : 0.9;
+
+    seriesInfo.push({
+      runId: b.runId,
       metric: 'temperature',
-      label: ch.name ?? channelId.slice(-6),
-      color: TEMP_COLORS[colorIdx % TEMP_COLORS.length],
-      isLive: false,
-      channelId,
+      label: multiRun ? `${channelLabel} · ${b.runLabel}` : channelLabel,
+      color: colorWithAlpha(baseColor, alpha),
+      isLive: b.isLive,
+      channelId: b.channelKey,
     });
-    colorIdx++;
   }
 
-  return { data: newData, seriesInfo: newSeriesInfo };
+  return { data, seriesInfo };
 }
 
 // ── Time formatting ────────────────────────────────────────────────
