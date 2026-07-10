@@ -79,6 +79,78 @@ function propagateXZoom(key: string, source: uPlot): void {
   }
 }
 
+// ── Live-point markers ─────────────────────────────────────────────
+// A dot pinned to the newest point of each live series, pulsing when a
+// fresh data point arrives. DOM overlays — no extra canvas redraws.
+
+interface LiveMarker {
+  el: HTMLDivElement;
+  lastX: number | null;
+}
+
+function updateLiveMarkers(
+  u: uPlot,
+  container: HTMLDivElement,
+  info: ChartSeriesInfo[],
+  markers: Map<number, LiveMarker>
+): void {
+  const seen = new Set<number>();
+  const offX = u.bbox.left / devicePixelRatio;
+  const offY = u.bbox.top / devicePixelRatio;
+  const { min: xMin, max: xMax } = u.scales.x;
+
+  for (let si = 0; si < info.length; si++) {
+    const s = info[si];
+    if (!s.isLive || s.color === 'transparent') continue;
+    const ys = u.data[si + 1];
+    if (!ys) continue;
+
+    let idx = ys.length - 1;
+    while (idx >= 0 && ys[idx] == null) idx--;
+    if (idx < 0) continue;
+
+    const xVal = u.data[0][idx] as number;
+    seen.add(si);
+
+    let m = markers.get(si);
+    if (!m) {
+      const el = document.createElement('div');
+      el.className = 'live-point-marker';
+      container.appendChild(el);
+      m = { el, lastX: null };
+      markers.set(si, m);
+    }
+
+    // Hide when the newest point is zoomed out of view
+    if (xMin != null && xMax != null && (xVal < xMin || xVal > xMax)) {
+      m.el.style.display = 'none';
+      continue;
+    }
+
+    const left = u.valToPos(xVal, 'x');
+    const top = u.valToPos(ys[idx] as number, METRIC_SCALE[s.metric]);
+    m.el.style.display = '';
+    m.el.style.setProperty('--marker-color', s.color);
+    m.el.style.left = `${offX + left}px`;
+    m.el.style.top = `${offY + top}px`;
+
+    // New point → restart the pulse animation
+    if (m.lastX !== xVal) {
+      m.lastX = xVal;
+      m.el.classList.remove('pulse');
+      void m.el.offsetWidth; // force reflow so the animation restarts
+      m.el.classList.add('pulse');
+    }
+  }
+
+  for (const [si, m] of markers) {
+    if (!seen.has(si)) {
+      m.el.remove();
+      markers.delete(si);
+    }
+  }
+}
+
 /** Per-chart focused-series tracking so we only call setSeries on change */
 const focusedSeriesByChart = new WeakMap<uPlot, number>();
 
@@ -210,6 +282,15 @@ export function Chart({
   syncKeyRef.current = syncKey;
   const padRef = useRef({ padLeft, padRight });
   padRef.current = { padLeft, padRight };
+
+  // Live-point marker overlays, keyed by series index
+  const liveMarkersRef = useRef<Map<number, LiveMarker>>(new Map());
+
+  const refreshLiveMarkers = useCallback((u: uPlot) => {
+    const container = containerRef.current;
+    if (!container) return;
+    updateLiveMarkers(u, container, seriesInfoRef.current, liveMarkersRef.current);
+  }, []);
 
   // Build a stable key from series info + scale ranges to detect when chart needs rebuild
   const rangesKey = Object.entries(scaleRanges)
@@ -374,6 +455,7 @@ export function Chart({
           },
         ],
         draw: [
+          (u: uPlot) => refreshLiveMarkers(u),
           (u: uPlot) => {
             const lines = thresholdsRef.current;
             if (lines.length === 0) return;
@@ -541,6 +623,8 @@ export function Chart({
       u.destroy();
       uplotRef.current = null;
       prevSeriesKeyRef.current = '';
+      for (const m of liveMarkersRef.current.values()) m.el.remove();
+      liveMarkersRef.current.clear();
     };
   }, [seriesKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -551,7 +635,8 @@ export function Chart({
     if (data.length === 0) return;
 
     u.setData(data as uPlot.AlignedData);
-  }, [data]);
+    refreshLiveMarkers(u);
+  }, [data, refreshLiveMarkers]);
 
   // Handle container resize
   useEffect(() => {

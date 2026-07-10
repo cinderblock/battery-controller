@@ -491,6 +491,43 @@ body {
   overflow: hidden;
 }
 
+/* Live-point marker — dot at the newest live sample, pulses on arrival */
+.live-point-marker {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--marker-color, #00e676);
+  box-shadow: 0 0 6px var(--marker-color, #00e676);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.live-point-marker::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--marker-color, #00e676);
+  opacity: 0;
+}
+
+.live-point-marker.pulse::after {
+  animation: live-point-pulse 0.9s ease-out;
+}
+
+@keyframes live-point-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(4);
+    opacity: 0;
+  }
+}
+
 /* Vertically stacked main + temperature charts sharing the time axis */
 .chart-stack {
   display: flex;
