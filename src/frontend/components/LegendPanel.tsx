@@ -7,9 +7,9 @@
  * - Per-run visibility with color swatches, capacity stats, and trend
  */
 
-import type { MetricKey, ChartRun } from '../lib/chart-data.ts';
-import { getRunColor, formatElapsed } from '../lib/chart-data.ts';
-import type { GroupFleetSummary, CellCapacityStats } from '../api-client.ts';
+import type { CellCapacityStats, GroupFleetSummary } from '../api-client.ts';
+import type { ChartRun, MetricKey } from '../lib/chart-data.ts';
+import { formatElapsed, getRunColor } from '../lib/chart-data.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -17,6 +17,8 @@ interface LegendPanelProps {
   open: boolean;
   onClose: () => void;
   runs: ChartRun[];
+  /** Stable run → color map shared with the chart (buildRunColorMap) */
+  runColors?: Map<number, string>;
   visibleMetrics: Set<MetricKey>;
   visibleRuns: Set<number>;
   onToggleMetric: (metric: MetricKey) => void;
@@ -44,9 +46,9 @@ function healthColor(pct: number): string {
 
 function trendArrow(trend: number | null): string {
   if (trend === null) return '';
-  if (trend > 0.1) return '\u2197';   // ↗ improving
-  if (trend < -0.1) return '\u2198';  // ↘ degrading
-  return '\u2192';                     // → stable
+  if (trend > 0.1) return '\u2197'; // ↗ improving
+  if (trend < -0.1) return '\u2198'; // ↘ degrading
+  return '\u2192'; // → stable
 }
 
 // ── Fleet summary subcomponent ─────────────────────────────────────
@@ -58,15 +60,14 @@ function FleetSummarySection({ summary }: { summary: GroupFleetSummary }) {
       <div className="fleet-grid">
         <div className="fleet-stat">
           <span className="fleet-stat-label">Cells tested</span>
-          <span className="fleet-stat-value">{summary.cellsTested} / {summary.cellsTotal}</span>
+          <span className="fleet-stat-value">
+            {summary.cellsTested} / {summary.cellsTotal}
+          </span>
         </div>
         {summary.avgHealthPct !== null && (
           <div className="fleet-stat">
             <span className="fleet-stat-label">Avg health</span>
-            <span
-              className="fleet-stat-value"
-              style={{ color: healthColor(summary.avgHealthPct) }}
-            >
+            <span className="fleet-stat-value" style={{ color: healthColor(summary.avgHealthPct) }}>
               {summary.avgHealthPct.toFixed(1)}%
             </span>
           </div>
@@ -114,25 +115,27 @@ function CellStatRow({ cell, nominalAh }: { cell: CellCapacityStats; nominalAh: 
 
   return (
     <div className="fleet-cell-row">
-      <span className="fleet-cell-name" title={cell.barcode}>{name}</span>
+      <span className="fleet-cell-name" title={cell.barcode}>
+        {name}
+      </span>
       <div className="fleet-cell-stats">
         {cell.latestAh !== null ? (
           <>
             <span className="fleet-cell-capacity">{cell.latestAh.toFixed(1)} Ah</span>
             {cell.healthPct !== null && (
-              <span
-                className="fleet-cell-health"
-                style={{ color: healthColor(cell.healthPct) }}
-              >
+              <span className="fleet-cell-health" style={{ color: healthColor(cell.healthPct) }}>
                 {cell.healthPct.toFixed(0)}%
               </span>
             )}
             {trend && (
-              <span className="fleet-cell-trend" title={
-                cell.trendAhPerCycle !== null
-                  ? `${cell.trendAhPerCycle > 0 ? '+' : ''}${cell.trendAhPerCycle.toFixed(3)} Ah/cycle`
-                  : ''
-              }>
+              <span
+                className="fleet-cell-trend"
+                title={
+                  cell.trendAhPerCycle !== null
+                    ? `${cell.trendAhPerCycle > 0 ? '+' : ''}${cell.trendAhPerCycle.toFixed(3)} Ah/cycle`
+                    : ''
+                }
+              >
                 {trend}
               </span>
             )}
@@ -164,6 +167,7 @@ export function LegendPanel({
   open,
   onClose,
   runs,
+  runColors,
   visibleMetrics,
   visibleRuns,
   onToggleMetric,
@@ -182,9 +186,7 @@ export function LegendPanel({
       </div>
 
       {/* Fleet summary */}
-      {fleetSummary && fleetSummary.cellsTested > 0 && (
-        <FleetSummarySection summary={fleetSummary} />
-      )}
+      {fleetSummary && fleetSummary.cellsTested > 0 && <FleetSummarySection summary={fleetSummary} />}
 
       {/* Metric toggles */}
       <div className="legend-section">
@@ -192,11 +194,7 @@ export function LegendPanel({
         <div className="metric-toggles">
           {ALL_METRICS.map(m => (
             <label key={m.key} className="metric-toggle">
-              <input
-                type="checkbox"
-                checked={visibleMetrics.has(m.key)}
-                onChange={() => onToggleMetric(m.key)}
-              />
+              <input type="checkbox" checked={visibleMetrics.has(m.key)} onChange={() => onToggleMetric(m.key)} />
               <span className="metric-swatch" style={{ backgroundColor: m.color }} />
               {m.label}
             </label>
@@ -215,23 +213,16 @@ export function LegendPanel({
         </div>
         <div className="run-list">
           {runs.map((run, index) => {
-            const color = getRunColor(index);
+            const color = runColors?.get(run.id) ?? getRunColor(index);
             const visible = visibleRuns.has(run.id);
             const date = new Date(run.meta.started_at).toLocaleDateString();
-            const capacityStr = run.meta.final_capacity_mah != null
-              ? `${(run.meta.final_capacity_mah / 1000).toFixed(1)} Ah`
-              : '\u2014';
-            const durationStr = run.meta.duration_s != null
-              ? formatElapsed(run.meta.duration_s)
-              : '\u2014';
+            const capacityStr =
+              run.meta.final_capacity_mah != null ? `${(run.meta.final_capacity_mah / 1000).toFixed(1)} Ah` : '\u2014';
+            const durationStr = run.meta.duration_s != null ? formatElapsed(run.meta.duration_s) : '\u2014';
 
             return (
               <label key={run.id} className={`run-toggle ${visible ? '' : 'run-hidden'}`}>
-                <input
-                  type="checkbox"
-                  checked={visible}
-                  onChange={() => onToggleRun(run.id)}
-                />
+                <input type="checkbox" checked={visible} onChange={() => onToggleRun(run.id)} />
                 <span className="run-swatch" style={{ backgroundColor: color }} />
                 <div className="run-info">
                   <span className="run-label">{run.label}</span>
@@ -242,9 +233,7 @@ export function LegendPanel({
               </label>
             );
           })}
-          {runs.length === 0 && (
-            <div className="run-empty">No completed runs yet</div>
-          )}
+          {runs.length === 0 && <div className="run-empty">No completed runs yet</div>}
         </div>
       </div>
     </div>

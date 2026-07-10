@@ -67,18 +67,30 @@
 - [x] Investigate time-limit bug (root cause above)
 - [x] Investigate tooltip/highlight bugs
 - [x] Plan written
-- [ ] Server: DeviceSession host-side max-time watchdog + stop reason
-- [ ] Server: recovery carries maxTimeMin (index.ts provider + RecoveryState)
-- [ ] Server: cycle-runner + /api/test/start|continue pass maxTimeMin to startCCV
-- [ ] Server: temp alert aborts cycle (index.ts wiring)
-- [ ] Server: Kalman dT/dt in TemperatureManager
-- [ ] Recorder: end_reason 'time_limit' via session stop-reason hint
-- [ ] Frontend: TopBar mode-aware tMax/Icut display + dT/dt in temp chips
-- [ ] Frontend: Chart tooltip fixes + nearest-series focus highlight
-- [ ] Frontend: color-by + cell filter + stable color map (ChartView/LegendPanel/chart-data)
-- [ ] Frontend: live temp accumulation + chart plotting (useDeviceSession/ChartView)
-- [ ] lint/format, tests, commit
+- [x] Server: DeviceSession host-side max-time watchdog + stop reason
+- [x] Server: recovery carries maxTimeMin (index.ts provider + RecoveryState)
+- [x] Server: cycle-runner + /api/test/start|continue pass maxTimeMin to startCCV
+- [x] Server: temp alert aborts cycle (index.ts wiring, abort(reason))
+- [x] Server: Kalman dT/dt (`src/server/temp-rate-filter.ts` + tests, wired into TemperatureManager)
+- [x] Recorder: end_reason 'time_limit' / 'temp_alert' via session.consumeStopReason()
+- [x] Frontend: TopBar mode-aware tMax/Icut display + dT/dt in temp chips
+- [x] Frontend: Chart tooltip fixes + nearest-series focus highlight (uPlot focus.alpha)
+- [x] Frontend: color-by (run/mode/cell) + cell filter + stable color map
+- [x] Frontend: live temp accumulation + chart plotting; temperature metric on by default
+- [x] biome format on touched files, tsc clean on touched files, 17 tests pass, bundles build
+- [x] Committed: 46f9e61 (server), 52d95a9 (frontend)
 - [ ] Deploy after user finishes current charge step manually; verify restart recovery picks the cycle back up
+
+## Session-collision note (2026-07-09)
+
+A second Claude session was concurrently implementing the same request in this
+working tree (its plan: `plans/time-limit-tooltip-filters.md`, now marked
+superseded). Its buggy tooltip/filter code was what the user was complaining
+about; its cycle-runner `timeLimitTimer` was removed in favor of the
+DeviceSession watchdog. Its `daysPast` filter and `.filter-select` CSS were
+kept and committed as part of this work. If that session resumes, it should
+read this plan first. `src/server/serial.ts` + `tcp-bridge.ts` still hold
+older (May 8) uncommitted WIP from someone else — left untouched, unstaged.
 
 ## Things not to do
 

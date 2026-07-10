@@ -10,7 +10,7 @@
  * One instance at the app root via React context.
  */
 
-import { createContext, useContext, useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type {
   CycleState,
   DecodedReading,
@@ -26,12 +26,20 @@ import { api, apiPost } from '../api-client.ts';
 // ── Live data point (lightweight, for chart) ──────────────────────
 
 export interface LivePoint {
-  t: number;    // elapsed_s
-  v: number;    // voltage
-  i: number;    // current
-  p: number;    // power
-  ah: number;   // capacity mAh
-  wh: number;   // energy mWh
+  t: number; // elapsed_s
+  v: number; // voltage
+  i: number; // current
+  p: number; // power
+  ah: number; // capacity mAh
+  wh: number; // energy mWh
+}
+
+/** Accumulated live temperature sample for the active test's chart */
+export interface LiveTempPoint {
+  channelId: string;
+  name: string | null;
+  t: number; // elapsed_s at the time the reading arrived
+  v: number; // temp_c
 }
 
 // ── Session state ─────────────────────────────────────────────────
@@ -51,6 +59,8 @@ export interface SessionState {
   bridgeActive: boolean;
   cycleState: CycleState | null;
   livePoints: LivePoint[];
+  /** Live temperature samples accumulated during the active test */
+  liveTempPoints: LiveTempPoint[];
   stopping: boolean;
   tempChannels: TempChannelConfig[];
   tempReadings: TempChannelReading[];
@@ -71,6 +81,7 @@ const INITIAL_STATE: SessionState = {
   bridgeActive: false,
   cycleState: null,
   livePoints: [],
+  liveTempPoints: [],
   stopping: false,
   tempChannels: [],
   tempReadings: [],
@@ -126,6 +137,7 @@ export function useDeviceSessionManager(): SessionContextValue {
   stateRef.current = state;
   const esRef = useRef<EventSource | null>(null);
   const livePointsRef = useRef<LivePoint[]>([]);
+  const liveTempPointsRef = useRef<LiveTempPoint[]>([]);
   const serverBuildIdRef = useRef<string | null>(null);
 
   // Track whether we were running before the last state change,
@@ -155,9 +167,13 @@ export function useDeviceSessionManager(): SessionContextValue {
       }
     };
 
-    es.addEventListener('snapshot', (e) => {
+    es.addEventListener('snapshot', e => {
       let data: any;
-      try { data = JSON.parse(e.data); } catch { return; }
+      try {
+        data = JSON.parse(e.data);
+      } catch {
+        return;
+      }
 
       // Auto-reload when the server restarts with new code
       const buildId = data.buildId;
@@ -169,6 +185,7 @@ export function useDeviceSessionManager(): SessionContextValue {
       if (buildId) serverBuildIdRef.current = buildId;
 
       livePointsRef.current = [];
+      liveTempPointsRef.current = [];
       setState(s => ({
         ...s,
         mode: data.mode,
@@ -183,15 +200,20 @@ export function useDeviceSessionManager(): SessionContextValue {
         bridgeActive: data.bridgeActive ?? false,
         cycleState: data.cycleState ?? null,
         livePoints: [],
+        liveTempPoints: [],
         tempChannels: data.temperature?.channels ?? [],
         tempReadings: data.temperature?.readings ?? [],
       }));
       prevModeRef.current = data.mode;
     });
 
-    es.addEventListener('reading', (e) => {
+    es.addEventListener('reading', e => {
       let r: any;
-      try { r = JSON.parse(e.data); } catch { return; }
+      try {
+        r = JSON.parse(e.data);
+      } catch {
+        return;
+      }
 
       // Accumulate live data point
       const isRunning = r.mode === 'd-cc' || r.mode === 'd-cp' || r.mode === 'c-cv';
@@ -213,15 +235,20 @@ export function useDeviceSessionManager(): SessionContextValue {
       }));
     });
 
-    es.addEventListener('state', (e) => {
+    es.addEventListener('state', e => {
       let data: any;
-      try { data = JSON.parse(e.data); } catch { return; }
+      try {
+        data = JSON.parse(e.data);
+      } catch {
+        return;
+      }
 
       const wasRunning = isRunningMode(prevModeRef.current);
       const nowRunning = isRunningMode(data.mode);
       // Clear live points when starting a new test
       if (nowRunning && !wasRunning) {
         livePointsRef.current = [];
+        liveTempPointsRef.current = [];
       }
       prevModeRef.current = data.mode;
       setState(s => ({
@@ -229,6 +256,7 @@ export function useDeviceSessionManager(): SessionContextValue {
         mode: data.mode,
         activeRunId: data.activeRunId,
         livePoints: nowRunning && !wasRunning ? [] : s.livePoints,
+        liveTempPoints: nowRunning && !wasRunning ? [] : s.liveTempPoints,
       }));
     });
 
@@ -240,15 +268,23 @@ export function useDeviceSessionManager(): SessionContextValue {
       setState(s => ({ ...s, serialConnected: false }));
     });
 
-    es.addEventListener('deviceInfo', (e) => {
+    es.addEventListener('deviceInfo', e => {
       let data: any;
-      try { data = JSON.parse(e.data); } catch { return; }
+      try {
+        data = JSON.parse(e.data);
+      } catch {
+        return;
+      }
       setState(s => ({ ...s, deviceInfo: data }));
     });
 
-    es.addEventListener('commandPending', (e) => {
+    es.addEventListener('commandPending', e => {
       let data: any;
-      try { data = JSON.parse(e.data); } catch { return; }
+      try {
+        data = JSON.parse(e.data);
+      } catch {
+        return;
+      }
       setState(s => ({ ...s, pendingCommand: data }));
     });
 
@@ -260,66 +296,122 @@ export function useDeviceSessionManager(): SessionContextValue {
       setState(s => ({ ...s, pendingCommand: null }));
     });
 
-    es.addEventListener('lockState', (e) => {
+    es.addEventListener('lockState', e => {
       let data: any;
-      try { data = JSON.parse(e.data); } catch { return; }
+      try {
+        data = JSON.parse(e.data);
+      } catch {
+        return;
+      }
       setState(s => ({ ...s, locked: data.locked }));
     });
 
-    es.addEventListener('bridgeState', (e) => {
+    es.addEventListener('bridgeState', e => {
       let data: any;
-      try { data = JSON.parse(e.data); } catch { return; }
+      try {
+        data = JSON.parse(e.data);
+      } catch {
+        return;
+      }
       setState(s => ({ ...s, bridgeActive: data.active }));
     });
 
-    es.addEventListener('bridgeReading', (e) => {
+    es.addEventListener('bridgeReading', e => {
       let r: any;
-      try { r = JSON.parse(e.data); } catch { return; }
+      try {
+        r = JSON.parse(e.data);
+      } catch {
+        return;
+      }
       // Update reading from sniffed bridge traffic (don't change mode or accumulate chart points)
       setState(s => ({ ...s, reading: r }));
     });
 
-    es.addEventListener('deviceResponsive', (e) => {
+    es.addEventListener('deviceResponsive', e => {
       let data: any;
-      try { data = JSON.parse(e.data); } catch { return; }
+      try {
+        data = JSON.parse(e.data);
+      } catch {
+        return;
+      }
       setState(s => ({ ...s, deviceResponsive: data.responsive }));
     });
 
-    es.addEventListener('cycleState', (e) => {
+    es.addEventListener('cycleState', e => {
       let data: any;
-      try { data = JSON.parse(e.data); } catch { return; }
+      try {
+        data = JSON.parse(e.data);
+      } catch {
+        return;
+      }
       setState(s => ({ ...s, cycleState: data }));
     });
 
-    es.addEventListener('temperature', (e) => {
+    es.addEventListener('temperature', e => {
       let data: any;
-      try { data = JSON.parse(e.data); } catch { return; }
-      setState(s => ({ ...s, tempReadings: data.readings ?? [] }));
+      try {
+        data = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      const readings: TempChannelReading[] = data.readings ?? [];
+
+      // Accumulate temperature history for the active test's chart,
+      // timestamped with the device's current elapsed time
+      const cur = stateRef.current;
+      if (isRunningMode(cur.mode) && cur.reading) {
+        const t = cur.reading.elapsedS;
+        for (const r of readings) {
+          liveTempPointsRef.current.push({ channelId: r.channelId, name: r.name, t, v: r.tempC });
+        }
+        setState(s => ({ ...s, tempReadings: readings, liveTempPoints: [...liveTempPointsRef.current] }));
+        return;
+      }
+
+      setState(s => ({ ...s, tempReadings: readings }));
     });
 
-    es.addEventListener('tempChannelDiscovered', (e) => {
+    es.addEventListener('tempChannelDiscovered', e => {
       let data: any;
-      try { data = JSON.parse(e.data); } catch { return; }
+      try {
+        data = JSON.parse(e.data);
+      } catch {
+        return;
+      }
       // Refresh channels from server
-      api<TempChannelConfig[]>('/api/temp/channels').then(channels => {
-        setState(s => ({ ...s, tempChannels: channels }));
-      }).catch(() => {});
+      api<TempChannelConfig[]>('/api/temp/channels')
+        .then(channels => {
+          setState(s => ({ ...s, tempChannels: channels }));
+        })
+        .catch(() => {});
     });
 
-    es.addEventListener('tempChannelUnplugged', (e) => {
+    es.addEventListener('tempChannelUnplugged', e => {
       let data: any;
-      try { data = JSON.parse(e.data); } catch { return; }
-      api<TempChannelConfig[]>('/api/temp/channels').then(channels => {
-        setState(s => ({ ...s, tempChannels: channels }));
-      }).catch(() => {});
+      try {
+        data = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      api<TempChannelConfig[]>('/api/temp/channels')
+        .then(channels => {
+          setState(s => ({ ...s, tempChannels: channels }));
+        })
+        .catch(() => {});
     });
 
-    es.addEventListener('tempChannelReconnected', (e) => {
+    es.addEventListener('tempChannelReconnected', e => {
       let data: any;
-      try { data = JSON.parse(e.data); } catch { return; }
-      api<TempChannelConfig[]>('/api/temp/channels').then(channels => {
-        setState(s => ({ ...s, tempChannels: channels }));
-      }).catch(() => {});
+      try {
+        data = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      api<TempChannelConfig[]>('/api/temp/channels')
+        .then(channels => {
+          setState(s => ({ ...s, tempChannels: channels }));
+        })
+        .catch(() => {});
     });
 
     esRef.current = es;

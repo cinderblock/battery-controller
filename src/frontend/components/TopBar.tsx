@@ -6,9 +6,9 @@
  * and cycle timeline progress bar.
  */
 
-import { useEffect, useRef, useReducer, useState } from 'react';
-import { useSession } from '../hooks/useDeviceSession.ts';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import type { DeviceMode } from '../api-client.ts';
+import { useSession } from '../hooks/useDeviceSession.ts';
 
 function formatCountdown(ms: number): string {
   if (ms <= 0) return '0m';
@@ -46,40 +46,50 @@ function formatDurationCompact(seconds: number): string {
 }
 
 const MODE_LABELS: Record<DeviceMode, string> = {
-  'idle': 'Idle',
+  idle: 'Idle',
   'd-cc': 'Discharge CC',
   'd-cp': 'Discharge CP',
   'c-cv': 'Charge CV',
-  'complete': 'Complete',
-  'fault': 'Fault',
+  complete: 'Complete',
+  fault: 'Fault',
 };
 
 const STEP_TIMELINE_CLASSES: Record<string, string> = {
   'c-cv': 'step-charge',
   'd-cc': 'step-discharge',
   'd-cp': 'step-discharge',
-  'wait': 'step-wait',
+  wait: 'step-wait',
 };
 
 const STEP_TIMELINE_LABELS: Record<string, string> = {
   'c-cv': 'Charge',
   'd-cc': 'Discharge CC',
   'd-cp': 'Discharge CP',
-  'wait': 'Wait',
+  wait: 'Wait',
 };
 
 const MODE_CLASSES: Record<DeviceMode, string> = {
-  'idle': 'badge-idle',
+  idle: 'badge-idle',
   'd-cc': 'badge-discharge',
   'd-cp': 'badge-discharge',
   'c-cv': 'badge-charge',
-  'complete': 'badge-complete',
-  'fault': 'badge-fault',
+  complete: 'badge-complete',
+  fault: 'badge-fault',
 };
 
 export function TopBar() {
   const { state } = useSession();
-  const { wsConnected, serialConnected, deviceResponsive, mode, reading, pendingCommand, bridgeActive, cycleState, activeRunMaxTimeMin } = state;
+  const {
+    wsConnected,
+    serialConnected,
+    deviceResponsive,
+    mode,
+    reading,
+    pendingCommand,
+    bridgeActive,
+    cycleState,
+    activeRunMaxTimeMin,
+  } = state;
   const [, forceTick] = useReducer((x: number) => x + 1, 0);
 
   const isRunning = mode === 'd-cc' || mode === 'd-cp' || mode === 'c-cv';
@@ -123,10 +133,13 @@ export function TopBar() {
   const waitRemaining = cycleState?.waitEndTime ? cycleState.waitEndTime - Date.now() : null;
 
   // Connection dot class: off → warn (stale) → ok, plus flash on packet
-  const connClass = !wsConnected ? 'conn-off'
-    : !serialConnected && !bridgeActive ? 'conn-off'
-    : readingStale || (!deviceResponsive && !bridgeActive) ? 'conn-warn'
-    : 'conn-ok';
+  const connClass = !wsConnected
+    ? 'conn-off'
+    : !serialConnected && !bridgeActive
+      ? 'conn-off'
+      : readingStale || (!deviceResponsive && !bridgeActive)
+        ? 'conn-warn'
+        : 'conn-ok';
   const flashClass = readingFlash && connClass === 'conn-ok' ? ' conn-flash' : '';
 
   return (
@@ -183,12 +196,20 @@ export function TopBar() {
                 <span className="reading-unit">cut</span>
               </span>
             )}
-            {reading.maxTimeEcho != null && (
-              <span className="reading-val rv-raw">
-                <span className="reading-num">{reading.maxTimeEcho}</span>
-                <span className="reading-unit">tMax</span>
-              </span>
-            )}
+            {/* RX bytes 14-15: max time (min) in discharge modes, but cutoff
+                current (raw ÷100 → A) in C-CV — label accordingly */}
+            {reading.maxTimeEcho != null &&
+              (reading.mode === 'c-cv' ? (
+                <span className="reading-val rv-raw">
+                  <span className="reading-num">{(reading.maxTimeEcho / 100).toFixed(2)}</span>
+                  <span className="reading-unit">Icut</span>
+                </span>
+              ) : (
+                <span className="reading-val rv-raw">
+                  <span className="reading-num">{reading.maxTimeEcho}</span>
+                  <span className="reading-unit">tMax</span>
+                </span>
+              ))}
             {reading.rawField7 != null && (
               <span className={`reading-val rv-raw${reading.rawField7 !== 0 ? ' rv-highlight' : ''}`}>
                 <span className="reading-num">0x{reading.rawField7.toString(16).toUpperCase().padStart(4, '0')}</span>
@@ -208,6 +229,12 @@ export function TopBar() {
               >
                 <span className="temp-label">{r.name ?? r.channelId.slice(-6)}</span>
                 <span className="temp-value">{r.tempC.toFixed(1)}°</span>
+                {r.dTdtCPerMin != null && Math.abs(r.dTdtCPerMin) >= 0.05 && (
+                  <span className={`temp-rate ${r.dTdtCPerMin > 0 ? 'temp-rising' : 'temp-falling'}`}>
+                    {r.dTdtCPerMin > 0 ? '+' : ''}
+                    {r.dTdtCPerMin.toFixed(1)}°/m
+                  </span>
+                )}
               </span>
             ))}
           </div>
@@ -218,9 +245,7 @@ export function TopBar() {
           <div className="top-bar-cycle">
             <span className="cycle-name">{cycleState.programName ?? 'Sequence'}</span>
             {cycleState.status === 'waiting' && waitRemaining !== null && (
-              <span className="cycle-wait-countdown">
-                Wait {formatCountdown(waitRemaining)}
-              </span>
+              <span className="cycle-wait-countdown">Wait {formatCountdown(waitRemaining)}</span>
             )}
             <span className="cycle-progress">
               {cycleState.currentExecIndex + 1}/{cycleState.totalExecSteps}
@@ -228,7 +253,6 @@ export function TopBar() {
             </span>
           </div>
         )}
-
       </header>
 
       {/* Status banner or timeline bar — always exactly one row */}
@@ -237,9 +261,7 @@ export function TopBar() {
           Bridge mode — sniffing serial traffic
         </div>
       ) : !wsConnected ? (
-        <div className="cycle-timeline-bar banner-in-timeline">
-          Server disconnected — reconnecting...
-        </div>
+        <div className="cycle-timeline-bar banner-in-timeline">Server disconnected — reconnecting...</div>
       ) : !serialConnected ? (
         <div className="cycle-timeline-bar banner-in-timeline disconnect-serial">
           Serial port disconnected — device not responding
@@ -251,91 +273,94 @@ export function TopBar() {
       ) : !(cycleActive && cycleState && cycleState.execStepTypes.length > 0) ? (
         <div className="cycle-timeline-bar" />
       ) : null}
-      {cycleActive && cycleState && cycleState.execStepTypes.length > 0 && (() => {
-        // Compute progress % for the active step
-        const activeIdx = cycleState.currentExecIndex;
-        const expectedS = cycleState.stepExpectedS?.[activeIdx] ?? 0;
-        let activeProgressPct = 0;
-        if (activeIdx < cycleState.totalExecSteps) {
-          if (cycleState.status === 'waiting' && waitRemaining !== null && expectedS > 0) {
-            // Wait step: use ticking waitRemaining state
-            activeProgressPct = Math.min(100, Math.max(0, (1 - waitRemaining / (expectedS * 1000)) * 100));
-          } else if (reading && expectedS > 0) {
-            // Active test step: interpolate elapsed from last reading + local clock
-            // so the bar advances smoothly between ~1s device packets
-            const interpolatedS = reading.elapsedS + (Date.now() - lastReadingTimeRef.current) / 1000;
-            activeProgressPct = Math.min(100, (interpolatedS / expectedS) * 100);
+      {cycleActive &&
+        cycleState &&
+        cycleState.execStepTypes.length > 0 &&
+        (() => {
+          // Compute progress % for the active step
+          const activeIdx = cycleState.currentExecIndex;
+          const expectedS = cycleState.stepExpectedS?.[activeIdx] ?? 0;
+          let activeProgressPct = 0;
+          if (activeIdx < cycleState.totalExecSteps) {
+            if (cycleState.status === 'waiting' && waitRemaining !== null && expectedS > 0) {
+              // Wait step: use ticking waitRemaining state
+              activeProgressPct = Math.min(100, Math.max(0, (1 - waitRemaining / (expectedS * 1000)) * 100));
+            } else if (reading && expectedS > 0) {
+              // Active test step: interpolate elapsed from last reading + local clock
+              // so the bar advances smoothly between ~1s device packets
+              const interpolatedS = reading.elapsedS + (Date.now() - lastReadingTimeRef.current) / 1000;
+              activeProgressPct = Math.min(100, (interpolatedS / expectedS) * 100);
+            }
           }
-        }
 
-        return (
-          <div className="cycle-timeline-bar">
-            {cycleState.execStepTypes.map((stepType, i) => {
-              const capMah = cycleState.stepCapacities?.[i];
-              const durS = cycleState.stepDurations?.[i];
-              const flexWeight = cycleState.stepExpectedS?.[i] ?? 1;
+          return (
+            <div className="cycle-timeline-bar">
+              {cycleState.execStepTypes.map((stepType, i) => {
+                const capMah = cycleState.stepCapacities?.[i];
+                const durS = cycleState.stepDurations?.[i];
+                const flexWeight = cycleState.stepExpectedS?.[i] ?? 1;
 
-              const isDone = i < activeIdx;
-              const isActive = i === activeIdx;
-              const isFuture = i > activeIdx;
-              const fillPct = isDone ? 100 : isActive ? activeProgressPct : 0;
+                const isDone = i < activeIdx;
+                const isActive = i === activeIdx;
+                const isFuture = i > activeIdx;
+                const fillPct = isDone ? 100 : isActive ? activeProgressPct : 0;
 
-              const expectedS = cycleState.stepExpectedS?.[i] ?? 0;
-              const expectedLabel = expectedS > 0 ? formatDurationCompact(expectedS) : '';
+                const expectedS = cycleState.stepExpectedS?.[i] ?? 0;
+                const expectedLabel = expectedS > 0 ? formatDurationCompact(expectedS) : '';
 
-              // Build label per step state:
-              // - Done: final capacity + duration / expected
-              // - Active: live capacity + elapsed / expected
-              // - Future: expected duration + step parameters
-              // - Wait (future/done): just the duration
-              let label = '';
-              if (isFuture) {
-                if (stepType === 'wait') {
-                  label = expectedLabel;
-                } else {
-                  const paramLabel = cycleState.stepLabels?.[i] ?? '';
-                  label = [expectedLabel, paramLabel].filter(Boolean).join(' · ');
-                }
-              } else if (isActive && stepType === 'wait' && waitRemaining !== null) {
-                label = formatCountdown(waitRemaining);
-              } else if (isActive && reading && stepType !== 'wait') {
-                const parts: string[] = [];
-                parts.push(`${reading.capacityAh.toFixed(1)}Ah`);
-                const elapsed = formatElapsed(reading.elapsedS);
-                parts.push(expectedLabel ? `${elapsed}/${expectedLabel}` : elapsed);
-                label = parts.join(' · ');
-              } else {
-                const parts: string[] = [];
-                if (capMah != null) parts.push(`${(capMah / 1000).toFixed(1)}Ah`);
-                if (stepType === 'wait') {
-                  // Use expected duration for done waits — actual duration rounds
-                  // down (e.g. 29m55s → "29m") which looks wrong next to "30m"
-                  label = expectedLabel || (durS != null ? formatDurationCompact(durS) : '');
-                  if (parts.length) label = `${parts.join(' · ')} · ${label}`;
-                } else if (durS != null) {
-                  const dur = formatDurationCompact(durS);
-                  label = expectedLabel ? `${dur}/${expectedLabel}` : dur;
-                  if (parts.length) label = `${parts.join(' · ')} · ${label}`;
-                } else {
+                // Build label per step state:
+                // - Done: final capacity + duration / expected
+                // - Active: live capacity + elapsed / expected
+                // - Future: expected duration + step parameters
+                // - Wait (future/done): just the duration
+                let label = '';
+                if (isFuture) {
+                  if (stepType === 'wait') {
+                    label = expectedLabel;
+                  } else {
+                    const paramLabel = cycleState.stepLabels?.[i] ?? '';
+                    label = [expectedLabel, paramLabel].filter(Boolean).join(' · ');
+                  }
+                } else if (isActive && stepType === 'wait' && waitRemaining !== null) {
+                  label = formatCountdown(waitRemaining);
+                } else if (isActive && reading && stepType !== 'wait') {
+                  const parts: string[] = [];
+                  parts.push(`${reading.capacityAh.toFixed(1)}Ah`);
+                  const elapsed = formatElapsed(reading.elapsedS);
+                  parts.push(expectedLabel ? `${elapsed}/${expectedLabel}` : elapsed);
                   label = parts.join(' · ');
+                } else {
+                  const parts: string[] = [];
+                  if (capMah != null) parts.push(`${(capMah / 1000).toFixed(1)}Ah`);
+                  if (stepType === 'wait') {
+                    // Use expected duration for done waits — actual duration rounds
+                    // down (e.g. 29m55s → "29m") which looks wrong next to "30m"
+                    label = expectedLabel || (durS != null ? formatDurationCompact(durS) : '');
+                    if (parts.length) label = `${parts.join(' · ')} · ${label}`;
+                  } else if (durS != null) {
+                    const dur = formatDurationCompact(durS);
+                    label = expectedLabel ? `${dur}/${expectedLabel}` : dur;
+                    if (parts.length) label = `${parts.join(' · ')} · ${label}`;
+                  } else {
+                    label = parts.join(' · ');
+                  }
                 }
-              }
 
-              return (
-                <div
-                  key={i}
-                  className={`cycle-timeline-step ${STEP_TIMELINE_CLASSES[stepType] ?? 'step-unknown'}${isDone ? ' step-done' : ''}${isActive ? ' step-active' : ''}${isFuture ? ' step-future' : ''}`}
-                  style={{ flex: flexWeight }}
-                  title={`Step ${i + 1}: ${STEP_TIMELINE_LABELS[stepType] ?? stepType}${label ? ` — ${label}` : ''}`}
-                >
-                  <div className="step-fill" style={{ width: `${fillPct}%` }} />
-                  {label && <span className="step-capacity-label">{label}</span>}
-                </div>
-              );
-            })}
-          </div>
-        );
-      })()}
+                return (
+                  <div
+                    key={i}
+                    className={`cycle-timeline-step ${STEP_TIMELINE_CLASSES[stepType] ?? 'step-unknown'}${isDone ? ' step-done' : ''}${isActive ? ' step-active' : ''}${isFuture ? ' step-future' : ''}`}
+                    style={{ flex: flexWeight }}
+                    title={`Step ${i + 1}: ${STEP_TIMELINE_LABELS[stepType] ?? stepType}${label ? ` — ${label}` : ''}`}
+                  >
+                    <div className="step-fill" style={{ width: `${fillPct}%` }} />
+                    {label && <span className="step-capacity-label">{label}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
     </div>
   );
 }

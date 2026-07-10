@@ -7,35 +7,38 @@
  * and legend toggle.
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useSession } from '../hooks/useDeviceSession.ts';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   api,
-  type TestRun,
-  type TestRunWithData,
+  type Cell,
   type CellGroup,
   type GroupFleetSummary,
+  type TestRun,
+  type TestRunWithData,
 } from '../api-client.ts';
+import { CameraView } from '../components/CameraView.tsx';
+import { CapacityChart } from '../components/CapacityChart.tsx';
+import { Chart } from '../components/Chart.tsx';
+import { LegendPanel } from '../components/LegendPanel.tsx';
+import { StartModal } from '../components/StartModal.tsx';
+import { TopBar } from '../components/TopBar.tsx';
+import { useSession } from '../hooks/useDeviceSession.ts';
 import {
-  mergeRunsForChart,
-  mergeCapacityChart,
-  mergeActiveRunWithLive,
-  compactDataToChartRun,
-  runToCapacityDomain,
   addTemperatureSeries,
+  buildRunColorMap,
   type ChartRun,
+  type ColorBy,
+  compactDataToChartRun,
   type MergedChartData,
   type MetricKey,
+  mergeActiveRunWithLive,
+  mergeCapacityChart,
+  mergeRunsForChart,
+  runToCapacityDomain,
   type TempDataPoint,
   type ThresholdLine,
 } from '../lib/chart-data.ts';
 import { getDefaultReferenceCurves } from '../lib/lfp-reference-curves.ts';
-import { Chart } from '../components/Chart.tsx';
-import { CapacityChart } from '../components/CapacityChart.tsx';
-import { TopBar } from '../components/TopBar.tsx';
-import { StartModal } from '../components/StartModal.tsx';
-import { LegendPanel } from '../components/LegendPanel.tsx';
-import { CameraView } from '../components/CameraView.tsx';
 
 // ── Component ──────────────────────────────────────────────────────
 
@@ -80,7 +83,7 @@ export function ChartView() {
   const [startModalOpen, setStartModalOpen] = useState(false);
   const [chartMode, setChartMode] = useState<'time' | 'capacity'>('time');
   const [visibleMetrics, setVisibleMetrics] = useState<Set<MetricKey>>(
-    () => new Set(['voltage', 'current'])
+    () => new Set(['voltage', 'current', 'temperature'])
   );
   const [visibleRuns, setVisibleRuns] = useState<Set<number>>(() => new Set());
 
@@ -89,6 +92,18 @@ export function ChartView() {
   const [showDischarge, setShowDischarge] = useState(true);
   const [showComplete, setShowComplete] = useState(true);
   const [showPartial, setShowPartial] = useState(true);
+  const [daysPast, setDaysPast] = useState(7); // Show runs from last N days (0 = all)
+  /** Filter runs to a single cell ('all' = every run, -1 = runs with no cell) */
+  const [cellFilter, setCellFilter] = useState<'all' | number>('all');
+  const [colorBy, setColorBy] = useState<ColorBy>('run');
+
+  // ── Cells (for the cell filter dropdown labels) ───────────────
+  const [cells, setCells] = useState<Cell[]>([]);
+  useEffect(() => {
+    api<Cell[]>('/api/cells')
+      .then(setCells)
+      .catch(() => {});
+  }, []);
 
   // ── Auto-detect cell insertion ────────────────────────────────
   // When the device is idle and voltage jumps from near-zero to cell range,
@@ -119,12 +134,14 @@ export function ChartView() {
 
   // ── Load cell groups ──────────────────────────────────────────
   useEffect(() => {
-    api<CellGroup[]>('/api/cell-groups').then(groups => {
-      setCellGroups(groups);
-      if (groups.length > 0 && selectedGroupId === null) {
-        setSelectedGroupId(groups[0].id);
-      }
-    }).catch(() => {});
+    api<CellGroup[]>('/api/cell-groups')
+      .then(groups => {
+        setCellGroups(groups);
+        if (groups.length > 0 && selectedGroupId === null) {
+          setSelectedGroupId(groups[0].id);
+        }
+      })
+      .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Load fleet summary when group changes ─────────────────────
@@ -140,7 +157,10 @@ export function ChartView() {
 
   // ── Fetch active run metadata for threshold lines ─────────────
   useEffect(() => {
-    if (!state.activeRunId) { setActiveRunMeta(null); return; }
+    if (!state.activeRunId) {
+      setActiveRunMeta(null);
+      return;
+    }
     api<TestRun>(`/api/runs/${state.activeRunId}`)
       .then(setActiveRunMeta)
       .catch(() => setActiveRunMeta(null));
@@ -179,23 +199,39 @@ export function ChartView() {
 
   const selectedGroup = cellGroups.find(g => g.id === selectedGroupId) ?? null;
 
-  const runPassesFilter = useCallback((run: ChartRun) => {
-    // Still-running runs always pass
-    if (run.meta.ended_at == null) return true;
+  const runPassesFilter = useCallback(
+    (run: ChartRun) => {
+      // Still-running runs always pass
+      if (run.meta.ended_at == null) return true;
 
-    const mode = run.meta.mode;
-    const isCharge = mode === 'c-cv';
-    const isDischarge = mode === 'd-cc' || mode === 'd-cp';
-    // Runs that are neither charge nor discharge (e.g. wait) always pass
-    if (isCharge && !showCharge) return false;
-    if (isDischarge && !showDischarge) return false;
+      const mode = run.meta.mode;
+      const isCharge = mode === 'c-cv';
+      const isDischarge = mode === 'd-cc' || mode === 'd-cp';
+      // Runs that are neither charge nor discharge (e.g. wait) always pass
+      if (isCharge && !showCharge) return false;
+      if (isDischarge && !showDischarge) return false;
 
-    const complete = isRunComplete(run, selectedGroup);
-    if (complete && !showComplete) return false;
-    if (!complete && !showPartial) return false;
+      const complete = isRunComplete(run, selectedGroup);
+      if (complete && !showComplete) return false;
+      if (!complete && !showPartial) return false;
 
-    return true;
-  }, [showCharge, showDischarge, showComplete, showPartial, selectedGroup, isRunComplete]);
+      // Date range filter
+      if (daysPast > 0 && run.meta.ended_at) {
+        const runDate = new Date(run.meta.ended_at).getTime();
+        const cutoff = Date.now() - daysPast * 24 * 60 * 60 * 1000;
+        if (runDate < cutoff) return false;
+      }
+
+      // Cell filter
+      if (cellFilter !== 'all') {
+        const runCell = run.meta.cell_id ?? -1;
+        if (runCell !== cellFilter) return false;
+      }
+
+      return true;
+    },
+    [showCharge, showDischarge, showComplete, showPartial, daysPast, cellFilter, selectedGroup, isRunComplete]
+  );
 
   // When filters or runs change, recompute visible runs
   useEffect(() => {
@@ -218,7 +254,9 @@ export function ChartView() {
         const tempMap = new Map<number, TempDataPoint[]>();
         const tempFetches = chartRuns.map(run =>
           api<TempDataPoint[]>(`/api/runs/${run.id}/temperature`)
-            .then(data => { if (data.length > 0) tempMap.set(run.id, data); })
+            .then(data => {
+              if (data.length > 0) tempMap.set(run.id, data);
+            })
             .catch(() => {})
         );
         await Promise.all(tempFetches);
@@ -248,6 +286,27 @@ export function ChartView() {
     }
   }, [isTestActive, prevActiveRef, selectedGroupId, loadRuns]);
 
+  // ── Stable run → color assignment (chart series + legend agree) ──
+  const runColorMap = useMemo(() => buildRunColorMap(runs, colorBy), [runs, colorBy]);
+
+  // ── Cell filter options: cells that actually have runs loaded ────
+  const cellOptions = useMemo(() => {
+    const ids = new Set<number>();
+    let hasNoCellRuns = false;
+    for (const run of runs) {
+      if (run.meta.cell_id != null) ids.add(run.meta.cell_id);
+      else hasNoCellRuns = true;
+    }
+    const options = Array.from(ids)
+      .sort((a, b) => a - b)
+      .map(id => {
+        const cell = cells.find(c => c.id === id);
+        return { id, label: cell ? cell.label || cell.barcode : `Cell #${id}` };
+      });
+    if (hasNoCellRuns) options.push({ id: -1, label: 'No cell' });
+    return options;
+  }, [runs, cells]);
+
   // ── Merge data for chart ──────────────────────────────────────
   const chartData = useMemo((): MergedChartData => {
     const base = mergeRunsForChart(
@@ -257,6 +316,7 @@ export function ChartView() {
       visibleMetrics,
       isTestActive,
       state.activeRunId,
+      runColorMap
     );
 
     // Merge temperature data if temperature metric is visible
@@ -270,12 +330,30 @@ export function ChartView() {
       if (runTemp) allTempPoints.push(...runTemp);
     }
 
-    // Add live temperature readings for the active run
-    const liveTemp = isTestActive ? state.tempReadings : undefined;
-    const liveElapsed = isTestActive && state.reading ? state.reading.elapsedS : undefined;
+    // Live temperature history accumulated during the active test
+    if (isTestActive) {
+      for (const p of state.liveTempPoints) {
+        allTempPoints.push({
+          channel_key: p.channelId,
+          channel_name: p.name,
+          elapsed_s: p.t,
+          temp_c: p.v,
+        });
+      }
+    }
 
-    return addTemperatureSeries(base, allTempPoints, liveTemp, liveElapsed);
-  }, [runs, state.livePoints, visibleRuns, visibleMetrics, isTestActive, state.activeRunId, tempDataByRun, state.tempReadings, state.reading]);
+    return addTemperatureSeries(base, allTempPoints);
+  }, [
+    runs,
+    state.livePoints,
+    visibleRuns,
+    visibleMetrics,
+    isTestActive,
+    state.activeRunId,
+    runColorMap,
+    tempDataByRun,
+    state.liveTempPoints,
+  ]);
 
   // ── Capacity chart data ───────────────────────────────────────
   const nominalMah = selectedGroup?.nominal_capacity_mah ?? 200000;
@@ -292,10 +370,7 @@ export function ChartView() {
     [runsWithLive, nominalMah]
   );
 
-  const referenceCurves = useMemo(
-    () => getDefaultReferenceCurves(nominalAh),
-    [nominalAh]
-  );
+  const referenceCurves = useMemo(() => getDefaultReferenceCurves(nominalAh), [nominalAh]);
 
   const capacityChartData = useMemo(
     () => mergeCapacityChart(capacityRuns, referenceCurves, visibleRuns),
@@ -387,9 +462,8 @@ export function ChartView() {
   }, []);
 
   // ── Fleet badge for group selector ────────────────────────────
-  const groupBadge = fleetSummary && fleetSummary.avgHealthPct !== null
-    ? `${fleetSummary.avgHealthPct.toFixed(0)}%`
-    : null;
+  const groupBadge =
+    fleetSummary && fleetSummary.avgHealthPct !== null ? `${fleetSummary.avgHealthPct.toFixed(0)}%` : null;
 
   async function toggleBridge() {
     setBridgeLoading(true);
@@ -415,7 +489,13 @@ export function ChartView() {
             <div className="chart-loading">Loading runs...</div>
           ) : chartMode === 'time' ? (
             chartData.data[0]?.length ? (
-              <Chart data={chartData.data} seriesInfo={chartData.seriesInfo} thresholds={thresholds} scaleRanges={scaleRanges} bands={chartData.bands} />
+              <Chart
+                data={chartData.data}
+                seriesInfo={chartData.seriesInfo}
+                thresholds={thresholds}
+                scaleRanges={scaleRanges}
+                bands={chartData.bands}
+              />
             ) : (
               <div className="chart-empty">
                 {runs.length === 0
@@ -423,16 +503,18 @@ export function ChartView() {
                   : 'No visible series. Open the legend to toggle metrics and runs.'}
               </div>
             )
+          ) : capacityChartData.data[0]?.length ? (
+            <CapacityChart
+              data={capacityChartData.data}
+              seriesInfo={capacityChartData.seriesInfo}
+              thresholds={thresholds}
+            />
           ) : (
-            capacityChartData.data[0]?.length ? (
-              <CapacityChart data={capacityChartData.data} seriesInfo={capacityChartData.seriesInfo} thresholds={thresholds} />
-            ) : (
-              <div className="chart-empty">
-                {runs.length === 0
-                  ? 'No test runs yet. Start a new test to begin.'
-                  : 'No visible runs. Open the legend to toggle runs.'}
-              </div>
-            )
+            <div className="chart-empty">
+              {runs.length === 0
+                ? 'No test runs yet. Start a new test to begin.'
+                : 'No visible runs. Open the legend to toggle runs.'}
+            </div>
           )}
         </div>
 
@@ -483,6 +565,41 @@ export function ChartView() {
             >
               Partial
             </button>
+            <span className="filter-sep" />
+            <select
+              className="filter-select"
+              value={daysPast}
+              onChange={e => setDaysPast(parseInt(e.target.value, 10))}
+              title="Show runs from the last N days"
+            >
+              <option value="0">All runs</option>
+              <option value="1">Last 24h</option>
+              <option value="7">Last 7d</option>
+              <option value="30">Last 30d</option>
+            </select>
+            <select
+              className="filter-select"
+              value={cellFilter}
+              onChange={e => setCellFilter(e.target.value === 'all' ? 'all' : parseInt(e.target.value, 10))}
+              title="Show runs for a single cell"
+            >
+              <option value="all">All cells</option>
+              {cellOptions.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <select
+              className="filter-select"
+              value={colorBy}
+              onChange={e => setColorBy(e.target.value as ColorBy)}
+              title="How to color runs on the chart"
+            >
+              <option value="run">Color: run</option>
+              <option value="mode">Color: chg/dis</option>
+              <option value="cell">Color: cell</option>
+            </select>
           </div>
 
           {cellGroups.length > 0 && (
@@ -493,15 +610,23 @@ export function ChartView() {
                 onChange={e => setSelectedGroupId(parseInt(e.target.value, 10) || null)}
               >
                 {cellGroups.map(g => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
                 ))}
               </select>
               {groupBadge && (
-                <span className="group-health-badge" style={{
-                  color: fleetSummary!.avgHealthPct! >= 90 ? '#4caf50'
-                    : fleetSummary!.avgHealthPct! >= 75 ? '#ff9800'
-                    : '#f44336'
-                }}>
+                <span
+                  className="group-health-badge"
+                  style={{
+                    color:
+                      fleetSummary!.avgHealthPct! >= 90
+                        ? '#4caf50'
+                        : fleetSummary!.avgHealthPct! >= 75
+                          ? '#ff9800'
+                          : '#f44336',
+                  }}
+                >
                   {groupBadge}
                 </span>
               )}
@@ -510,7 +635,9 @@ export function ChartView() {
 
           <div className="bottom-spacer" />
 
-          {isTestActive || state.stopping || (state.cycleState && (state.cycleState.status === 'running' || state.cycleState.status === 'waiting')) ? (
+          {isTestActive ||
+          state.stopping ||
+          (state.cycleState && (state.cycleState.status === 'running' || state.cycleState.status === 'waiting')) ? (
             <button className="btn btn-stop" onClick={stopTest} disabled={state.stopping}>
               {state.stopping ? 'Stopping...' : 'Stop'}
             </button>
@@ -520,16 +647,20 @@ export function ChartView() {
             </button>
           )}
 
-          <a href="/sequences" className="btn btn-link">Sequences</a>
+          <a href="/sequences" className="btn btn-link">
+            Sequences
+          </a>
 
           <button
             className={`btn ${state.bridgeActive ? 'btn-bridge-active' : 'btn-link'}`}
             onClick={toggleBridge}
             disabled={bridgeLoading || isTestActive}
             title={
-              isTestActive ? 'Cannot enable bridge while a test is running'
-                : state.bridgeActive ? 'Disable bridge mode — return serial to this app'
-                : 'Enable serial proxy — forward serial port over TCP'
+              isTestActive
+                ? 'Cannot enable bridge while a test is running'
+                : state.bridgeActive
+                  ? 'Disable bridge mode — return serial to this app'
+                  : 'Enable serial proxy — forward serial port over TCP'
             }
           >
             {bridgeLoading ? '...' : state.bridgeActive ? 'Proxy On' : 'Serial Proxy'}
@@ -540,6 +671,7 @@ export function ChartView() {
           open={legendOpen}
           onClose={() => setLegendOpen(false)}
           runs={runs}
+          runColors={runColorMap}
           visibleMetrics={visibleMetrics}
           visibleRuns={visibleRuns}
           onToggleMetric={toggleMetric}

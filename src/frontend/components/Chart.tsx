@@ -6,12 +6,54 @@
  * Includes a crosshair cursor with tooltip showing all series values.
  */
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import uPlot from 'uplot';
 import type { BandDef, ChartSeriesInfo, MetricKey, ThresholdLine } from '../lib/chart-data.ts';
 import { formatElapsedShort } from '../lib/chart-data.ts';
 
 const MAX_TOOLTIP_ROWS = 16;
+
+/** How many nearby series the tooltip lists */
+const MAX_NEARBY_SERIES = 5;
+
+/** Cursor-to-line distance (CSS px) within which the nearest series gets focus */
+const FOCUS_PROX_PX = 40;
+
+/** Alpha applied to non-focused series while one is focused */
+const FOCUS_ALPHA = 0.3;
+
+/**
+ * Value of series `ys` at x-index `idx`, linearly interpolating across null
+ * gaps so the result matches what spanGaps draws. Returns null past the ends
+ * of the series' data.
+ */
+function seriesValueAt(xs: number[], ys: (number | null | undefined)[] | undefined, idx: number): number | null {
+  if (!ys) return null;
+  const direct = ys[idx];
+  if (direct != null) return direct;
+
+  let lo = idx - 1;
+  while (lo >= 0 && ys[lo] == null) lo--;
+  if (lo < 0) return null;
+  let hi = idx + 1;
+  while (hi < ys.length && ys[hi] == null) hi++;
+  if (hi >= ys.length) return null;
+
+  const t = (xs[idx] - xs[lo]) / (xs[hi] - xs[lo]);
+  return (ys[lo] as number) + t * ((ys[hi] as number) - (ys[lo] as number));
+}
+
+/** Per-chart focused-series tracking so we only call setSeries on change */
+const focusedSeriesByChart = new WeakMap<uPlot, number>();
+
+/** Focus series index `si` (0-based into seriesInfo), or -1 to clear focus */
+function setFocusedSeries(u: uPlot, si: number): void {
+  const prev = focusedSeriesByChart.get(u) ?? -1;
+  if (prev === si) return;
+  focusedSeriesByChart.set(u, si);
+  if (si >= 0) u.setSeries(si + 1, { focus: true });
+  else u.setSeries(null, { focus: true });
+}
 
 interface TooltipDOM {
   root: HTMLDivElement;
@@ -90,7 +132,14 @@ const METRIC_UNIT: Record<MetricKey, string> = {
 
 // ── Component ──────────────────────────────────────────────────────
 
-export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, bands: bandDefs = [], className }: ChartProps) {
+export function Chart({
+  data,
+  seriesInfo,
+  thresholds = [],
+  scaleRanges = {},
+  bands: bandDefs = [],
+  className,
+}: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const uplotRef = useRef<uPlot | null>(null);
   const tooltipRef = useRef<TooltipDOM | null>(null);
@@ -113,7 +162,10 @@ export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, ban
   bandDefsRef.current = bandDefs;
 
   // Build a stable key from series info + scale ranges to detect when chart needs rebuild
-  const rangesKey = Object.entries(scaleRanges).map(([k, v]) => `${k}:${v.min}-${v.max}`).join('|');
+  const rangesKey = Object.entries(scaleRanges)
+    .filter((e): e is [string, ScaleRange] => e[1] != null)
+    .map(([k, v]) => `${k}:${v.min}-${v.max}`)
+    .join('|');
   const seriesKey = seriesInfo.map(s => `${s.runId}:${s.metric}:${s.isLive}`).join('|') + '||' + rangesKey;
 
   const buildOptions = useCallback((): uPlot.Options => {
@@ -213,7 +265,7 @@ export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, ban
         label: isBandBound ? undefined : info.label,
         scale: METRIC_SCALE[info.metric],
         stroke: isBandBound ? 'transparent' : info.color,
-        width: isBandBound ? 0 : (info.isLive ? 2.5 : 1),
+        width: isBandBound ? 0 : info.isLive ? 2.5 : 1,
         spanGaps: true,
         points: { show: false },
       });
@@ -234,6 +286,7 @@ export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, ban
         drag: { x: true, y: false, setScale: true },
         points: { size: 6, fill: '#fff' },
       },
+      focus: { alpha: FOCUS_ALPHA },
       scales: {
         x: { time: false },
         V: scaleRangesRef.current.V
@@ -242,7 +295,10 @@ export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, ban
         A: scaleRangesRef.current.A
           ? { auto: false, range: [scaleRangesRef.current.A.min, scaleRangesRef.current.A.max] as [number, number] }
           : { auto: true },
-        W: { auto: true, range: (_u: uPlot, min: number, max: number) => [Math.max(0, min - 5), max + 5] as [number, number] },
+        W: {
+          auto: true,
+          range: (_u: uPlot, min: number, max: number) => [Math.max(0, min - 5), max + 5] as [number, number],
+        },
         Ah: { auto: true, range: (_u: uPlot, min: number, max: number) => [0, max * 1.05] as [number, number] },
         '°C': { auto: true },
       },
@@ -286,40 +342,72 @@ export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, ban
             if (!tooltip) return;
             const { idx } = u.cursor;
 
-            if (idx == null || idx < 0) {
+            const hide = () => {
               tooltip.root.style.display = 'none';
+              setFocusedSeries(u, -1);
+            };
+
+            if (idx == null || idx < 0) {
+              hide();
               return;
             }
 
             const info = seriesInfoRef.current;
-            const xVal = u.data[0][idx];
+            const xs = u.data[0];
+            const xVal = xs[idx];
             if (xVal == null) {
-              tooltip.root.style.display = 'none';
+              hide();
               return;
             }
 
             tooltip.header.textContent = formatElapsedShort(xVal as number);
 
-            let rowIdx = 0;
+            // Distance from the cursor to each series, in CSS pixels.
+            // Values are interpolated across gaps (the merged time axis makes
+            // most series sparse, but spanGaps draws them continuously).
+            const cursorY = u.cursor.top ?? 0;
+            const nearest: Array<{ si: number; distance: number; val: number }> = [];
+
             for (let si = 0; si < info.length; si++) {
               const s = info[si];
-              if (!s.label) continue; // skip band-bound series
-              const val = u.data[si + 1]?.[idx];
+              if (!s.label || s.color === 'transparent') continue; // skip band bounds
+              const val = seriesValueAt(
+                xs as number[],
+                u.data[si + 1] as (number | null | undefined)[] | undefined,
+                idx
+              );
               if (val == null) continue;
-              if (rowIdx >= tooltip.rows.length) break;
 
+              const seriesY = u.valToPos(val, METRIC_SCALE[s.metric]);
+              nearest.push({ si, distance: Math.abs(cursorY - seriesY), val });
+            }
+
+            // Show only the closest series, nearest first
+            nearest.sort((a, b) => a.distance - b.distance);
+            const closest = nearest.slice(0, MAX_NEARBY_SERIES);
+
+            // Highlight the nearest series on the chart when the cursor is
+            // actually close to it; otherwise show everything normally
+            const focusSi = closest.length > 0 && closest[0].distance <= FOCUS_PROX_PX ? closest[0].si : -1;
+            setFocusedSeries(u, focusSi);
+
+            let rowIdx = 0;
+            for (const { si, val } of closest) {
+              if (rowIdx >= tooltip.rows.length) break;
+              const s = info[si];
               const unit = METRIC_UNIT[s.metric];
               const decimals = s.metric === 'voltage' ? 3 : s.metric === 'current' ? 2 : 1;
               const row = tooltip.rows[rowIdx];
               row.swatch.style.background = s.color;
               row.label.textContent = s.label;
-              row.value.textContent = `${(val as number).toFixed(decimals)} ${unit}`;
+              row.value.textContent = `${val.toFixed(decimals)} ${unit}`;
               row.el.style.display = '';
+              row.el.classList.toggle('cap-tt-nearest', si === focusSi);
               rowIdx++;
             }
 
             if (rowIdx === 0) {
-              tooltip.root.style.display = 'none';
+              hide();
               return;
             }
 
@@ -331,13 +419,13 @@ export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, ban
             const cx = u.cursor.left ?? 0;
             const cy = u.cursor.top ?? 0;
             const plotLeft = u.bbox.left / devicePixelRatio;
-            const plotTop = u.bbox.top / devicePixelRatio;
+            const plotTopDpr = u.bbox.top / devicePixelRatio;
             const plotWidth = u.bbox.width / devicePixelRatio;
             const showLeft = cx > plotWidth * 0.6;
 
             tooltip.root.style.display = 'block';
             tooltip.root.style.left = `${plotLeft + cx + (showLeft ? -12 : 12)}px`;
-            tooltip.root.style.top = `${plotTop + cy - 10}px`;
+            tooltip.root.style.top = `${plotTopDpr + cy - 10}px`;
             tooltip.root.style.transform = showLeft ? 'translateX(-100%)' : '';
           },
         ],
@@ -418,10 +506,5 @@ export function Chart({ data, seriesInfo, thresholds = [], scaleRanges = {}, ban
     return () => observer.disconnect();
   }, []);
 
-  return (
-    <div
-      ref={containerRef}
-      className={`chart-container cap-chart ${className ?? ''}`}
-    />
-  );
+  return <div ref={containerRef} className={`chart-container cap-chart ${className ?? ''}`} />;
 }

@@ -155,6 +155,8 @@ export interface TempChannelReading {
   channelDbId: number;
   name: string | null;
   tempC: number;
+  /** Kalman-filtered temperature rate (°C/min); null until the filter warms up */
+  dTdtCPerMin: number | null;
   alertMaxC: number | null;
 }
 

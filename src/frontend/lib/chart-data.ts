@@ -10,7 +10,7 @@
  * and undefined elsewhere. uPlot skips undefined gaps in series.
  */
 
-import type { DataPoint, TempChannelReading, TestRun } from '../api-client.ts';
+import type { DataPoint, TestRun } from '../api-client.ts';
 import type { LivePoint } from '../hooks/useDeviceSession.ts';
 import { ocvToSoc, type ReferenceCurve } from './lfp-reference-curves.ts';
 
@@ -102,6 +102,55 @@ export function getRunColor(index: number): string {
   return RUN_COLORS[index % RUN_COLORS.length];
 }
 
+// ── Run color assignment ───────────────────────────────────────────
+
+export type ColorBy = 'run' | 'mode' | 'cell';
+
+const NO_CELL_COLOR = '#90a4ae'; // blue-grey for runs without a cell
+
+/**
+ * Assign a stable color per run over the FULL run list (not just visible
+ * runs), so chart series and legend swatches always agree regardless of
+ * filtering.
+ *
+ * - 'run':  distinct palette color per run
+ * - 'mode': charge runs in blues, discharge runs in oranges
+ * - 'cell': one color per cell, grey for runs without a cell
+ */
+export function buildRunColorMap(runs: ChartRun[], colorBy: ColorBy): Map<number, string> {
+  const map = new Map<number, string>();
+
+  if (colorBy === 'mode') {
+    let chargeIdx = 0;
+    let dischargeIdx = 0;
+    for (const run of runs) {
+      const isCharge = run.meta.mode === 'c-cv';
+      const palette = isCharge ? CHARGE_COLORS : DISCHARGE_COLORS;
+      const idx = isCharge ? chargeIdx++ : dischargeIdx++;
+      map.set(run.id, palette[idx % palette.length]);
+    }
+  } else if (colorBy === 'cell') {
+    const cellOrder = new Map<number, number>();
+    for (const run of runs) {
+      const cellId = run.meta.cell_id;
+      if (cellId == null) {
+        map.set(run.id, NO_CELL_COLOR);
+        continue;
+      }
+      let idx = cellOrder.get(cellId);
+      if (idx === undefined) {
+        idx = cellOrder.size;
+        cellOrder.set(cellId, idx);
+      }
+      map.set(run.id, getRunColor(idx));
+    }
+  } else {
+    runs.forEach((run, i) => map.set(run.id, getRunColor(i)));
+  }
+
+  return map;
+}
+
 const LIVE_COLOR = '#00e676'; // bright green — clearly distinct from historical palette
 
 const METRIC_ALPHA: Record<MetricKey, number> = {
@@ -122,11 +171,7 @@ function colorWithAlpha(hex: string, alpha: number): string {
 
 // ── Data conversion ────────────────────────────────────────────────
 
-export function dataPointsToChartRun(
-  meta: TestRun,
-  points: DataPoint[],
-  label: string,
-): ChartRun {
+export function dataPointsToChartRun(meta: TestRun, points: DataPoint[], label: string): ChartRun {
   const n = points.length;
   const elapsed = new Array<number>(n);
   const voltage = new Array<number>(n);
@@ -151,12 +196,7 @@ export function dataPointsToChartRun(
  * Full-res: [elapsed_s, voltage_v, current_a, power_w, capacity_mah, energy_mwh]
  * Downsampled: [elapsed_s, v_min, v_max, i_min, i_max, p_min, p_max, capacity_mah, energy_mwh]
  */
-export function compactDataToChartRun(
-  meta: TestRun,
-  rows: number[][],
-  label: string,
-  downsampled?: boolean,
-): ChartRun {
+export function compactDataToChartRun(meta: TestRun, rows: number[][], label: string, downsampled?: boolean): ChartRun {
   const n = rows.length;
   const elapsed = new Array<number>(n);
   const capacity = new Array<number>(n);
@@ -177,9 +217,12 @@ export function compactDataToChartRun(
       const r = rows[i];
       // [t, vMin, vMax, iMin, iMax, pMin, pMax, cap, energy]
       elapsed[i] = r[0];
-      voltageMin[i] = r[1]; voltageMax[i] = r[2];
-      currentMin[i] = r[3]; currentMax[i] = r[4];
-      powerMin[i] = r[5]; powerMax[i] = r[6];
+      voltageMin[i] = r[1];
+      voltageMax[i] = r[2];
+      currentMin[i] = r[3];
+      currentMax[i] = r[4];
+      powerMin[i] = r[5];
+      powerMax[i] = r[6];
       voltage[i] = (r[1] + r[2]) / 2;
       current[i] = (r[3] + r[4]) / 2;
       power[i] = (r[5] + r[6]) / 2;
@@ -187,9 +230,21 @@ export function compactDataToChartRun(
     }
 
     return {
-      id: meta.id, meta, label, elapsed, voltage, current, power, capacity,
+      id: meta.id,
+      meta,
+      label,
+      elapsed,
+      voltage,
+      current,
+      power,
+      capacity,
       downsampled: true,
-      voltageMin, voltageMax, currentMin, currentMax, powerMin, powerMax,
+      voltageMin,
+      voltageMax,
+      currentMin,
+      currentMax,
+      powerMin,
+      powerMax,
     };
   }
 
@@ -245,7 +300,7 @@ export function livePointsToArrays(points: LivePoint[]): {
  */
 function mergeActiveRunAndLivePoints(
   run: ChartRun,
-  livePoints: LivePoint[],
+  livePoints: LivePoint[]
 ): { elapsed: number[]; voltage: number[]; current: number[]; power: number[]; capacity: number[] } {
   const liveData = livePointsToArrays(livePoints);
   const firstLiveT = liveData.elapsed[0] ?? Infinity;
@@ -276,7 +331,7 @@ function mergeActiveRunAndLivePoints(
 export function mergeActiveRunWithLive(
   runs: ChartRun[],
   activeRunId: number | null | undefined,
-  livePoints: LivePoint[],
+  livePoints: LivePoint[]
 ): ChartRun[] {
   if (!activeRunId || livePoints.length === 0) return runs;
   return runs.map(run => {
@@ -298,6 +353,8 @@ export function mergeActiveRunWithLive(
  * @param isTestActive Whether a live test is currently running
  * @param activeRunId The currently-running test's run ID (so its REST
  *   data merges with live WS points into a single live series)
+ * @param runColors Stable per-run color assignment (from buildRunColorMap);
+ *   falls back to palette-by-visible-index when omitted
  */
 export function mergeRunsForChart(
   runs: ChartRun[],
@@ -306,11 +363,10 @@ export function mergeRunsForChart(
   visibleMetrics: Set<MetricKey>,
   isTestActive: boolean,
   activeRunId?: number | null,
+  runColors?: Map<number, string>
 ): MergedChartData {
   // Filter to visible runs
-  const allVisible = visibleRuns
-    ? runs.filter(r => visibleRuns.has(r.id))
-    : runs;
+  const allVisible = visibleRuns ? runs.filter(r => visibleRuns.has(r.id)) : runs;
 
   // Separate the active run from historical runs so it gets live styling
   let historicalRuns = allVisible;
@@ -372,7 +428,7 @@ export function mergeRunsForChart(
   const bands: BandDef[] = [];
   // Temperature is handled separately by addTemperatureSeries — exclude here
   const metricsArr = Array.from(visibleMetrics).filter(m => m !== 'temperature');
-  const desatAlpha = isTestActive ? 0.20 : 1.0;
+  const desatAlpha = isTestActive ? 0.2 : 1.0;
 
   // Min/max range arrays for downsampled runs — only V and I (power/capacity don't need bands)
   const RANGE_KEYS: Record<string, { min: keyof ChartRun; max: keyof ChartRun }> = {
@@ -383,7 +439,7 @@ export function mergeRunsForChart(
   // Add series for each historical run
   for (let ri = 0; ri < historicalRuns.length; ri++) {
     const run = historicalRuns[ri];
-    const baseColor = getRunColor(ri);
+    const baseColor = runColors?.get(run.id) ?? getRunColor(ri);
 
     for (const metric of metricsArr) {
       const values = new Array<number | null | undefined>(n).fill(undefined);
@@ -461,16 +517,11 @@ export interface TempDataPoint {
 
 /**
  * Add temperature series to an existing merged chart dataset.
- * Temperature data comes from a separate API endpoint and is
- * merged into the same time axis.
+ * Temperature data (historical per-run points and any accumulated live
+ * points, already combined by the caller) is merged into the same time axis.
  */
-export function addTemperatureSeries(
-  existing: MergedChartData,
-  tempData: TempDataPoint[],
-  liveTempReadings?: TempChannelReading[],
-  liveElapsedS?: number,
-): MergedChartData {
-  if (tempData.length === 0 && (!liveTempReadings || liveTempReadings.length === 0)) {
+export function addTemperatureSeries(existing: MergedChartData, tempData: TempDataPoint[]): MergedChartData {
+  if (tempData.length === 0) {
     return existing;
   }
 
@@ -483,18 +534,6 @@ export function addTemperatureSeries(
       byChannel.set(p.channel_key, ch);
     }
     ch.points.push({ t: p.elapsed_s, v: p.temp_c });
-  }
-
-  // Add live reading as the latest point for each channel
-  if (liveTempReadings && liveElapsedS != null) {
-    for (const r of liveTempReadings) {
-      let ch = byChannel.get(r.channelId);
-      if (!ch) {
-        ch = { name: r.name, points: [] };
-        byChannel.set(r.channelId, ch);
-      }
-      ch.points.push({ t: liveElapsedS, v: r.tempC });
-    }
   }
 
   if (byChannel.size === 0) return existing;
@@ -658,10 +697,7 @@ function lerpAt(xs: number[], ys: number[], target: number): number | null {
  * @param run The time-domain run data
  * @param nominalCapacityMah Nominal cell capacity in mAh
  */
-export function runToCapacityDomain(
-  run: ChartRun,
-  nominalCapacityMah: number,
-): CapacityRun {
+export function runToCapacityDomain(run: ChartRun, nominalCapacityMah: number): CapacityRun {
   const isCharge = run.meta.mode === 'c-cv';
   const direction: 'charge' | 'discharge' = isCharge ? 'charge' : 'discharge';
 
@@ -692,12 +728,8 @@ export function runToCapacityDomain(
   const adjustedPct = rawPct.map(p => offsetPct + p);
 
   // Interpolate onto fixed grid
-  const voltage: (number | null)[] = CAPACITY_GRID.map(gridPct =>
-    lerpAt(adjustedPct, run.voltage, gridPct)
-  );
-  const current: (number | null)[] = CAPACITY_GRID.map(gridPct =>
-    lerpAt(adjustedPct, run.current, gridPct)
-  );
+  const voltage: (number | null)[] = CAPACITY_GRID.map(gridPct => lerpAt(adjustedPct, run.voltage, gridPct));
+  const current: (number | null)[] = CAPACITY_GRID.map(gridPct => lerpAt(adjustedPct, run.current, gridPct));
 
   return {
     id: run.id,
@@ -763,7 +795,7 @@ function applyAlpha(hex: string, alpha: number): string {
 export function mergeCapacityChart(
   runs: CapacityRun[],
   referenceCurves: ReferenceCurve[],
-  visibleRuns: Set<number> | null,
+  visibleRuns: Set<number> | null
 ): CapacityChartData {
   const xValues = CAPACITY_GRID;
 
@@ -775,8 +807,8 @@ export function mergeCapacityChart(
     const isDischarge = ref.label.toLowerCase().includes('discharge');
     const colorKey = `${ref.style}-${isDischarge ? 'discharge' : 'charge'}`;
 
-    const values: (number | null | undefined)[] = xValues.map(pct =>
-      lerpAt(ref.capacityPct, ref.voltage, pct) ?? undefined
+    const values: (number | null | undefined)[] = xValues.map(
+      pct => lerpAt(ref.capacityPct, ref.voltage, pct) ?? undefined
     );
 
     data.push(values);
@@ -792,9 +824,7 @@ export function mergeCapacityChart(
   }
 
   // Add visible runs — both voltage and current series per run
-  const activeRuns = visibleRuns
-    ? runs.filter(r => visibleRuns.has(r.id))
-    : runs;
+  const activeRuns = visibleRuns ? runs.filter(r => visibleRuns.has(r.id)) : runs;
 
   let dischargeIdx = 0;
   let chargeIdx = 0;
