@@ -9,20 +9,20 @@
  * Cycle state persists to SQLite so it can resume after Pi reboots.
  */
 
-import type { DeviceSession, DeviceMode, SessionEvent } from './device-session.ts';
-import type { TestRecorder } from './test-recorder.ts';
+import { logger } from '../utils/logger.ts';
 import {
+  type CycleProgram,
   createCycleProgram,
-  updateCycleProgram,
   getActiveCycleProgram,
   getCellById,
   getCellGroup,
   getCycleStepRun,
   getRunsForCycleProgram,
   parseUtcTimestamp,
-  type CycleProgram,
+  updateCycleProgram,
 } from './db.ts';
-import { logger } from '../utils/logger.ts';
+import type { DeviceMode, DeviceSession, SessionEvent } from './device-session.ts';
+import type { TestRecorder } from './test-recorder.ts';
 
 // ── Step types (mirror frontend sequence-types.ts) ─────────────────
 
@@ -70,9 +70,12 @@ export type CycleStep = StepDCC | StepDCP | StepCCV | StepWait | StepLoop;
 /** Short parameter summary for a step, for timeline labels */
 function stepParamLabel(step: StepDCC | StepDCP | StepCCV | StepWait): string {
   switch (step.type) {
-    case 'd-cc': return `${step.currentA}A ${step.cutoffV}V`;
-    case 'd-cp': return `${step.powerW}W ${step.cutoffV}V`;
-    case 'c-cv': return `${step.currentA}A ${step.targetV}V ${step.cutoffCurrentA}A`;
+    case 'd-cc':
+      return `${step.currentA}A ${step.cutoffV}V`;
+    case 'd-cp':
+      return `${step.powerW}W ${step.cutoffV}V`;
+    case 'c-cv':
+      return `${step.currentA}A ${step.targetV}V ${step.cutoffCurrentA}A`;
     case 'wait': {
       const s = step.durationS;
       if (s >= 3600) {
@@ -87,7 +90,12 @@ function stepParamLabel(step: StepDCC | StepDCP | StepCCV | StepWait): string {
 
 // ── V1 migration ──────────────────────────────────────────────────
 
-interface V1Loop { type: 'loop'; count: number; startIndex: number; endIndex: number; }
+interface V1Loop {
+  type: 'loop';
+  count: number;
+  startIndex: number;
+  endIndex: number;
+}
 
 function isV1Loop(step: any): step is V1Loop {
   return step?.type === 'loop' && 'startIndex' in step && !('children' in step);
@@ -115,11 +123,7 @@ function migrateV1Steps(steps: any[]): CycleStep[] {
   const inside = execSteps.slice(loop.startIndex, loop.endIndex + 1);
   const after = execSteps.slice(loop.endIndex + 1);
 
-  return [
-    ...before,
-    { type: 'loop', count: loop.count, children: inside },
-    ...after,
-  ];
+  return [...before, { type: 'loop', count: loop.count, children: inside }, ...after];
 }
 
 // ── CycleState ─────────────────────────────────────────────────────
@@ -182,7 +186,7 @@ export class CycleRunner {
 
   constructor(
     private session: DeviceSession,
-    private recorder: TestRecorder,
+    private recorder: TestRecorder
   ) {}
 
   /** Start listening for device state changes */
@@ -255,19 +259,18 @@ export class CycleRunner {
   private emit(): void {
     const state = this.getState();
     for (const listener of this.listeners) {
-      try { listener(state); }
-      catch (e) { logger.error('Cycle listener error:', e); }
+      try {
+        listener(state);
+      } catch (e) {
+        logger.error('Cycle listener error:', e);
+      }
     }
   }
 
   // ── Public commands ──────────────────────────────────────────
 
   /** Start running a sequence */
-  async startSequence(
-    name: string,
-    steps: CycleStep[],
-    cellId: number | null = null,
-  ): Promise<void> {
+  async startSequence(name: string, steps: CycleStep[], cellId: number | null = null): Promise<void> {
     if (this.status === 'running' || this.status === 'waiting') {
       throw new Error('A cycle is already running');
     }
@@ -314,7 +317,7 @@ export class CycleRunner {
   }
 
   /** Abort the running cycle */
-  async abort(): Promise<void> {
+  async abort(reason: string = 'manual'): Promise<void> {
     if (this.status !== 'running' && this.status !== 'waiting') return;
 
     // Set status first to prevent onSessionEvent from advancing
@@ -324,7 +327,7 @@ export class CycleRunner {
     this.recorder.stopWaitRun(); // no-op if no wait run active
 
     if (this.session.isRunning()) {
-      await this.session.stop();
+      await this.session.stop(reason);
     }
     if (this.programId) {
       updateCycleProgram(this.programId, {
@@ -457,6 +460,8 @@ export class CycleRunner {
 
     logger.info(`Cycle step ${this.execIndex + 1}: ${step.type} (cycle ${cycleNum})`);
 
+    // Max-time enforcement happens inside DeviceSession (host-side watchdog,
+    // restart-safe) — the start commands below just carry the limit through.
     switch (step.type) {
       case 'd-cc': {
         const actualCurrentA = this.resolveCurrentA(step);
@@ -484,7 +489,7 @@ export class CycleRunner {
           cutoffCurrentA: step.cutoffCurrentA,
           maxTimeMin: step.maxTimeMin,
         });
-        await this.session.startCCV(actualCurrentA, step.targetV, step.cutoffCurrentA);
+        await this.session.startCCV(actualCurrentA, step.targetV, step.cutoffCurrentA, step.maxTimeMin ?? 0);
         break;
       }
     }
@@ -574,17 +579,12 @@ export class CycleRunner {
       if (this.session.isRunning()) {
         this.status = 'running';
         logger.info(`Cycle resumed mid-step at ${this.execIndex + 1}/${this.execPlan.length}`);
-      } else if (
-        this.execIndex < this.execPlan.length &&
-        this.execPlan[this.execIndex].step.type === 'wait'
-      ) {
+      } else if (this.execIndex < this.execPlan.length && this.execPlan[this.execIndex].step.type === 'wait') {
         // Device is idle and current step is a wait — check if the wait
         // period has elapsed or if we need to resume the remaining time.
         const waitStep = this.execPlan[this.execIndex].step as StepWait;
         const waitRun = getCycleStepRun(program.id, this.execIndex);
-        const waitStartedAt = waitRun?.started_at
-          ? parseUtcTimestamp(waitRun.started_at)
-          : null;
+        const waitStartedAt = waitRun?.started_at ? parseUtcTimestamp(waitRun.started_at) : null;
 
         if (waitStartedAt) {
           const elapsedS = (Date.now() - waitStartedAt) / 1000;
@@ -592,15 +592,21 @@ export class CycleRunner {
 
           // Sanity check: if remainingS > step duration (e.g., clock skew after
           // reboot before NTP sync), cap to the full step duration
-          const cappedRemainingS = remainingS > waitStep.durationS
-            ? (logger.warn(`Wait remainingS (${Math.round(remainingS)}s) exceeds durationS (${waitStep.durationS}s) — clock skew? Capping.`), waitStep.durationS)
-            : remainingS;
+          const cappedRemainingS =
+            remainingS > waitStep.durationS
+              ? (logger.warn(
+                  `Wait remainingS (${Math.round(remainingS)}s) exceeds durationS (${waitStep.durationS}s) — clock skew? Capping.`
+                ),
+                waitStep.durationS)
+              : remainingS;
 
           if (cappedRemainingS > 1) {
             // Resume the wait with remaining time
             this.status = 'waiting';
             this.waitEndTime = Date.now() + cappedRemainingS * 1000;
-            logger.info(`Cycle resuming wait step ${this.execIndex + 1} with ${Math.round(cappedRemainingS)}s remaining (elapsed=${Math.round(elapsedS)}s, duration=${waitStep.durationS}s)`);
+            logger.info(
+              `Cycle resuming wait step ${this.execIndex + 1} with ${Math.round(cappedRemainingS)}s remaining (elapsed=${Math.round(elapsedS)}s, duration=${waitStep.durationS}s)`
+            );
 
             this.waitTimer = setTimeout(() => {
               this.recorder.stopWaitRun();

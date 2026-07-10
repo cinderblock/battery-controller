@@ -10,20 +10,21 @@
 
 import { logger } from '../utils/logger.ts';
 import { insertTempReading } from './db.ts';
-import { checkW1Available, discoverW1Devices, readAllW1Temperatures } from './w1-adapter.ts';
 import { readHaTemperature } from './ha-adapter.ts';
 import {
+  addChannel,
+  type ChannelConfig,
+  getChannelDbId,
   getTempConfig,
   loadTempConfig,
-  syncConfigToDb,
-  addChannel,
   markW1Seen,
   markW1Unplugged,
   saveTempConfig,
-  getChannelDbId,
-  type ChannelConfig,
+  syncConfigToDb,
   type W1ChannelConfig,
 } from './temp-config.ts';
+import { TempRateFilter } from './temp-rate-filter.ts';
+import { checkW1Available, discoverW1Devices, readAllW1Temperatures } from './w1-adapter.ts';
 
 // ── Event types ───────────────────────────────────────────────────
 
@@ -37,6 +38,8 @@ export interface TempChannelReading {
   channelDbId: number;
   name: string | null;
   tempC: number;
+  /** Kalman-filtered temperature rate (°C/min); null until the filter has ≥2 samples */
+  dTdtCPerMin: number | null;
   alertMaxC: number | null;
 }
 
@@ -71,6 +74,7 @@ export class TemperatureManager {
   private timer: ReturnType<typeof setInterval> | null = null;
   private listeners: Set<TempEventListener> = new Set();
   private lastReadings: Map<string, TempChannelReading> = new Map();
+  private rateFilters: Map<string, TempRateFilter> = new Map();
   private knownW1Devices: Set<string> = new Set();
   private polling = false;
   private runContext: RunContext | null = null;
@@ -108,7 +112,9 @@ export class TemperatureManager {
   /** Subscribe to temperature events */
   on(listener: TempEventListener): () => void {
     this.listeners.add(listener);
-    return () => { this.listeners.delete(listener); };
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
   /** Get last-known readings for all channels (for SSE snapshot) */
@@ -142,7 +148,9 @@ export class TemperatureManager {
 
   private emit(event: TempEvent): void {
     for (const listener of this.listeners) {
-      try { listener(event); } catch (err) {
+      try {
+        listener(event);
+      } catch (err) {
         logger.error('Temperature event listener error:', err);
       }
     }
@@ -163,7 +171,7 @@ export class TemperatureManager {
   }
 
   private async discoverW1(): Promise<void> {
-    if (!await checkW1Available()) return;
+    if (!(await checkW1Available())) return;
 
     const devices = await discoverW1Devices();
     const deviceSet = new Set(devices);
@@ -230,12 +238,14 @@ export class TemperatureManager {
     // Read HTTP channels in parallel
     const httpChannels = enabled.filter(ch => ch.sourceType === 'http');
     const httpResults = new Map<string, number>();
-    await Promise.all(httpChannels.map(async (ch) => {
-      const ha = config.homeAssistant;
-      if (!ha) return;
-      const temp = await readHaTemperature(ha, ch.entityId!);
-      if (temp !== null) httpResults.set(ch.id, temp);
-    }));
+    await Promise.all(
+      httpChannels.map(async ch => {
+        const ha = config.homeAssistant;
+        if (!ha) return;
+        const temp = await readHaTemperature(ha, ch.entityId!);
+        if (temp !== null) httpResults.set(ch.id, temp);
+      })
+    );
 
     // Build readings from both sources
     for (const ch of enabled) {
@@ -250,11 +260,20 @@ export class TemperatureManager {
       const dbId = getChannelDbId(ch.id);
       if (dbId === null) continue;
 
+      let filter = this.rateFilters.get(ch.id);
+      if (!filter) {
+        filter = new TempRateFilter();
+        this.rateFilters.set(ch.id, filter);
+      }
+      const isFirstSample = !this.lastReadings.has(ch.id);
+      const dTdt = filter.update(tempC, Date.now());
+
       const reading: TempChannelReading = {
         channelId: ch.id,
         channelDbId: dbId,
         name: ch.name,
         tempC,
+        dTdtCPerMin: isFirstSample ? null : Math.round(dTdt * 100) / 100,
         alertMaxC: this.getEffectiveAlertMax(ch),
       };
 
@@ -293,5 +312,4 @@ export class TemperatureManager {
       insertTempReading(runId, r.channelDbId, r.tempC, elapsedS);
     }
   }
-
 }

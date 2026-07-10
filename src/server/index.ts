@@ -8,53 +8,71 @@
  */
 
 import homepage from '../frontend/index.html';
+import { decodeBase240, decodeTxFrame, isInfoPacket, parseFrame } from '../protocol/codec.ts';
+import { EbcDivisors } from '../protocol/constants.ts';
 import { logger } from '../utils/logger.ts';
 import { shutdown } from '../utils/shutdown.ts';
-import { parseFrame, decodeBase240, isInfoPacket, decodeTxFrame } from '../protocol/codec.ts';
-import { EbcDivisors } from '../protocol/constants.ts';
-import { SerialManager } from './serial.ts';
-import { startTcpBridge, startTcpBridgeStandalone, type TcpBridge } from './tcp-bridge.ts';
-import { DeviceSession, stateByteToMode, type DecodedReading, type RecoveryState, type SessionEvent } from './device-session.ts';
-import { TestRecorder, type TestSetpoints } from './test-recorder.ts';
-import { SettingsLock } from './settings-lock.ts';
+import { cameraAvailable, cameraRunning, getFrame, startCamera, stopCamera } from './camera.ts';
+import { getAllCellStats, getCellCapacityStats, getGroupFleetSummary } from './capacity-estimation.ts';
 import { CycleRunner } from './cycle-runner.ts';
 import {
-  initDb, closeDb, markIncompleteRuns, ensureDefaultCellGroup, parseUtcTimestamp,
-  getCells, getCellById, getCellByBarcode, upsertCell, updateCell, setCellGroup,
-  getTestRunsForCell, getTestRun, getRecentTestRuns,
-  getDataPointsForRun, getDataPointCount,
-  getCellGroups, getCellsInGroup,
-  getSequences, getSequence, createSequence, updateSequence, deleteSequence,
+  closeDb,
   createCellGroup,
-  getRecentCells, getRecentRunsWithData,
-  getCycleProgram, getRunsForCycleProgram,
-  getSetting, setSetting,
-  getLastServiceRestartRun, getLastDataPointForRun, getRunPeakStats,
+  createSequence,
+  deleteSequence,
+  ensureDefaultCellGroup,
+  getCellByBarcode,
+  getCellById,
+  getCellGroups,
+  getCells,
+  getCellsInGroup,
+  getCycleProgram,
+  getDataPointCount,
+  getDataPointsForRun,
+  getLastDataPointForRun,
+  getLastServiceRestartRun,
+  getRecentCells,
+  getRecentRunsWithData,
+  getRecentTestRuns,
+  getRunPeakStats,
+  getRunsForCycleProgram,
+  getSequence,
+  getSequences,
+  getSetting,
+  getTempReadingsForRun,
+  getTestRun,
+  getTestRunsForCell,
+  initDb,
+  markIncompleteRuns,
+  parseUtcTimestamp,
+  setCellGroup,
+  setSetting,
+  updateCell,
+  updateSequence,
+  upsertCell,
 } from './db.ts';
 import {
-  getCellCapacityStats,
-  getGroupFleetSummary,
-  getAllCellStats,
-} from './capacity-estimation.ts';
+  type DecodedReading,
+  DeviceSession,
+  type RecoveryState,
+  type SessionEvent,
+  stateByteToMode,
+} from './device-session.ts';
+import { fetchHaTemperatureEntities, testHaConnection } from './ha-adapter.ts';
+import { SerialManager } from './serial.ts';
+import { SettingsLock } from './settings-lock.ts';
+import { startTcpBridge, startTcpBridgeStandalone, type TcpBridge } from './tcp-bridge.ts';
 import {
-  cameraAvailable,
-  cameraRunning,
-  startCamera,
-  stopCamera,
-  getFrame,
-} from './camera.ts';
-import { TemperatureManager, type TempEvent } from './temperature.ts';
-import {
-  getTempConfig,
-  setHomeAssistantConfig,
   addChannel,
-  updateChannelConfig,
-  removeChannel,
   getChannel,
+  getTempConfig,
   type HttpChannelConfig,
+  removeChannel,
+  setHomeAssistantConfig,
+  updateChannelConfig,
 } from './temp-config.ts';
-import { testHaConnection, fetchHaTemperatureEntities } from './ha-adapter.ts';
-import { getTempReadingsForRun } from './db.ts';
+import { type TempEvent, TemperatureManager } from './temperature.ts';
+import { TestRecorder, type TestSetpoints } from './test-recorder.ts';
 
 const Port = Number(process.env.PORT) || 80;
 const TRUSTED_PROXY = '10.255.0.5';
@@ -116,8 +134,11 @@ function errorResponse(message: string, status = 400): Response {
 }
 
 async function parseBody<T = Record<string, unknown>>(req: Request): Promise<T | null> {
-  try { return await req.json() as T; }
-  catch { return null; }
+  try {
+    return (await req.json()) as T;
+  } catch {
+    return null;
+  }
 }
 
 // ── Main ───────────────────────────────────────────────────────────
@@ -138,7 +159,9 @@ async function main() {
     logger.info(`Marked ${incomplete.runs} incomplete run(s) from previous session as 'service_restart'`);
   }
   if (incomplete.cycles > 0) {
-    logger.info(`Found ${incomplete.cycles} active cycle program(s) from previous session — CycleRunner will attempt recovery`);
+    logger.info(
+      `Found ${incomplete.cycles} active cycle program(s) from previous session — CycleRunner will attempt recovery`
+    );
   }
   ensureDefaultCellGroup();
 
@@ -184,7 +207,7 @@ async function main() {
         if (divergence > 0.1) {
           logger.warn(
             `Recovery: DB capacity (${lastPoint.capacity_mah} mAh) diverges ${(divergence * 100).toFixed(0)}% ` +
-            `from expected (${approxCorrected} mAh) — likely uncorrected raw. Using computed value.`
+              `from expected (${approxCorrected} mAh) — likely uncorrected raw. Using computed value.`
           );
           capacityForRecovery = approxCorrected;
         }
@@ -193,8 +216,8 @@ async function main() {
 
     logger.info(
       `Recovery: run #${run.id}, elapsed=${trueElapsedS.toFixed(0)}s (gap=${gapS.toFixed(1)}s), ` +
-      `energy=${lastPoint.energy_mwh.toFixed(0)} mWh, highCap=${highCapMode}, ` +
-      `dbCap=${lastPoint.capacity_mah}, recoveryCap=${capacityForRecovery}`
+        `energy=${lastPoint.energy_mwh.toFixed(0)} mWh, highCap=${highCapMode}, ` +
+        `dbCap=${lastPoint.capacity_mah}, recoveryCap=${capacityForRecovery}`
     );
 
     return {
@@ -209,6 +232,7 @@ async function main() {
       peakVoltage: stats?.peakVoltage ?? 0,
       minVoltage: stats?.minVoltage ?? Infinity,
       peakCurrent: stats?.peakCurrent ?? 0,
+      maxTimeMin: run.setpoint_max_time_min ?? null,
     };
   });
   const recorder = new TestRecorder(session);
@@ -216,7 +240,7 @@ async function main() {
   const cycleRunner = new CycleRunner(session, recorder);
 
   session.start();
-  cycleRunner.start();   // Restore cycle context before recorder (so recovered runs get linked)
+  cycleRunner.start(); // Restore cycle context before recorder (so recovered runs get linked)
   recorder.start();
 
   // ── Start camera if RTSP_URL is configured ─────────────────────
@@ -235,14 +259,23 @@ async function main() {
       case 'temperature':
         broadcast('temperature', { readings: event.readings });
         break;
-      case 'tempAlert':
+      case 'tempAlert': {
         logger.warn(
           `TEMPERATURE ALERT: ${event.name ?? event.channelId} = ${event.tempC.toFixed(1)}°C ` +
-          `(threshold: ${event.alertMaxC}°C) — stopping test`
+            `(threshold: ${event.alertMaxC}°C) — stopping test`
         );
-        session.stop();
+        // During a cycle, a bare device stop would look like "step completed"
+        // and the runner would advance to the next step (possibly restarting
+        // charge on an overheating cell) — abort the whole cycle instead.
+        const cycleStatus = cycleRunner.getState().status;
+        if (cycleStatus === 'running' || cycleStatus === 'waiting') {
+          cycleRunner.abort('temp_alert').catch(e => logger.error('Cycle abort failed:', e));
+        } else {
+          session.stop('temp_alert').catch(e => logger.error('Temp-alert stop failed:', e));
+        }
         broadcast('tempAlert', event);
         break;
+      }
       case 'tempChannelDiscovered':
       case 'tempChannelUnplugged':
       case 'tempChannelReconnected':
@@ -397,7 +430,7 @@ async function main() {
     // Immediately poke the device — it may have stopped streaming
     // after EB Tester's heartbeats ceased during bridge mode
     logger.info('Sending init to restart device data stream...');
-    session.sendInit().catch((err) => {
+    session.sendInit().catch(err => {
       logger.error('Init after bridge disable failed:', err);
     });
 
@@ -435,24 +468,26 @@ async function main() {
           controller.enqueue(sseEncoder.encode('retry: 1000\n\n'));
 
           // Send initial state snapshot
-          controller.enqueue(sseFormat('snapshot', {
-            buildId: SERVER_BUILD_ID,
-            mode: session.getMode(),
-            reading: session.getReading(),
-            stats: session.getTestStats(),
-            deviceInfo: session.getDeviceInfo(),
-            activeRunId: recorder.getActiveRunId(),
-            activeRunMaxTimeMin: recorder.getActiveRunMaxTimeMin(),
-            serialConnected: serialManager.isPortOpen(),
-            deviceResponsive: session.isDeviceResponsive(),
-            locked: settingsLock.isLocked(),
-            cycleState: cycleRunner.getState(),
-            bridgeActive: activeBridge !== null || bridgeEnabling,
-            temperature: {
-              channels: tempManager.getChannels(),
-              readings: tempManager.getLastReadings(),
-            },
-          }));
+          controller.enqueue(
+            sseFormat('snapshot', {
+              buildId: SERVER_BUILD_ID,
+              mode: session.getMode(),
+              reading: session.getReading(),
+              stats: session.getTestStats(),
+              deviceInfo: session.getDeviceInfo(),
+              activeRunId: recorder.getActiveRunId(),
+              activeRunMaxTimeMin: recorder.getActiveRunMaxTimeMin(),
+              serialConnected: serialManager.isPortOpen(),
+              deviceResponsive: session.isDeviceResponsive(),
+              locked: settingsLock.isLocked(),
+              cycleState: cycleRunner.getState(),
+              bridgeActive: activeBridge !== null || bridgeEnabling,
+              temperature: {
+                channels: tempManager.getChannels(),
+                readings: tempManager.getLastReadings(),
+              },
+            })
+          );
         },
         cancel() {
           client.closed = true;
@@ -533,7 +568,7 @@ async function main() {
         case 'c-cv':
           if (!body.currentA || !body.voltageV || !body.cutoffCurrentA)
             return errorResponse('C-CV requires currentA, voltageV, and cutoffCurrentA');
-          await session.startCCV(body.currentA, body.voltageV, body.cutoffCurrentA);
+          await session.startCCV(body.currentA, body.voltageV, body.cutoffCurrentA, body.maxTimeMin ?? 0);
           break;
         default:
           return errorResponse(`Unknown mode: ${body.mode}`);
@@ -577,7 +612,7 @@ async function main() {
         case 'c-cv':
           if (!body.currentA || !body.voltageV || !body.cutoffCurrentA)
             return errorResponse('C-CV continue requires currentA, voltageV, and cutoffCurrentA');
-          await session.continueCCV(body.currentA, body.voltageV, body.cutoffCurrentA);
+          await session.continueCCV(body.currentA, body.voltageV, body.cutoffCurrentA, body.maxTimeMin ?? 0);
           break;
         default:
           return errorResponse(`Not in a running state (mode: ${mode})`, 409);
@@ -686,9 +721,12 @@ async function main() {
 
       const points = getDataPointsForRun(runId);
       const header = 'elapsed_s,voltage_v,current_a,power_w,capacity_mah,energy_mwh,state_byte\n';
-      const rows = points.map(p =>
-        `${p.elapsed_s},${p.voltage_v},${p.current_a},${p.power_w},${p.capacity_mah},${p.energy_mwh},${p.state_byte}`
-      ).join('\n');
+      const rows = points
+        .map(
+          p =>
+            `${p.elapsed_s},${p.voltage_v},${p.current_a},${p.power_w},${p.capacity_mah},${p.energy_mwh},${p.state_byte}`
+        )
+        .join('\n');
 
       return new Response(header + rows, {
         headers: {
@@ -716,8 +754,12 @@ async function main() {
         return errorResponse('Missing name, nominalCapacityMah, or chemistry');
       }
       const group = createCellGroup(
-        body.name, body.nominalCapacityMah, body.chemistry,
-        body.chargeVoltageV, body.dischargeCutoffV, body.chargeCutoffCurrentA,
+        body.name,
+        body.nominalCapacityMah,
+        body.chemistry,
+        body.chargeVoltageV,
+        body.dischargeCutoffV,
+        body.chargeCutoffCurrentA
       );
       return jsonResponse(group, 201);
     }
@@ -760,7 +802,7 @@ async function main() {
       const cellId = parseInt(cellGroupMatch[1], 10);
       const cell = getCellById(cellId);
       if (!cell) return errorResponse('Cell not found', 404);
-      const body = await req.json() as { groupId: number | null };
+      const body = (await req.json()) as { groupId: number | null };
       setCellGroup(cellId, body.groupId);
       return jsonResponse({ ok: true });
     }
@@ -891,14 +933,15 @@ async function main() {
       if (!cell) return errorResponse('Cell not found', 404);
 
       const cellRuns = getTestRunsForCell(cellId);
-      const header = 'run_id,mode,started_at,ended_at,end_reason,elapsed_s,voltage_v,current_a,power_w,capacity_mah,energy_mwh,state_byte\n';
+      const header =
+        'run_id,mode,started_at,ended_at,end_reason,elapsed_s,voltage_v,current_a,power_w,capacity_mah,energy_mwh,state_byte\n';
       const rows: string[] = [];
       for (const run of cellRuns) {
         const points = getDataPointsForRun(run.id);
         for (const p of points) {
           rows.push(
             `${run.id},${run.mode},${run.started_at},${run.ended_at ?? ''},${run.end_reason ?? ''},` +
-            `${p.elapsed_s},${p.voltage_v},${p.current_a},${p.power_w},${p.capacity_mah},${p.energy_mwh},${p.state_byte}`
+              `${p.elapsed_s},${p.voltage_v},${p.current_a},${p.power_w},${p.capacity_mah},${p.energy_mwh},${p.state_byte}`
           );
         }
       }
@@ -917,9 +960,7 @@ async function main() {
       const cfg = getTempConfig();
       return jsonResponse({
         pollIntervalS: cfg.pollIntervalS,
-        homeAssistant: cfg.homeAssistant
-          ? { baseUrl: cfg.homeAssistant.baseUrl, hasToken: true }
-          : null,
+        homeAssistant: cfg.homeAssistant ? { baseUrl: cfg.homeAssistant.baseUrl, hasToken: true } : null,
         channels: cfg.channels,
       });
     }
@@ -949,13 +990,15 @@ async function main() {
       if (!cfg.homeAssistant) return errorResponse('Home Assistant not configured', 404);
       try {
         const entities = await fetchHaTemperatureEntities(cfg.homeAssistant);
-        return jsonResponse(entities.map(e => ({
-          entityId: e.entity_id,
-          name: e.attributes.friendly_name ?? e.entity_id,
-          state: e.state,
-          unit: e.attributes.unit_of_measurement,
-          deviceClass: e.attributes.device_class,
-        })));
+        return jsonResponse(
+          entities.map(e => ({
+            entityId: e.entity_id,
+            name: e.attributes.friendly_name ?? e.entity_id,
+            state: e.state,
+            unit: e.attributes.unit_of_measurement,
+            deviceClass: e.attributes.device_class,
+          }))
+        );
       } catch (err) {
         return errorResponse(`Failed to fetch HA entities: ${err instanceof Error ? err.message : String(err)}`, 502);
       }
@@ -965,10 +1008,12 @@ async function main() {
       const cfg = getTempConfig();
       const lastReadings = tempManager.getLastReadings();
       const readingsMap = new Map(lastReadings.map(r => [r.channelId, r.tempC]));
-      return jsonResponse(cfg.channels.map(ch => ({
-        ...ch,
-        lastTempC: readingsMap.get(ch.id) ?? null,
-      })));
+      return jsonResponse(
+        cfg.channels.map(ch => ({
+          ...ch,
+          lastTempC: readingsMap.get(ch.id) ?? null,
+        }))
+      );
     }
 
     if (pathname === '/api/temp/channels' && method === 'POST') {
@@ -1076,7 +1121,7 @@ async function main() {
     if (pathname === '/api/export/db' && method === 'GET') {
       const dbPath = process.env.DB_PATH || '/opt/battery-controller/data/battery.db';
       const file = Bun.file(dbPath);
-      if (!await file.exists()) return errorResponse('Database file not found', 404);
+      if (!(await file.exists())) return errorResponse('Database file not found', 404);
       return new Response(file, {
         headers: {
           'Content-Type': 'application/x-sqlite3',
@@ -1093,8 +1138,12 @@ async function main() {
     const ping = sseEncoder.encode(': keepalive\n\n');
     for (const client of sseClients) {
       if (client.closed) continue;
-      try { client.controller.enqueue(ping); }
-      catch { client.closed = true; sseClients.delete(client); }
+      try {
+        client.controller.enqueue(ping);
+      } catch {
+        client.closed = true;
+        sseClients.delete(client);
+      }
     }
   }, 5_000);
 
@@ -1152,14 +1201,20 @@ async function main() {
 
   logger.info(`Server running at http://localhost:${Port}`);
   logger.info(`SSE event stream at http://localhost:${Port}/api/events`);
-  logger.info(`Device mode: ${session.getMode()}, serial: ${serialManager.isPortOpen() ? 'connected' : 'disconnected'}`);
+  logger.info(
+    `Device mode: ${session.getMode()}, serial: ${serialManager.isPortOpen() ? 'connected' : 'disconnected'}`
+  );
 
   // ── Graceful shutdown ──────────────────────────────────────────
   async function gracefulShutdown() {
     logger.info('Shutting down...');
     clearInterval(keepaliveInterval);
     for (const client of sseClients) {
-      try { client.controller.close(); } catch { /* already closed */ }
+      try {
+        client.controller.close();
+      } catch {
+        /* already closed */
+      }
     }
     sseClients.clear();
     stopCamera();

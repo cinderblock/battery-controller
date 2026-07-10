@@ -8,16 +8,16 @@
  * - Handles mid-test recovery (start_reason = 'recovered')
  */
 
+import { logger } from '../utils/logger.ts';
 import {
+  type CreateTestRunParams,
   createTestRun,
   finalizeTestRun,
-  insertDataPoint,
   getDataPointCount,
+  insertDataPoint,
   reopenRun,
-  type CreateTestRunParams,
 } from './db.ts';
-import type { DeviceSession, DeviceMode, DecodedReading, SessionEvent } from './device-session.ts';
-import { logger } from '../utils/logger.ts';
+import type { DecodedReading, DeviceMode, DeviceSession, SessionEvent } from './device-session.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -176,21 +176,19 @@ export class TestRecorder {
   stopWaitRun(): void {
     if (this.activeRunId === null || this.activeRunMode !== ('wait' as DeviceMode)) return;
 
-    const durationS = this.waitStartTime
-      ? (Date.now() - this.waitStartTime) / 1000
-      : 0;
+    const durationS = this.waitStartTime ? (Date.now() - this.waitStartTime) / 1000 : 0;
     const reading = this.session.getReading();
 
     finalizeTestRun(
       this.activeRunId,
       'complete',
-      0,             // no capacity during wait
-      0,             // no energy during wait
+      0, // no capacity during wait
+      0, // no energy during wait
       reading.voltage,
       reading.voltage,
-      0,             // no current during wait
+      0, // no current during wait
       durationS,
-      this.dataPointCount,
+      this.dataPointCount
     );
 
     logger.info(`Finalized wait run #${this.activeRunId}: ${durationS.toFixed(0)}s, ${this.dataPointCount} points`);
@@ -258,9 +256,10 @@ export class TestRecorder {
     if (reading.isInfoPacket) return;
 
     // For wait runs, use wall-clock elapsed (device reports 0 when idle)
-    const elapsedS = this.activeRunMode === ('wait' as DeviceMode) && this.waitStartTime
-      ? (Date.now() - this.waitStartTime) / 1000
-      : reading.elapsedS;
+    const elapsedS =
+      this.activeRunMode === ('wait' as DeviceMode) && this.waitStartTime
+        ? (Date.now() - this.waitStartTime) / 1000
+        : reading.elapsedS;
 
     insertDataPoint(
       this.activeRunId,
@@ -270,7 +269,7 @@ export class TestRecorder {
       reading.power,
       reading.capacityMah,
       reading.energyMwh,
-      reading.stateByte,
+      reading.stateByte
     );
     this.dataPointCount++;
   }
@@ -305,7 +304,9 @@ export class TestRecorder {
     // subsequent runs until explicitly changed)
     this.pendingSetpoints = null;
 
-    logger.info(`Started recording test run #${run.id} (mode=${mode}, cell=${this.pendingCellId ?? 'none'}, reason=${params.startReason})`);
+    logger.info(
+      `Started recording test run #${run.id} (mode=${mode}, cell=${this.pendingCellId ?? 'none'}, reason=${params.startReason})`
+    );
   }
 
   private reopenPreviousRun(runId: number, mode: DeviceMode): void {
@@ -316,7 +317,9 @@ export class TestRecorder {
     this.runStartTime = Date.now(); // approximate — gap is already elapsed
     this.dataPointCount = getDataPointCount(runId);
 
-    logger.info(`Reopened test run #${runId} (mode=${mode}, ${this.dataPointCount} existing points). Continuing recording.`);
+    logger.info(
+      `Reopened test run #${runId} (mode=${mode}, ${this.dataPointCount} existing points). Continuing recording.`
+    );
   }
 
   private startRecoveredRun(mode: DeviceMode): void {
@@ -336,7 +339,9 @@ export class TestRecorder {
     this.runStartTime = Date.now();
     this.dataPointCount = 0;
 
-    logger.info(`Started recording RECOVERED test run #${run.id} (mode=${mode}). Earlier data points from before restart are missing.`);
+    logger.info(
+      `Started recording RECOVERED test run #${run.id} (mode=${mode}). Earlier data points from before restart are missing.`
+    );
   }
 
   private finalizeRun(endReason: string): void {
@@ -354,13 +359,13 @@ export class TestRecorder {
       stats.minVoltage,
       stats.peakCurrent,
       stats.elapsedS,
-      this.dataPointCount,
+      this.dataPointCount
     );
 
     logger.info(
       `Finalized test run #${this.activeRunId}: ${endReason}, ` +
-      `${reading.capacityAh.toFixed(3)} Ah, ${reading.energyWh.toFixed(1)} Wh, ` +
-      `${stats.elapsedS.toFixed(0)}s, ${this.dataPointCount} points`
+        `${reading.capacityAh.toFixed(3)} Ah, ${reading.energyWh.toFixed(1)} Wh, ` +
+        `${stats.elapsedS.toFixed(0)}s, ${this.dataPointCount} points`
     );
 
     this.activeRunId = null;
@@ -377,10 +382,15 @@ export class TestRecorder {
         // cutoff current, or time limit. We can't distinguish from the
         // state byte alone, but 'complete' is semantically accurate.
         return 'complete';
-      case 'idle':
-        // Returned to idle without going through 'complete' — likely
-        // a manual stop or the stop command was sent.
+      case 'idle': {
+        // Returned to idle without going through 'complete' — a host stop.
+        // The session knows why it sent the stop (time limit, temp alert,
+        // user request); fall back to 'manual_stop' for device-initiated idles.
+        const hostReason = this.session.consumeStopReason();
+        if (hostReason === 'time_limit') return 'time_limit';
+        if (hostReason === 'temp_alert') return 'temp_alert';
         return 'manual_stop';
+      }
       case 'fault':
         return 'fault';
       default:

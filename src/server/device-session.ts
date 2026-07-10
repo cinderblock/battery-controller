@@ -13,7 +13,7 @@
 import { decodeBase240, encodeBase240, isInfoPacket } from '../protocol/codec.ts';
 import { EbcDivisors, INFO_STATE_OFFSET, RxState } from '../protocol/constants.ts';
 import { logger } from '../utils/logger.ts';
-import { CapacityTracker, type CapacityState } from './capacity-tracker.ts';
+import { type CapacityState, CapacityTracker } from './capacity-tracker.ts';
 import type { SerialManager } from './serial.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -119,6 +119,8 @@ export interface RecoveryState {
   peakVoltage: number;
   minVoltage: number;
   peakCurrent: number;
+  /** Host-enforced max run time (minutes) from the recovered run's setpoints */
+  maxTimeMin: number | null;
 }
 
 /**
@@ -160,6 +162,19 @@ export class DeviceSession {
   private testStartTime = 0;
   private lastEnergyUpdateTime = 0;
 
+  // Host-side max-time enforcement.
+  // The C-CV charge frame has no time field — EB Tester enforces charge time
+  // limits with a host-side timer and a 0x02 load toggle, and so must we.
+  // For D-CC/D-CP the device enforces the limit itself; the host acts as a
+  // backstop one minute later in case the device fails to stop.
+  private hostMaxTimeMin = 0;
+  private lastTimeLimitStopAt = 0;
+  private readonly TIME_LIMIT_RETRY_MS = 10_000;
+
+  // Reason for the most recent host-initiated stop ('manual', 'time_limit', ...).
+  // Consumed by TestRecorder to record an accurate end_reason.
+  private lastStopReason: string | null = null;
+
   // Heartbeat
   private heartbeatTimer: Timer | null = null;
   private heartbeatCounter = 0;
@@ -189,7 +204,7 @@ export class DeviceSession {
 
   constructor(
     private serial: SerialManager,
-    private recoveryProvider?: RecoveryProvider,
+    private recoveryProvider?: RecoveryProvider
   ) {}
 
   /** Start listening to serial packets and managing the session */
@@ -233,22 +248,31 @@ export class DeviceSession {
 
   private emit(event: SessionEvent): void {
     for (const listener of this.listeners) {
-      try { listener(event); }
-      catch (e) { logger.error('Session listener error:', e); }
+      try {
+        listener(event);
+      } catch (e) {
+        logger.error('Session listener error:', e);
+      }
     }
   }
 
   // ── Getters ────────────────────────────────────────────────────
 
-  getMode(): DeviceMode { return this.mode; }
-  getDeviceInfo(): DeviceInfo | null { return this.deviceInfo; }
-  isDeviceResponsive(): boolean { return this.deviceResponsive; }
-  getRecoveredRunId(): number | null { return this.recoveredRunId; }
+  getMode(): DeviceMode {
+    return this.mode;
+  }
+  getDeviceInfo(): DeviceInfo | null {
+    return this.deviceInfo;
+  }
+  isDeviceResponsive(): boolean {
+    return this.deviceResponsive;
+  }
+  getRecoveredRunId(): number | null {
+    return this.recoveredRunId;
+  }
 
   getReading(): DecodedReading {
-    const elapsedS = this.mode !== 'idle' && this.testStartTime > 0
-      ? (Date.now() - this.testStartTime) / 1000
-      : 0;
+    const elapsedS = this.mode !== 'idle' && this.testStartTime > 0 ? (Date.now() - this.testStartTime) / 1000 : 0;
     return {
       mode: this.mode,
       stateByte: this.lastStateByte,
@@ -278,7 +302,9 @@ export class DeviceSession {
     };
   }
 
-  getPendingCommand(): PendingCommand | null { return this.pendingCommand; }
+  getPendingCommand(): PendingCommand | null {
+    return this.pendingCommand;
+  }
 
   isRunning(): boolean {
     return this.mode === 'd-cc' || this.mode === 'd-cp' || this.mode === 'c-cv';
@@ -305,7 +331,9 @@ export class DeviceSession {
 
     // Log field7 when non-zero to understand what it carries on high-capacity tests
     if (field7raw !== 0 && !isInfoPacket(payload[0])) {
-      logger.info(`Field7 non-zero: raw=${field7raw}, bytes=[0x${payload[7].toString(16)}, 0x${payload[8].toString(16)}], capLow=${capacityMah}`);
+      logger.info(
+        `Field7 non-zero: raw=${field7raw}, bytes=[0x${payload[7].toString(16)}, 0x${payload[8].toString(16)}], capLow=${capacityMah}`
+      );
     }
 
     // First packet: cancel init probe timer, decide whether to send init
@@ -324,7 +352,9 @@ export class DeviceSession {
           }
         }
 
-        logger.info(`Device is mid-test (state=0x${stateByte.toString(16)}, mode=${mode}). ${recovery ? 'Resuming' : 'Recovering'}.`);
+        logger.info(
+          `Device is mid-test (state=0x${stateByte.toString(16)}, mode=${mode}). ${recovery ? 'Resuming' : 'Recovering'}.`
+        );
         this.setMode(mode); // resets state + emits stateChange
 
         // Override the reset values with recovered state
@@ -335,6 +365,12 @@ export class DeviceSession {
           this.peakVoltage = recovery.peakVoltage;
           this.minVoltage = recovery.minVoltage;
           this.peakCurrent = recovery.peakCurrent;
+          // Restore host-side time-limit enforcement across restarts.
+          // Charge limits are host-enforced only, so give the recovered
+          // C-CV run the exact limit; discharge keeps the +1 min backstop.
+          if (recovery.maxTimeMin != null && recovery.maxTimeMin > 0) {
+            this.hostMaxTimeMin = mode === 'c-cv' ? recovery.maxTimeMin : recovery.maxTimeMin + 1;
+          }
         }
         this.lastEnergyUpdateTime = now;
       } else if (!this.initSent) {
@@ -374,9 +410,7 @@ export class DeviceSession {
       const prevCorrected = this.capacityMah;
       this.capacityMah = this.capTracker.update(capacityMah, true);
       if (this.capTracker.highCapMode && prevCorrected < this.capacityMah - 5000 && prevCorrected > 0) {
-        logger.info(
-          `High-cap transition: rawJump=${capacityMah}, trueCap=${this.capacityMah} (10 mAh/unit mode)`
-        );
+        logger.info(`High-cap transition: rawJump=${capacityMah}, trueCap=${this.capacityMah} (10 mAh/unit mode)`);
       }
     }
 
@@ -415,9 +449,22 @@ export class DeviceSession {
     }
 
     // Build reading
-    const elapsedS = this.testStartTime > 0 && this.isRunning()
-      ? (now - this.testStartTime) / 1000
-      : 0;
+    const elapsedS = this.testStartTime > 0 && this.isRunning() ? (now - this.testStartTime) / 1000 : 0;
+
+    // Host-side max-time enforcement (re-sends stop every TIME_LIMIT_RETRY_MS
+    // until the device actually goes idle, in case a stop frame is lost)
+    if (
+      this.isRunning() &&
+      this.hostMaxTimeMin > 0 &&
+      elapsedS >= this.hostMaxTimeMin * 60 &&
+      now - this.lastTimeLimitStopAt >= this.TIME_LIMIT_RETRY_MS
+    ) {
+      this.lastTimeLimitStopAt = now;
+      logger.warn(
+        `Max time reached (${(elapsedS / 60).toFixed(1)} min >= ${this.hostMaxTimeMin} min limit) — sending stop`
+      );
+      this.stop('time_limit').catch(e => logger.error('Time-limit stop failed:', e));
+    }
 
     const reading: DecodedReading = {
       mode: this.mode,
@@ -461,9 +508,13 @@ export class DeviceSession {
       }
 
       // Leaving a running state
-      if ((newMode === 'idle' || newMode === 'complete') &&
-          (oldMode === 'd-cc' || oldMode === 'd-cp' || oldMode === 'c-cv')) {
-        // Test completed or stopped
+      if (
+        (newMode === 'idle' || newMode === 'complete') &&
+        (oldMode === 'd-cc' || oldMode === 'd-cp' || oldMode === 'c-cv')
+      ) {
+        // Test completed or stopped — disarm host-side time limit
+        this.hostMaxTimeMin = 0;
+        this.lastTimeLimitStopAt = 0;
       }
 
       this.emit({ type: 'stateChange', from: oldMode, to: newMode });
@@ -503,11 +554,39 @@ export class DeviceSession {
     logger.info('Sent init (0x05)');
   }
 
-  /** Send stop command (0x02 load toggle) to halt a running test */
-  async stop(): Promise<void> {
+  /**
+   * Send stop command (0x02 load toggle) to halt a running test.
+   * @param reason Why the host is stopping ('manual', 'time_limit', 'temp_alert', ...) —
+   *               recorded by TestRecorder as the run's end_reason.
+   */
+  async stop(reason: string = 'manual'): Promise<void> {
+    this.lastStopReason = reason;
     this.setPending('stop', 'idle');
     await this.sendPayload([0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
-    logger.info('Sent stop (0x02)');
+    logger.info(`Sent stop (0x02, reason=${reason})`);
+  }
+
+  /**
+   * Return and clear the reason for the most recent host-initiated stop.
+   * Used by TestRecorder when the device transitions to idle so the run's
+   * end_reason distinguishes 'time_limit' from a manual stop.
+   */
+  consumeStopReason(): string | null {
+    const reason = this.lastStopReason;
+    this.lastStopReason = null;
+    return reason;
+  }
+
+  /**
+   * Arm host-side max-time enforcement for the test being started.
+   * @param maxTimeMin The step's time limit (0 = no limit)
+   * @param deviceEnforced True when the limit was also sent to the device
+   *        (D-CC/D-CP) — the host then only acts as a +1 min backstop.
+   */
+  private armTimeLimit(maxTimeMin: number, deviceEnforced: boolean): void {
+    this.hostMaxTimeMin = maxTimeMin > 0 ? maxTimeMin + (deviceEnforced ? 1 : 0) : 0;
+    this.lastTimeLimitStopAt = 0;
+    this.lastStopReason = null;
   }
 
   /**
@@ -520,6 +599,7 @@ export class DeviceSession {
     const [iHi, iLo] = encodeBase240(currentA, EbcDivisors.current);
     const [vHi, vLo] = encodeBase240(cutoffV, EbcDivisors.setpointVoltage);
     const [tHi, tLo] = encodeBase240(maxTimeMin, 1);
+    this.armTimeLimit(maxTimeMin, true);
     this.setPending('startDCC', 'd-cc');
     await this.sendPayload([0x01, iHi, iLo, vHi, vLo, tHi, tLo]);
     logger.info(`Sent D-CC start: ${currentA}A, cutoff ${cutoffV}V, max ${maxTimeMin}min`);
@@ -532,6 +612,7 @@ export class DeviceSession {
     const [iHi, iLo] = encodeBase240(currentA, EbcDivisors.current);
     const [vHi, vLo] = encodeBase240(cutoffV, EbcDivisors.setpointVoltage);
     const [tHi, tLo] = encodeBase240(maxTimeMin, 1);
+    this.armTimeLimit(maxTimeMin, true);
     await this.sendPayload([0x08, iHi, iLo, vHi, vLo, tHi, tLo]);
     logger.info(`Sent D-CC continue: ${currentA}A, cutoff ${cutoffV}V, max ${maxTimeMin}min`);
   }
@@ -546,6 +627,7 @@ export class DeviceSession {
     const [pHi, pLo] = encodeBase240(powerW, 1); // raw watts, no divisor
     const [vHi, vLo] = encodeBase240(cutoffV, EbcDivisors.setpointVoltage);
     const [tHi, tLo] = encodeBase240(maxTimeMin, 1); // raw minutes
+    this.armTimeLimit(maxTimeMin, true);
     this.setPending('startDCP', 'd-cp');
     await this.sendPayload([0x11, pHi, pLo, vHi, vLo, tHi, tLo]);
     logger.info(`Sent D-CP start: ${powerW}W, cutoff ${cutoffV}V, max ${maxTimeMin}min`);
@@ -558,6 +640,7 @@ export class DeviceSession {
     const [pHi, pLo] = encodeBase240(powerW, 1);
     const [vHi, vLo] = encodeBase240(cutoffV, EbcDivisors.setpointVoltage);
     const [tHi, tLo] = encodeBase240(maxTimeMin, 1);
+    this.armTimeLimit(maxTimeMin, true);
     await this.sendPayload([0x18, pHi, pLo, vHi, vLo, tHi, tLo]);
     logger.info(`Sent D-CP continue: ${powerW}W, cutoff ${cutoffV}V, max ${maxTimeMin}min`);
   }
@@ -567,32 +650,41 @@ export class DeviceSession {
    * @param currentA     Max charge current in amps
    * @param targetV      Target voltage (CV setpoint)
    * @param cutoffCurrentA  Minimum current to end charge
+   * @param maxTimeMin   Maximum time in minutes (0 = no limit). The C-CV frame
+   *                     has no time field, so this is enforced host-side only
+   *                     (matching EB Tester's client-side timer behavior).
    */
-  async startCCV(currentA: number, targetV: number, cutoffCurrentA: number): Promise<void> {
+  async startCCV(currentA: number, targetV: number, cutoffCurrentA: number, maxTimeMin: number = 0): Promise<void> {
     const [iHi, iLo] = encodeBase240(currentA, EbcDivisors.current);
     const [vHi, vLo] = encodeBase240(targetV, EbcDivisors.setpointVoltage);
     const [cHi, cLo] = encodeBase240(cutoffCurrentA, EbcDivisors.cutoffCurrent);
+    this.armTimeLimit(maxTimeMin, false);
     this.setPending('startCCV', 'c-cv');
     await this.sendPayload([0x21, iHi, iLo, vHi, vLo, cHi, cLo]);
-    logger.info(`Sent C-CV start: ${currentA}A, target ${targetV}V, cutoff ${cutoffCurrentA}A`);
+    logger.info(
+      `Sent C-CV start: ${currentA}A, target ${targetV}V, cutoff ${cutoffCurrentA}A, max ${maxTimeMin}min (host-enforced)`
+    );
   }
 
   /**
    * Continue C-CV charge with (optionally updated) setpoints
    */
-  async continueCCV(currentA: number, targetV: number, cutoffCurrentA: number): Promise<void> {
+  async continueCCV(currentA: number, targetV: number, cutoffCurrentA: number, maxTimeMin: number = 0): Promise<void> {
     const [iHi, iLo] = encodeBase240(currentA, EbcDivisors.current);
     const [vHi, vLo] = encodeBase240(targetV, EbcDivisors.setpointVoltage);
     const [cHi, cLo] = encodeBase240(cutoffCurrentA, EbcDivisors.cutoffCurrent);
+    this.armTimeLimit(maxTimeMin, false);
     await this.sendPayload([0x28, iHi, iLo, vHi, vLo, cHi, cLo]);
-    logger.info(`Sent C-CV continue: ${currentA}A, target ${targetV}V, cutoff ${cutoffCurrentA}A`);
+    logger.info(
+      `Sent C-CV continue: ${currentA}A, target ${targetV}V, cutoff ${cutoffCurrentA}A, max ${maxTimeMin}min (host-enforced)`
+    );
   }
 
   /** Send heartbeat (0x0A) with incrementing counter */
   async sendHeartbeat(): Promise<void> {
     this.heartbeatCounter = (this.heartbeatCounter + 1) % 240;
     const [cHi, cLo] = encodeBase240(this.heartbeatCounter, 1);
-    await this.sendPayload([0x0A, 0x00, cLo, 0x00, 0x00, 0x00, 0x00]);
+    await this.sendPayload([0x0a, 0x00, cLo, 0x00, 0x00, 0x00, 0x00]);
   }
 
   // ── Heartbeat management ──────────────────────────────────────
@@ -627,8 +719,9 @@ export class DeviceSession {
     this.watchdogTimer = setTimeout(() => {
       if (this.deviceResponsive) {
         this.deviceResponsive = false;
-        logger.warn('Device watchdog: no packets received in '
-          + `${this.WATCHDOG_TIMEOUT_MS / 1000}s — marking unresponsive`);
+        logger.warn(
+          'Device watchdog: no packets received in ' + `${this.WATCHDOG_TIMEOUT_MS / 1000}s — marking unresponsive`
+        );
         this.emit({ type: 'deviceUnresponsive' });
       }
     }, this.WATCHDOG_TIMEOUT_MS);
