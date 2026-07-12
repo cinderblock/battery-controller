@@ -430,12 +430,27 @@ export function ChartView() {
 
   const showTempChart = tempChartData.seriesInfo.length > 0 && (tempChartData.data[0]?.length ?? 0) > 0;
 
+  // ── Temp chart collapse — persisted; phones start collapsed since the
+  //    TopBar chips already show live temperatures ─────────────────────
+  const [tempsCollapsed, setTempsCollapsed] = useState<boolean>(() => {
+    const stored = localStorage.getItem('bc-temp-chart-collapsed');
+    if (stored !== null) return stored === '1';
+    return window.innerWidth <= 480;
+  });
+  const toggleTempsCollapsed = useCallback(() => {
+    setTempsCollapsed(prev => {
+      localStorage.setItem('bc-temp-chart-collapsed', prev ? '0' : '1');
+      return !prev;
+    });
+  }, []);
+  const tempChartVisible = showTempChart && !tempsCollapsed;
+
   // Align the stacked charts' plot areas: pad each side to the wider of the
   // two charts' axis gutters (axis sizes mirror Chart.tsx's axis configs)
   const mainLeftPx = (visibleMetrics.has('voltage') ? 65 : 0) + (visibleMetrics.has('current') ? 55 : 0);
   const mainRightPx = (visibleMetrics.has('power') ? 50 : 0) + (visibleMetrics.has('capacity') ? 55 : 0);
   const tempLeftPx = 55; // °C axis (left side)
-  const mainPadLeft = showTempChart ? Math.max(0, tempLeftPx - mainLeftPx) : 0;
+  const mainPadLeft = tempChartVisible ? Math.max(0, tempLeftPx - mainLeftPx) : 0;
   const mainPadRight = 0; // temp chart has no right axis
   const tempPadLeft = Math.max(0, mainLeftPx - tempLeftPx);
   const tempPadRight = mainRightPx;
@@ -588,15 +603,28 @@ export function ChartView() {
                   />
                 </div>
                 {showTempChart && (
-                  <div className="chart-stack-temps">
-                    <Chart
-                      data={tempChartData.data}
-                      seriesInfo={tempChartData.seriesInfo}
-                      syncKey="bc-time"
-                      padLeft={tempPadLeft}
-                      padRight={tempPadRight}
-                    />
-                  </div>
+                  <>
+                    <button
+                      type="button"
+                      className="chart-temps-toggle"
+                      onClick={toggleTempsCollapsed}
+                      title={tempsCollapsed ? 'Show the temperature chart' : 'Hide the temperature chart'}
+                    >
+                      <span className={`chart-temps-chevron${tempsCollapsed ? '' : ' open'}`}>{'▸'}</span>
+                      Temperatures
+                    </button>
+                    {tempChartVisible && (
+                      <div className="chart-stack-temps">
+                        <Chart
+                          data={tempChartData.data}
+                          seriesInfo={tempChartData.seriesInfo}
+                          syncKey="bc-time"
+                          padLeft={tempPadLeft}
+                          padRight={tempPadRight}
+                        />
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             ) : (

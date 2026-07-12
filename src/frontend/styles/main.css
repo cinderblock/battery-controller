@@ -546,7 +546,37 @@ body {
   flex: 0 0 26%;
   min-height: 110px;
   position: relative;
+}
+
+/* Slim collapse bar between the main and temperature charts */
+.chart-temps-toggle {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: var(--surface);
+  border: none;
   border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.chart-temps-toggle:hover {
+  color: var(--text);
+}
+
+.chart-temps-chevron {
+  display: inline-block;
+  font-size: 10px;
+  transition: transform 0.15s ease;
+}
+
+.chart-temps-chevron.open {
+  transform: rotate(90deg);
 }
 
 .chart-container {
@@ -2724,14 +2754,50 @@ body {
     grid-row: unset;
   }
 
+  /* Top bar: wrap into rows instead of clipping — row 1 is status + cycle
+     info, row 2 the live readings, row 3 the temperature chips */
   .top-bar {
-    padding: 2px 8px;
+    flex-wrap: wrap;
+    row-gap: 2px;
+    padding: 4px 8px;
+  }
+  .top-bar-cycle {
+    min-width: 0;
+  }
+  .top-bar-cycle .cycle-name {
+    max-width: 38vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .top-bar-readings {
-    gap: 8px;
+    order: 3;
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    overflow: visible;
+    margin-left: 0;
+    column-gap: 10px;
+    row-gap: 2px;
+  }
+  .top-bar-readings::after {
+    display: none; /* no clipping → no fade */
   }
   .reading-val {
     font-size: 12px;
+  }
+  /* Raw protocol echoes (set/cut/tMax/b8-9) are debug info — desktop only */
+  .reading-val.rv-raw {
+    display: none;
+  }
+  .temp-live-readings {
+    order: 4;
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  /* Temperature chart: shorter when expanded (it starts collapsed on phones) */
+  .chart-stack-temps {
+    flex: 0 0 140px;
+    min-height: 120px;
   }
   .bottom-bar {
     padding: 6px 8px;
