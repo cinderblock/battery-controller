@@ -431,7 +431,20 @@ export function Chart({
       },
       focus: { alpha: FOCUS_ALPHA },
       scales: {
-        x: { time: false },
+        x: {
+          time: false,
+          // Full (auto) view never narrower than 3 minutes — a just-started
+          // live run otherwise plots seconds-wide and jumps on every packet.
+          // Explicit user zooms (min/max inside the data extents) pass through.
+          range: (u: uPlot, min: number, max: number) => {
+            const xs = u.data?.[0];
+            const dataMin = xs?.[0];
+            const dataMax = xs?.[xs.length - 1];
+            const isFullView = dataMin == null || dataMax == null || (min <= dataMin && max >= dataMax);
+            if (isFullView && max - min < 180) return [min, min + 180] as [number, number];
+            return [min, max] as [number, number];
+          },
+        },
         V: scaleRangesRef.current.V
           ? { auto: false, range: [scaleRangesRef.current.V.min, scaleRangesRef.current.V.max] as [number, number] }
           : { auto: true },

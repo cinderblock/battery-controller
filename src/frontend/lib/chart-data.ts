@@ -151,7 +151,19 @@ export function buildRunColorMap(runs: ChartRun[], colorBy: ColorBy): Map<number
   return map;
 }
 
-const LIVE_COLOR = '#00e676'; // bright green — clearly distinct from historical palette
+/**
+ * Live-trace colors per metric: a brighter variant of the matching y-axis
+ * color (V axis #4fc3f7, A axis #81c784, W axis #ffb74d, Ah axis #ba68c8),
+ * so the live voltage trace reads as "the blue axis" and live current as
+ * "the green axis" at a glance.
+ */
+const LIVE_COLORS: Record<MetricKey, string> = {
+  voltage: '#40c4ff', // bright blue
+  current: '#00e676', // bright green
+  power: '#ffab40', // bright amber
+  capacity: '#e040fb', // bright purple
+  temperature: '#ff5252', // bright red (unused — temp chart colors per channel)
+};
 
 const METRIC_ALPHA: Record<MetricKey, number> = {
   voltage: 1.0,
@@ -488,7 +500,7 @@ export function mergeRunsForChart(
         runId: -1,
         metric,
         label: `Live ${metric}`,
-        color: colorWithAlpha(LIVE_COLOR, alpha),
+        color: colorWithAlpha(LIVE_COLORS[metric], alpha),
         isLive: true,
       });
     }
