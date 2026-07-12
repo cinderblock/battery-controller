@@ -75,4 +75,8 @@ Make the cycle tool fit for analyzing the high-IR cells (see
 - [x] StartModal variable inputs at launch
 - [x] Mark runs 97/101/105/109/125 excluded on live DB (done 2026-07-12, sqlite over ssh)
 - [x] Commit
-- [ ] Deploy after current cycle finishes
+- [x] Deployed 2026-07-12 mid-charge — recovery reopened run 127 with a 9s gap, cycle
+      program 19 resumed at step 5/15, IR backfill estimated 54/70 historical runs.
+      NOTE: program 19's remaining d-cc steps are pre-backoff 40A/2.8V (steps baked at
+      program creation) — they will 0Ah-trip until the program is restarted with the
+      Parametric Cycle preset.

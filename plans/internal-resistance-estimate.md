@@ -62,7 +62,8 @@ cell 5 discharge (run 125) ≈ 21.4 mΩ — consistent, so the method holds.
 - [x] Frontend badge in Cells modal
 - [x] Validate estimator against a copy of the live DB (offline, no deploy) — see table in session notes; cell 2 ≈ 2.6 mΩ, cell 3 ≈ 38 mΩ, cell 4 ≈ 8.6 mΩ, cell 5 ≈ 21 mΩ
 - [x] Commit
-- [ ] Deploy after the current cycle finishes (user action / later session)
+- [x] Deployed 2026-07-12 (mid-charge; recovery clean). Live per-cell IR:
+      F02731 2.83, F02726 7.55, F02729 21.28, F02732 40.63 mΩ.
 
 ## Findings / gotchas
 
