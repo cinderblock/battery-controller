@@ -7,7 +7,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, apiPost, type Cell, type CellGroup, type TempChannelConfig, type TestRun } from '../api-client.ts';
+import { api, apiPost, type Cell, type CellGroup, type TestRun } from '../api-client.ts';
 import { type StartTestParams, useSession } from '../hooks/useDeviceSession.ts';
 import type { SequenceStep } from '../lib/sequence-types.ts';
 import { parseSequenceDoc } from '../lib/sequence-types.ts';
@@ -117,7 +117,7 @@ function SequencePreview({ stepsJson }: { stepsJson: string }) {
 // ── Component ──────────────────────────────────────────────────────
 
 export function StartModal({ open, onClose, cellGroups, selectedGroupId }: StartModalProps) {
-  const { startTest, state } = useSession();
+  const { startTest } = useSession();
 
   // Wizard step
   const [wizardStep, setWizardStep] = useState<WizardStep>('scan');
@@ -146,9 +146,6 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [lastCell, setLastCell] = useState<Cell | null>(null);
-
-  // Temperature alert overrides (channelId → threshold °C)
-  const [tempAlertOverrides, setTempAlertOverrides] = useState<Record<string, string>>({});
 
   // Sequence variable overrides for this launch (variable key → value string)
   const [seqVarValues, setSeqVarValues] = useState<Record<string, string>>({});
@@ -190,19 +187,6 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
       })
       .catch(() => {})
       .finally(() => setSequencesLoaded(true));
-
-    // Pre-fill temp alert overrides from channel defaults
-    api<(TempChannelConfig & { lastTempC: number | null })[]>('/api/temp/channels')
-      .then(channels => {
-        const overrides: Record<string, string> = {};
-        for (const ch of channels) {
-          if (ch.enabled && ch.alertMaxC != null) {
-            overrides[ch.id] = String(ch.alertMaxC);
-          }
-        }
-        setTempAlertOverrides(overrides);
-      })
-      .catch(() => {});
   }, [wizardStep, sequencesLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Seed variable inputs when the selected sequence changes ───
@@ -343,16 +327,6 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
             params.voltageV = voltageV;
             params.cutoffCurrentA = cutoffCurrentA;
             break;
-        }
-
-        // Include temperature alert overrides
-        const overrides: Record<string, number> = {};
-        for (const [chId, val] of Object.entries(tempAlertOverrides)) {
-          const n = parseFloat(val);
-          if (!isNaN(n) && n > 0) overrides[chId] = n;
-        }
-        if (Object.keys(overrides).length > 0) {
-          params.tempAlertOverrides = overrides;
         }
 
         await startTest(params);
@@ -510,10 +484,10 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
           {configTab === 'sequence' && selectedSeqVariables.length > 0 && (
             <div className="wizard-seq-vars">
               <label className="wizard-section-label">Variables</label>
-              <div className="wizard-temp-alert-list">
+              <div className="wizard-seq-var-list">
                 {selectedSeqVariables.map(v => (
-                  <div key={v.key} className="wizard-temp-alert-row">
-                    <span className="wizard-temp-alert-name">{v.key}</span>
+                  <div key={v.key} className="wizard-seq-var-row">
+                    <span className="wizard-seq-var-name">{v.key}</span>
                     <input
                       type="number"
                       value={seqVarValues[v.key] ?? String(v.value)}
@@ -620,31 +594,6 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
                     />
                   </div>
                 )}
-              </div>
-            </div>
-          )}
-
-          {/* Temperature alert overrides */}
-          {Object.keys(tempAlertOverrides).length > 0 && (
-            <div className="wizard-temp-alerts">
-              <label className="wizard-section-label">Temperature Alerts</label>
-              <div className="wizard-temp-alert-list">
-                {Object.entries(tempAlertOverrides).map(([chId, val]) => {
-                  const ch = state.tempChannels.find(c => c.id === chId);
-                  return (
-                    <div key={chId} className="wizard-temp-alert-row">
-                      <span className="wizard-temp-alert-name">{ch?.name ?? chId.slice(-6)}</span>
-                      <input
-                        type="number"
-                        value={val}
-                        onChange={e => setTempAlertOverrides(prev => ({ ...prev, [chId]: e.target.value }))}
-                        step={0.5}
-                        min={0}
-                      />
-                      <span className="wizard-temp-alert-unit">°C</span>
-                    </div>
-                  );
-                })}
               </div>
             </div>
           )}

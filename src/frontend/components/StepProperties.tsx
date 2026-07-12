@@ -80,7 +80,7 @@ function ParamRow({
   color?: string;
   onChange: (value: number) => void;
   toggle?: React.ReactNode;
-  /** Variable-binding dropdown, rendered after the unit */
+  /** Variable-binding chips, rendered after the unit */
   bindControl?: React.ReactNode;
   /** Disable the number input (field is variable-bound) */
   disabled?: boolean;
@@ -108,9 +108,13 @@ function ParamRow({
   );
 }
 
-// ── Variable binding dropdown ──────────────────────────────────────
+// ── Variable binding chips ─────────────────────────────────────────
 
-function BindSelect({
+/**
+ * One chip per sequence variable, all visible at once — the active one is
+ * highlighted; tap to bind, tap again to unbind.
+ */
+function BindChips({
   bound,
   variables,
   onBind,
@@ -119,22 +123,32 @@ function BindSelect({
   variables: SequenceVariable[];
   onBind: (key: string | null) => void;
 }) {
+  const missing = bound !== undefined && !variables.some(v => v.key === bound);
   if (variables.length === 0 && !bound) return null;
   return (
-    <select
-      className={`sp-bind-select ${bound ? 'sp-bind-active' : ''}`}
-      value={bound ?? ''}
-      onChange={e => onBind(e.target.value || null)}
-      title={bound ? `Bound to variable "${bound}"` : 'Bind to a sequence variable'}
-    >
-      <option value="">{'—'}</option>
+    <span className="sp-bind-chips">
       {variables.map(v => (
-        <option key={v.key} value={v.key}>
+        <button
+          key={v.key}
+          type="button"
+          className={`sp-bind-chip ${bound === v.key ? 'sp-bind-chip-active' : ''}`}
+          title={bound === v.key ? `Unbind from "${v.key}"` : `Bind to variable "${v.key}" (${v.value})`}
+          onClick={() => onBind(bound === v.key ? null : v.key)}
+        >
           {v.key}
-        </option>
+        </button>
       ))}
-      {bound && !variables.some(v => v.key === bound) && <option value={bound}>{bound} (missing)</option>}
-    </select>
+      {missing && (
+        <button
+          type="button"
+          className="sp-bind-chip sp-bind-chip-missing"
+          title={`Bound to missing variable "${bound}" — tap to unbind`}
+          onClick={() => onBind(null)}
+        >
+          {bound}?
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -253,8 +267,8 @@ export function StepProperties({
     [step, path, onUpdate, variables]
   );
 
-  const bindSelect = (field: string) => (
-    <BindSelect bound={bind[field]} variables={variables} onBind={key => handleBind(field, key)} />
+  const bindChips = (field: string) => (
+    <BindChips bound={bind[field]} variables={variables} onBind={key => handleBind(field, key)} />
   );
 
   const toggleCRate = useCallback(() => {
@@ -311,7 +325,7 @@ export function StepProperties({
               toggle={
                 bind.currentA ? undefined : <CRateToggle useCRate={step.useCRate ?? false} onToggle={toggleCRate} />
               }
-              bindControl={bindSelect('currentA')}
+              bindControl={bindChips('currentA')}
             />
             {step.useCRate && <div className="sp-hint">{resolveCurrentA(step, capacityAh).toFixed(2)} A</div>}
             <ParamRow
@@ -324,7 +338,7 @@ export function StepProperties({
               color={color}
               disabled={!!bind.cutoffV}
               onChange={v => handleFieldChange('cutoffV', v)}
-              bindControl={bindSelect('cutoffV')}
+              bindControl={bindChips('cutoffV')}
             />
             <TimeRow
               label="Max time"
@@ -365,7 +379,7 @@ export function StepProperties({
               color={color}
               disabled={!!bind.powerW}
               onChange={v => handleFieldChange('powerW', v)}
-              bindControl={bindSelect('powerW')}
+              bindControl={bindChips('powerW')}
             />
             <ParamRow
               label="Cutoff V"
@@ -377,7 +391,7 @@ export function StepProperties({
               color={color}
               disabled={!!bind.cutoffV}
               onChange={v => handleFieldChange('cutoffV', v)}
-              bindControl={bindSelect('cutoffV')}
+              bindControl={bindChips('cutoffV')}
             />
             <TimeRow
               label="Max time"
@@ -402,7 +416,7 @@ export function StepProperties({
               toggle={
                 bind.currentA ? undefined : <CRateToggle useCRate={step.useCRate ?? false} onToggle={toggleCRate} />
               }
-              bindControl={bindSelect('currentA')}
+              bindControl={bindChips('currentA')}
             />
             {step.useCRate && <div className="sp-hint">{resolveCurrentA(step, capacityAh).toFixed(2)} A</div>}
             <ParamRow
@@ -415,7 +429,7 @@ export function StepProperties({
               color={color}
               disabled={!!bind.targetV}
               onChange={v => handleFieldChange('targetV', v)}
-              bindControl={bindSelect('targetV')}
+              bindControl={bindChips('targetV')}
             />
             <ParamRow
               label="Cutoff I"
@@ -427,7 +441,7 @@ export function StepProperties({
               color={color}
               disabled={!!bind.cutoffCurrentA}
               onChange={v => handleFieldChange('cutoffCurrentA', v)}
-              bindControl={bindSelect('cutoffCurrentA')}
+              bindControl={bindChips('cutoffCurrentA')}
             />
             <TimeRow
               label="Max time"

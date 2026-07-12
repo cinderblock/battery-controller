@@ -301,10 +301,6 @@ async function main() {
           activeRunId: recorder.getActiveRunId(),
           timestamp: Date.now(),
         });
-        // Clear per-run temp alert overrides when test ends
-        if (event.from !== 'idle' && event.to === 'idle') {
-          tempManager.clearRunAlertOverrides();
-        }
         break;
       case 'connected':
         broadcast('connected', { timestamp: Date.now() });
@@ -525,7 +521,6 @@ async function main() {
         maxTimeMin?: number;
         cellId?: number;
         barcode?: string;
-        tempAlertOverrides?: Record<string, number>;
       }>(req);
       if (!body?.mode) return errorResponse('Missing mode');
 
@@ -539,13 +534,6 @@ async function main() {
         recorder.setCellId(cell.id);
       } else if (body.cellId) {
         recorder.setCellId(body.cellId);
-      }
-
-      // Apply per-run temperature alert overrides
-      if (body.tempAlertOverrides && Object.keys(body.tempAlertOverrides).length > 0) {
-        tempManager.setRunAlertOverrides(new Map(Object.entries(body.tempAlertOverrides)));
-      } else {
-        tempManager.clearRunAlertOverrides();
       }
 
       // Record setpoints

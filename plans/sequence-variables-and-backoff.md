@@ -52,6 +52,17 @@ Make the cycle tool fit for analyzing the high-IR cells (see
 - Service restart mid-step rebuilds the exec plan from stored steps, reverting a
   backed-off current; it re-trips and backs off again within seconds. Self-healing.
 
+## Follow-up feedback applied (2026-07-12)
+
+- **No dropdowns**: the variable-binding `<select>` in StepProperties became visible
+  chips (one per variable, active highlighted, tap to bind/unbind). User: "dropdowns
+  hide the options that are there" — see memory `avoid-dropdowns-in-ui`.
+- **Temp limits are system-level only**: removed the per-run temperature alert
+  override layer entirely (StartModal section, `tempAlertOverrides` in
+  /api/test/start, `setRunAlertOverrides`/`clearRunAlertOverrides`/
+  `getEffectiveAlertMax` in TemperatureManager). Channel `alertMaxC`, edited in
+  Temperature Settings, is the single source of truth.
+
 ## Progress
 
 - [x] Plan

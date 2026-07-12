@@ -81,9 +81,6 @@ export class TemperatureManager {
   private polling = false;
   private runContext: RunContext | null = null;
 
-  /** Per-run alert threshold overrides (channelId → maxC). Set by test start, cleared on stop. */
-  private runAlertOverrides: Map<string, number> = new Map();
-
   /** Set the run context provider (call after TestRecorder is created) */
   setRunContext(ctx: RunContext): void {
     this.runContext = ctx;
@@ -127,23 +124,6 @@ export class TemperatureManager {
   /** Get the list of configured channels (for SSE snapshot) */
   getChannels(): ChannelConfig[] {
     return getTempConfig().channels;
-  }
-
-  /** Set per-run alert overrides (called at test start) */
-  setRunAlertOverrides(overrides: Map<string, number>): void {
-    this.runAlertOverrides = overrides;
-  }
-
-  /** Clear per-run alert overrides (called at test end) */
-  clearRunAlertOverrides(): void {
-    this.runAlertOverrides.clear();
-  }
-
-  /** Get effective alert threshold for a channel (run override > config default) */
-  getEffectiveAlertMax(channel: ChannelConfig): number | null {
-    const override = this.runAlertOverrides.get(channel.id);
-    if (override !== undefined) return override;
-    return channel.alertMaxC;
   }
 
   // ── Private ─────────────────────────────────────────────────────
@@ -276,13 +256,13 @@ export class TemperatureManager {
         name: ch.name,
         tempC,
         dTdtCPerMin: isFirstSample ? null : Math.round(dTdt * 100) / 100,
-        alertMaxC: this.getEffectiveAlertMax(ch),
+        alertMaxC: ch.alertMaxC,
       };
 
       readings.push(reading);
       this.lastReadings.set(ch.id, reading);
 
-      const alertMax = this.getEffectiveAlertMax(ch);
+      const alertMax = ch.alertMaxC;
       if (alertMax !== null && tempC > alertMax) {
         this.emit({
           type: 'tempAlert',

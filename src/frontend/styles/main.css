@@ -2503,19 +2503,32 @@ body {
   flex: 1;
 }
 
-.sp-bind-select {
-  max-width: 92px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-dim);
-  font-size: 11px;
-  padding: 2px;
+.sp-bind-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
-.sp-bind-select.sp-bind-active {
+.sp-bind-chip {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sp-bind-chip-active {
   color: var(--text);
   border-color: #a78bfa;
+  background: rgba(167, 139, 250, 0.15);
+}
+
+.sp-bind-chip-missing {
+  border-color: #ef5350;
+  color: #ef5350;
 }
 
 .sp-input:disabled {
@@ -3083,13 +3096,7 @@ body {
   color: #fff;
 }
 
-/* Temperature alerts in StartModal */
-.wizard-temp-alerts {
-  margin-top: 12px;
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
-}
-
+/* Sequence variables in StartModal */
 .wizard-seq-vars {
   margin-top: 12px;
   border-top: 1px solid var(--border);
@@ -3103,19 +3110,19 @@ body {
   margin-bottom: 6px;
 }
 
-.wizard-temp-alert-list {
+.wizard-seq-var-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.wizard-temp-alert-row {
+.wizard-seq-var-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.wizard-temp-alert-name {
+.wizard-seq-var-name {
   flex: 1;
   font-size: 13px;
   overflow: hidden;
@@ -3123,7 +3130,7 @@ body {
   white-space: nowrap;
 }
 
-.wizard-temp-alert-row input {
+.wizard-seq-var-row input {
   width: 70px;
   padding: 4px 6px;
   background: var(--bg);
@@ -3132,9 +3139,4 @@ body {
   color: var(--text);
   font-size: 13px;
   text-align: right;
-}
-
-.wizard-temp-alert-unit {
-  font-size: 12px;
-  color: var(--text-dim);
 }

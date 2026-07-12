@@ -111,7 +111,6 @@ export interface StartTestParams {
   maxTimeMin?: number;
   cellId?: number;
   barcode?: string;
-  tempAlertOverrides?: Record<string, number>;
 }
 
 export interface ContinueTestParams {
