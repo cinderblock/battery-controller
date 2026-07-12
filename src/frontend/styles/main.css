@@ -2794,6 +2794,12 @@ body {
   font-size: 13px;
 }
 
+.temp-section-hint {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin: 0 0 10px;
+}
+
 /* Channel list */
 .temp-channel-list {
   display: flex;

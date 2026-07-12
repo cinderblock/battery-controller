@@ -4,14 +4,14 @@
  * Allows users to:
  * - View all temperature channels (1-Wire auto-discovered + HTTP)
  * - Name/rename channels
- * - Set alert thresholds
+ * - Set stop limits (over-temp safety cutoffs that halt the test)
  * - Enable/disable channels
  * - Configure Home Assistant connection
  * - Browse HA entities and add as channels
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import { api, apiPost, type TempChannelConfig, type HaEntity } from '../api-client.ts';
+import { useCallback, useEffect, useState } from 'react';
+import { api, apiPost, type HaEntity, type TempChannelConfig } from '../api-client.ts';
 import { useSession } from '../hooks/useDeviceSession.ts';
 
 interface TempConfigResponse {
@@ -65,10 +65,12 @@ export function TemperatureSettings() {
   // Update last temps from session state
   useEffect(() => {
     if (state.tempReadings.length === 0) return;
-    setChannels(prev => prev.map(ch => {
-      const reading = state.tempReadings.find(r => r.channelId === ch.id);
-      return reading ? { ...ch, lastTempC: reading.tempC } : ch;
-    }));
+    setChannels(prev =>
+      prev.map(ch => {
+        const reading = state.tempReadings.find(r => r.channelId === ch.id);
+        return reading ? { ...ch, lastTempC: reading.tempC } : ch;
+      })
+    );
   }, [state.tempReadings]);
 
   const testHaConnection = async () => {
@@ -186,7 +188,14 @@ export function TemperatureSettings() {
   return (
     <div className="temp-settings">
       <header className="temp-settings-header">
-        <a href="/" onClick={e => { e.preventDefault(); window.history.pushState({}, '', '/'); window.dispatchEvent(new PopStateEvent('popstate')); }}>
+        <a
+          href="/"
+          onClick={e => {
+            e.preventDefault();
+            window.history.pushState({}, '', '/');
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }}
+        >
           &larr; Back
         </a>
         <h1>Temperature Sensors</h1>
@@ -195,10 +204,21 @@ export function TemperatureSettings() {
       {/* Channel list */}
       <section className="temp-section">
         <h2>Channels</h2>
-        {channels.length === 0 && <p className="temp-empty">No channels configured. Connect 1-Wire sensors or add Home Assistant entities below.</p>}
+        <p className="temp-section-hint">
+          A channel's stop limit is a safety cutoff, not a notification: exceeding it immediately stops the running test
+          and aborts any running sequence.
+        </p>
+        {channels.length === 0 && (
+          <p className="temp-empty">
+            No channels configured. Connect 1-Wire sensors or add Home Assistant entities below.
+          </p>
+        )}
         <div className="temp-channel-list">
           {channels.map(ch => (
-            <div key={ch.id} className={`temp-channel-card ${!ch.enabled ? 'disabled' : ''} ${ch.unpluggedAt ? 'unplugged' : ''}`}>
+            <div
+              key={ch.id}
+              className={`temp-channel-card ${!ch.enabled ? 'disabled' : ''} ${ch.unpluggedAt ? 'unplugged' : ''}`}
+            >
               {editingChannel === ch.id ? (
                 <div className="temp-channel-edit">
                   <input
@@ -212,7 +232,7 @@ export function TemperatureSettings() {
                     type="number"
                     value={editAlertMax}
                     onChange={e => setEditAlertMax(e.target.value)}
-                    placeholder="Alert threshold (°C)"
+                    placeholder="Stop limit (°C) — halts the test"
                     step="0.5"
                   />
                   <div className="temp-channel-edit-actions">
@@ -235,17 +255,24 @@ export function TemperatureSettings() {
                     {ch.lastTempC != null ? `${ch.lastTempC.toFixed(1)}°C` : '—'}
                   </div>
                   {ch.alertMaxC != null && (
-                    <div className="temp-channel-alert">
-                      Alert: {ch.alertMaxC}°C
+                    <div
+                      className="temp-channel-alert"
+                      title="Exceeding this stops the test and aborts any running sequence"
+                    >
+                      Stops at {ch.alertMaxC}°C
                     </div>
                   )}
                   <div className="temp-channel-actions">
-                    <button onClick={() => startEditing(ch)} title="Edit">Edit</button>
+                    <button onClick={() => startEditing(ch)} title="Edit">
+                      Edit
+                    </button>
                     <button onClick={() => toggleChannel(ch)} title={ch.enabled ? 'Disable' : 'Enable'}>
                       {ch.enabled ? 'Disable' : 'Enable'}
                     </button>
                     {ch.sourceType === 'http' && (
-                      <button onClick={() => deleteChannel(ch)} title="Delete" className="btn-danger">Delete</button>
+                      <button onClick={() => deleteChannel(ch)} title="Delete" className="btn-danger">
+                        Delete
+                      </button>
                     )}
                   </div>
                 </>
@@ -260,11 +287,15 @@ export function TemperatureSettings() {
         <h2>Home Assistant</h2>
         {haConfig ? (
           <div className="temp-ha-status">
-            <span>Connected to: <strong>{haConfig.baseUrl}</strong></span>
+            <span>
+              Connected to: <strong>{haConfig.baseUrl}</strong>
+            </span>
             <button onClick={browseHaEntities} disabled={haLoading}>
               {haLoading ? 'Loading...' : 'Browse Entities'}
             </button>
-            <button onClick={removeHaConnection} className="btn-danger">Disconnect</button>
+            <button onClick={removeHaConnection} className="btn-danger">
+              Disconnect
+            </button>
           </div>
         ) : (
           <div className="temp-ha-form">
@@ -290,9 +321,15 @@ export function TemperatureSettings() {
               <button onClick={testHaConnection} disabled={haTesting || !haBaseUrl || !haToken}>
                 {haTesting ? 'Testing...' : 'Test Connection'}
               </button>
-              <button onClick={saveHaConnection} disabled={!haBaseUrl || !haToken}>Save</button>
+              <button onClick={saveHaConnection} disabled={!haBaseUrl || !haToken}>
+                Save
+              </button>
             </div>
-            {haTestResult && <p className={`temp-ha-result ${haTestResult.startsWith('Connected') ? 'success' : 'error'}`}>{haTestResult}</p>}
+            {haTestResult && (
+              <p className={`temp-ha-result ${haTestResult.startsWith('Connected') ? 'success' : 'error'}`}>
+                {haTestResult}
+              </p>
+            )}
           </div>
         )}
 
@@ -305,7 +342,10 @@ export function TemperatureSettings() {
               {haEntities.map(e => (
                 <div key={e.entityId} className="temp-entity-row">
                   <span className="temp-entity-name">{e.name}</span>
-                  <span className="temp-entity-value">{e.state}{e.unit ? ` ${e.unit}` : ''}</span>
+                  <span className="temp-entity-value">
+                    {e.state}
+                    {e.unit ? ` ${e.unit}` : ''}
+                  </span>
                   <span className="temp-entity-id">{e.entityId}</span>
                   <button onClick={() => addHaEntity(e)}>Add</button>
                 </div>

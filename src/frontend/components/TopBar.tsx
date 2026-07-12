@@ -221,7 +221,7 @@ export function TopBar() {
 
         {/* Live temperature readings — click through to channel/limit settings */}
         {state.tempReadings.length > 0 && (
-          <a href="/temperature" className="temp-live-readings" title="Temperature channels & alert limits">
+          <a href="/temperature" className="temp-live-readings" title="Temperature channels & stop limits">
             {state.tempReadings.map(r => (
               <span
                 key={r.channelId}
