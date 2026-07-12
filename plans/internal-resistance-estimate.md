@@ -64,6 +64,12 @@ cell 5 discharge (run 125) ≈ 21.4 mΩ — consistent, so the method holds.
 - [x] Commit
 - [x] Deployed 2026-07-12 (mid-charge; recovery clean). Live per-cell IR:
       F02731 2.83, F02726 7.55, F02729 21.28, F02732 40.63 mΩ.
+- [x] Follow-up (same day): per-run ohmic heat estimate `test_runs.heat_mwh`
+      (∫I²R dt, trapezoidal, run's own IR), finalize hook + one-time backfill,
+      live "W heat" readout in TopBar from active cell IR. Deployed; backfill
+      confirmed. Findings: dev cell ~3% of charge energy → heat (4% discharge);
+      F02729 charge ≈ 9%; F02732's 14h charge ≈ 15% (56 Wh into heat).
+      Heat is a floor (ohmic + fast polarization only).
 
 ## Findings / gotchas
 
