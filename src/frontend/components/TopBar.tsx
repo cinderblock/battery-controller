@@ -77,7 +77,12 @@ const MODE_CLASSES: Record<DeviceMode, string> = {
   fault: 'badge-fault',
 };
 
-export function TopBar() {
+interface TopBarProps {
+  /** Active cell's latest DC-IR estimate (mΩ), for the live I²R heat readout */
+  activeCellIrMohm?: number | null;
+}
+
+export function TopBar({ activeCellIrMohm = null }: TopBarProps) {
   const { state } = useSession();
   const {
     wsConnected,
@@ -170,6 +175,24 @@ export function TopBar() {
               <span className="reading-num">{(reading.voltage * reading.current).toFixed(1)}</span>
               <span className="reading-unit">W</span>
             </span>
+            {isRunning &&
+              activeCellIrMohm != null &&
+              activeCellIrMohm > 0 &&
+              reading.current > 0.1 &&
+              (() => {
+                const heatW = (reading.current ** 2 * activeCellIrMohm) / 1000;
+                const totalW = reading.voltage * reading.current;
+                const pct = totalW > 0 ? Math.round((heatW / totalW) * 100) : 0;
+                return (
+                  <span
+                    className="reading-val rv-heat"
+                    title={`Estimated I²R heating from this cell's ${activeCellIrMohm.toFixed(1)} mΩ internal resistance — ${pct}% of the ${totalW.toFixed(0)} W at the terminals`}
+                  >
+                    <span className="reading-num">{heatW.toFixed(1)}</span>
+                    <span className="reading-unit">W heat</span>
+                  </span>
+                );
+              })()}
             <span className="reading-val rv-capacity">
               <span className="reading-num">{reading.capacityAh.toFixed(1)}</span>
               <span className="reading-unit">Ah</span>

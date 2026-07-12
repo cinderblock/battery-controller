@@ -230,6 +230,10 @@ body {
 .reading-num {
   color: var(--text);
 }
+
+.rv-heat .reading-num {
+  color: #ff8a65;
+}
 .reading-unit {
   color: var(--text-dim);
   font-size: 11px;

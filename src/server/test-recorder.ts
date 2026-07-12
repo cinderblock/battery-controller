@@ -17,10 +17,11 @@ import {
   getDataPointsForRun,
   insertDataPoint,
   reopenRun,
+  setRunHeatMwh,
   setRunIrMohm,
 } from './db.ts';
 import type { DecodedReading, DeviceMode, DeviceSession, SessionEvent } from './device-session.ts';
-import { estimateIrMohm, modeSupportsIr } from './ir-estimate.ts';
+import { estimateHeatMwh, estimateIrMohm, modeSupportsIr } from './ir-estimate.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -379,10 +380,16 @@ export class TestRecorder {
     );
 
     if (this.activeRunMode !== null && modeSupportsIr(this.activeRunMode)) {
-      const ir = estimateIrMohm(getDataPointsForRun(this.activeRunId), this.activeRunMode);
+      const points = getDataPointsForRun(this.activeRunId);
+      const ir = estimateIrMohm(points, this.activeRunMode);
       setRunIrMohm(this.activeRunId, ir?.mohm ?? 0);
+      const heat = ir ? estimateHeatMwh(points, ir.mohm) : null;
+      setRunHeatMwh(this.activeRunId, heat ?? 0);
       if (ir) {
-        logger.info(`Run #${this.activeRunId} IR estimate: ${ir.mohm.toFixed(2)} mΩ (${ir.samples} samples)`);
+        logger.info(
+          `Run #${this.activeRunId} IR estimate: ${ir.mohm.toFixed(2)} mΩ (${ir.samples} samples)` +
+            (heat !== null ? `, ohmic heat ≈ ${(heat / 1000).toFixed(1)} Wh` : '')
+        );
       }
     }
 

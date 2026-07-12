@@ -21,7 +21,15 @@ const MAX_STEP_DT_S = 5;
 const MAX_PLAUSIBLE_MOHM = 1000;
 
 import { logger } from '../utils/logger.ts';
-import { getDataPointsForRun, getRunsNeedingIr, getSetting, setRunIrMohm, setSetting } from './db.ts';
+import {
+  getDataPointsForRun,
+  getRunsNeedingHeat,
+  getRunsNeedingIr,
+  getSetting,
+  setRunHeatMwh,
+  setRunIrMohm,
+  setSetting,
+} from './db.ts';
 
 export interface IrEstimate {
   /** Median DC internal resistance in milliohms */
@@ -83,7 +91,36 @@ export function estimateIrMohm(points: IrPoint[], mode: string): IrEstimate | nu
   return { mohm: Math.round(median * 100) / 100, samples: samples.length };
 }
 
+// ── Ohmic heat estimation ───────────────────────────────────────────
+
+/**
+ * Integrate I²R over a run's data points → ohmic heat energy in mWh.
+ *
+ * Uses the run's DC-IR estimate, so this captures ohmic plus fast
+ * polarization losses at the ~2s timescale — the dominant loss term for
+ * these cells. It ignores slower overpotential and entropic heat, so
+ * treat it as a floor on total heating. Charge: stored ≈ energy − heat.
+ * Discharge: drawn from the cell ≈ energy + heat.
+ *
+ * Trapezoidal on I² between consecutive samples. Returns null when there
+ * aren't at least two points or R isn't usable.
+ */
+export function estimateHeatMwh(points: IrPoint[], irMohm: number): number | null {
+  if (!(irMohm > 0) || points.length < 2) return null;
+
+  const r = irMohm / 1000; // Ω
+  let joules = 0;
+  for (let i = 1; i < points.length; i++) {
+    const dt = points[i].elapsed_s - points[i - 1].elapsed_s;
+    if (dt <= 0) continue;
+    const iSqAvg = (points[i].current_a ** 2 + points[i - 1].current_a ** 2) / 2;
+    joules += iSqAvg * r * dt;
+  }
+  return Math.round((joules / 3.6) * 100) / 100; // J → mWh
+}
+
 const BACKFILL_KEY = 'ir_backfill_v1';
+const HEAT_BACKFILL_KEY = 'heat_backfill_v1';
 
 /**
  * One-time backfill: compute IR for runs recorded before the ir_mohm column
@@ -91,17 +128,31 @@ const BACKFILL_KEY = 'ir_backfill_v1';
  * current step (stored as 0) aren't rescanned on every boot.
  */
 export function backfillIrEstimates(): void {
-  if (getSetting(BACKFILL_KEY) === '1') return;
-
-  const runs = getRunsNeedingIr();
-  let estimated = 0;
-  for (const run of runs) {
-    const ir = estimateIrMohm(getDataPointsForRun(run.id), run.mode);
-    setRunIrMohm(run.id, ir?.mohm ?? 0);
-    if (ir) estimated++;
+  if (getSetting(BACKFILL_KEY) !== '1') {
+    const runs = getRunsNeedingIr();
+    let estimated = 0;
+    for (const run of runs) {
+      const ir = estimateIrMohm(getDataPointsForRun(run.id), run.mode);
+      setRunIrMohm(run.id, ir?.mohm ?? 0);
+      if (ir) estimated++;
+    }
+    setSetting(BACKFILL_KEY, '1');
+    if (runs.length > 0) {
+      logger.info(`IR backfill: estimated ${estimated} of ${runs.length} historical run(s)`);
+    }
   }
-  setSetting(BACKFILL_KEY, '1');
-  if (runs.length > 0) {
-    logger.info(`IR backfill: estimated ${estimated} of ${runs.length} historical run(s)`);
+
+  if (getSetting(HEAT_BACKFILL_KEY) !== '1') {
+    const runs = getRunsNeedingHeat();
+    let estimated = 0;
+    for (const run of runs) {
+      const heat = estimateHeatMwh(getDataPointsForRun(run.id), run.ir_mohm ?? 0);
+      setRunHeatMwh(run.id, heat ?? 0);
+      if (heat !== null) estimated++;
+    }
+    setSetting(HEAT_BACKFILL_KEY, '1');
+    if (runs.length > 0) {
+      logger.info(`Heat backfill: estimated ${estimated} of ${runs.length} historical run(s)`);
+    }
   }
 }

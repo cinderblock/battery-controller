@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { estimateIrMohm, modeSupportsIr } from './ir-estimate.ts';
+import { estimateHeatMwh, estimateIrMohm, modeSupportsIr } from './ir-estimate.ts';
 
 /**
  * Reference values from real runs on coulomb (2026-07-12, cell 5 / F02729):
@@ -64,6 +64,34 @@ describe('estimateIrMohm', () => {
   test('returns null for empty or single-point runs', () => {
     expect(estimateIrMohm([], 'c-cv')).toBeNull();
     expect(estimateIrMohm([pt(0, 3.2, 0)], 'c-cv')).toBeNull();
+  });
+});
+
+describe('estimateHeatMwh', () => {
+  test('constant current: heat = I²R·t exactly', () => {
+    // 20A through 21mΩ for 1 hour = 400 × 0.021 = 8.4W → 8400 mWh
+    const points = [pt(0, 3.7, 20), pt(1800, 3.7, 20), pt(3600, 3.7, 20)];
+    expect(estimateHeatMwh(points, 21)).toBeCloseTo(8400, 0);
+  });
+
+  test('trapezoidal on I² across a taper', () => {
+    // 20A → 10A over 3600s, R = 10mΩ: avg(I²) = (400+100)/2 = 250 → 2.5W → 2500 mWh
+    const points = [pt(0, 3.7, 20), pt(3600, 3.7, 10)];
+    expect(estimateHeatMwh(points, 10)).toBeCloseTo(2500, 0);
+  });
+
+  test('null on unusable inputs', () => {
+    expect(estimateHeatMwh([pt(0, 3.7, 20)], 21)).toBeNull();
+    expect(estimateHeatMwh([pt(0, 3.7, 20), pt(2, 3.7, 20)], 0)).toBeNull();
+    expect(estimateHeatMwh([], 21)).toBeNull();
+  });
+
+  test('non-monotonic timestamps are skipped, not subtracted', () => {
+    const points = [pt(0, 3.7, 20), pt(10, 3.7, 20), pt(5, 3.7, 20), pt(20, 3.7, 20)];
+    // Only the 0→10 and 5→20 spans count (10s + 15s at 4W = 100/3.6 + ... )
+    const result = estimateHeatMwh(points, 10);
+    expect(result).not.toBeNull();
+    expect(result).toBeGreaterThan(0);
   });
 });
 

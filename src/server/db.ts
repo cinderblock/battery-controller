@@ -251,6 +251,14 @@ function runMigrations(db: Database): void {
         ALTER TABLE test_runs ADD COLUMN ir_mohm REAL;
       `,
     },
+    {
+      version: 7,
+      sql: `
+        -- Ohmic heat energy per run (mWh), integrated I²R over the run's
+        -- data points using its ir_mohm. NULL = not computed, 0 = no estimate.
+        ALTER TABLE test_runs ADD COLUMN heat_mwh REAL;
+      `,
+    },
   ];
 
   for (const migration of migrations) {
@@ -400,6 +408,7 @@ export interface TestRun {
   exclude_from_capacity: number;
   cycle_iteration: number | null;
   ir_mohm: number | null;
+  heat_mwh: number | null;
 }
 
 export interface CreateTestRunParams {
@@ -483,6 +492,21 @@ export function setRunIrMohm(runId: number, irMohm: number): void {
 
 export function setRunExcludeFromCapacity(runId: number, exclude: boolean): void {
   getDb().run('UPDATE test_runs SET exclude_from_capacity = ? WHERE id = ?', [exclude ? 1 : 0, runId]);
+}
+
+export function setRunHeatMwh(runId: number, heatMwh: number): void {
+  getDb().run('UPDATE test_runs SET heat_mwh = ? WHERE id = ?', [heatMwh, runId]);
+}
+
+/** Ended runs with a usable IR but no heat estimate yet (one-time startup backfill) */
+export function getRunsNeedingHeat(): TestRun[] {
+  return getDb()
+    .query<TestRun, []>(
+      `SELECT * FROM test_runs
+     WHERE heat_mwh IS NULL AND ended_at IS NOT NULL
+       AND ir_mohm > 0 AND data_point_count >= 2`
+    )
+    .all();
 }
 
 /** Ended runs whose IR hasn't been computed yet (for the one-time startup backfill) */

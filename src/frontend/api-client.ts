@@ -286,6 +286,8 @@ export interface TestRun {
   data_point_count: number;
   /** DC internal-resistance estimate for this run (mΩ); 0 = no usable current step */
   ir_mohm?: number | null;
+  /** Ohmic heat energy (mWh) integrated as I²R over the run; 0 = no estimate */
+  heat_mwh?: number | null;
 }
 
 /**

@@ -477,6 +477,13 @@ export function ChartView() {
     [capacityRuns, referenceCurves, visibleRuns]
   );
 
+  // ── Active cell IR — drives the TopBar live I²R heat readout ────
+  const activeCellIrMohm = useMemo(() => {
+    const cellId = activeRunMeta?.cell_id;
+    if (cellId == null) return null;
+    return cells.find(c => c.id === cellId)?.latest_ir_mohm ?? null;
+  }, [activeRunMeta, cells]);
+
   // ── Threshold lines from active run setpoints ──────────────────
   const thresholds = useMemo((): ThresholdLine[] => {
     if (!activeRunMeta) return [];
@@ -582,7 +589,7 @@ export function ChartView() {
       <CameraView onVisibilityChange={handleCameraVisibility} />
 
       <div className="chart-view-body">
-        <TopBar />
+        <TopBar activeCellIrMohm={activeCellIrMohm} />
 
         <div className="chart-area">
           {loading ? (
