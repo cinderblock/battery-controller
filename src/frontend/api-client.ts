@@ -246,6 +246,8 @@ export interface Cell {
   cell_group_id: number | null;
   created_at: string;
   updated_at: string;
+  /** Most recent DC internal-resistance estimate (mΩ), null until a run yields one */
+  latest_ir_mohm?: number | null;
 }
 
 export interface CellGroup {
@@ -282,6 +284,8 @@ export interface TestRun {
   peak_current_a: number | null;
   duration_s: number | null;
   data_point_count: number;
+  /** DC internal-resistance estimate for this run (mΩ); 0 = no usable current step */
+  ir_mohm?: number | null;
 }
 
 /**
@@ -343,6 +347,9 @@ export interface CellCapacityStats {
   trendPctPerCycle: number | null;
   healthPct: number | null;
   nominalAh: number;
+  latestIrMohm: number | null;
+  medianIrMohm: number | null;
+  irRunCount: number;
   runs: RunCapacitySummary[];
 }
 

@@ -243,6 +243,14 @@ function runMigrations(db: Database): void {
         CREATE INDEX idx_temp_readings_run ON temperature_readings(run_id, channel_id);
       `,
     },
+    {
+      version: 6,
+      sql: `
+        -- DC internal-resistance estimate per run (milliohms).
+        -- NULL = not yet computed, 0 = computed but no usable current step, >0 = estimate.
+        ALTER TABLE test_runs ADD COLUMN ir_mohm REAL;
+      `,
+    },
   ];
 
   for (const migration of migrations) {
@@ -266,6 +274,8 @@ export interface Cell {
   cell_group_id: number | null;
   created_at: string;
   updated_at: string;
+  /** Most recent run's IR estimate (mΩ), when the cell has one — see getCells() */
+  latest_ir_mohm?: number | null;
 }
 
 export function upsertCell(barcode: string, label?: string | null): Cell {
@@ -285,7 +295,16 @@ export function upsertCell(barcode: string, label?: string | null): Cell {
 }
 
 export function getCells(): Cell[] {
-  return getDb().query<Cell, []>('SELECT * FROM cells ORDER BY label, barcode').all();
+  return getDb()
+    .query<Cell, []>(
+      `SELECT c.*, (
+       SELECT ir_mohm FROM test_runs
+       WHERE cell_id = c.id AND ir_mohm > 0
+       ORDER BY started_at DESC LIMIT 1
+     ) AS latest_ir_mohm
+     FROM cells c ORDER BY c.label, c.barcode`
+    )
+    .all();
 }
 
 export function getRecentCells(limit = 1): Cell[] {
@@ -380,6 +399,7 @@ export interface TestRun {
   data_point_count: number;
   exclude_from_capacity: number;
   cycle_iteration: number | null;
+  ir_mohm: number | null;
 }
 
 export interface CreateTestRunParams {
@@ -455,6 +475,31 @@ export function finalizeTestRun(
       runId,
     ]
   );
+}
+
+export function setRunIrMohm(runId: number, irMohm: number): void {
+  getDb().run('UPDATE test_runs SET ir_mohm = ? WHERE id = ?', [irMohm, runId]);
+}
+
+/** Ended runs whose IR hasn't been computed yet (for the one-time startup backfill) */
+export function getRunsNeedingIr(): TestRun[] {
+  return getDb()
+    .query<TestRun, []>(
+      `SELECT * FROM test_runs
+     WHERE ir_mohm IS NULL AND ended_at IS NOT NULL
+       AND mode IN ('c-cv', 'd-cc', 'd-cp') AND data_point_count >= 2`
+    )
+    .all();
+}
+
+/** IR estimates for a cell's runs, oldest first (only runs with a usable estimate) */
+export function getIrHistoryForCell(cellId: number): { id: number; started_at: string; ir_mohm: number }[] {
+  return getDb()
+    .query<{ id: number; started_at: string; ir_mohm: number }, [number]>(
+      `SELECT id, started_at, ir_mohm FROM test_runs
+     WHERE cell_id = ? AND ir_mohm > 0 ORDER BY started_at ASC`
+    )
+    .all(cellId);
 }
 
 export function getTestRunsForCell(cellId: number): TestRun[] {

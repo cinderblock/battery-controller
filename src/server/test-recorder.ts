@@ -14,10 +14,13 @@ import {
   createTestRun,
   finalizeTestRun,
   getDataPointCount,
+  getDataPointsForRun,
   insertDataPoint,
   reopenRun,
+  setRunIrMohm,
 } from './db.ts';
 import type { DecodedReading, DeviceMode, DeviceSession, SessionEvent } from './device-session.ts';
+import { estimateIrMohm, modeSupportsIr } from './ir-estimate.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -374,6 +377,14 @@ export class TestRecorder {
       stats.elapsedS,
       this.dataPointCount
     );
+
+    if (this.activeRunMode !== null && modeSupportsIr(this.activeRunMode)) {
+      const ir = estimateIrMohm(getDataPointsForRun(this.activeRunId), this.activeRunMode);
+      setRunIrMohm(this.activeRunId, ir?.mohm ?? 0);
+      if (ir) {
+        logger.info(`Run #${this.activeRunId} IR estimate: ${ir.mohm.toFixed(2)} mΩ (${ir.samples} samples)`);
+      }
+    }
 
     logger.info(
       `Finalized test run #${this.activeRunId}: ${endReason}, ` +

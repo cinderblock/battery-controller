@@ -60,6 +60,7 @@ import {
   stateByteToMode,
 } from './device-session.ts';
 import { fetchHaTemperatureEntities, testHaConnection } from './ha-adapter.ts';
+import { backfillIrEstimates } from './ir-estimate.ts';
 import { SerialManager } from './serial.ts';
 import { SettingsLock } from './settings-lock.ts';
 import { startTcpBridge, startTcpBridgeStandalone, type TcpBridge } from './tcp-bridge.ts';
@@ -165,6 +166,7 @@ async function main() {
     );
   }
   ensureDefaultCellGroup();
+  backfillIrEstimates();
 
   // ── Initialize serial + session + recorder ─────────────────────
   const serialManager = new SerialManager();

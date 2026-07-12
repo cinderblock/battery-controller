@@ -10,13 +10,14 @@
  */
 
 import {
-  getCompletedDischargeRuns,
+  type Cell,
   getAllCompletedDischargeRuns,
-  getCellsInGroup,
   getCellById,
   getCellGroup,
+  getCellsInGroup,
+  getCompletedDischargeRuns,
+  getIrHistoryForCell,
   type TestRun,
-  type Cell,
 } from './db.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -47,6 +48,12 @@ export interface CellCapacityStats {
   healthPct: number | null;
   /** Nominal capacity of the cell in Ah */
   nominalAh: number;
+  /** Most recent DC internal-resistance estimate (mΩ) */
+  latestIrMohm: number | null;
+  /** Median IR across all runs with an estimate (mΩ) */
+  medianIrMohm: number | null;
+  /** Number of runs contributing IR estimates */
+  irRunCount: number;
   /** Runs used for stats (id, date, capacity, discharge rate) */
   runs: RunSummary[];
 }
@@ -110,10 +117,10 @@ function peukertNormalize(
   measuredAh: number,
   measuredCurrentA: number,
   referenceCurrentA: number = REFERENCE_RATE_A,
-  exponent: number = PEUKERT_EXPONENT,
+  exponent: number = PEUKERT_EXPONENT
 ): number {
   if (measuredCurrentA <= 0 || referenceCurrentA <= 0) return measuredAh;
-  return measuredAh * Math.pow(measuredCurrentA / referenceCurrentA, exponent - 1);
+  return measuredAh * (measuredCurrentA / referenceCurrentA) ** (exponent - 1);
 }
 
 // ── Statistics helpers ────────────────────────────────────────────────
@@ -127,9 +134,7 @@ function median(values: number[]): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 !== 0
-    ? sorted[mid]
-    : (sorted[mid - 1] + sorted[mid]) / 2;
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 function stddev(values: number[]): number {
@@ -146,7 +151,10 @@ function stddev(values: number[]): number {
 function linearTrendSlope(values: number[]): number | null {
   if (values.length < 2) return null;
   const n = values.length;
-  let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+  let sumX = 0,
+    sumY = 0,
+    sumXY = 0,
+    sumXX = 0;
   for (let i = 0; i < n; i++) {
     sumX += i;
     sumY += values[i];
@@ -186,6 +194,11 @@ export function getCellCapacityStats(cellId: number): CellCapacityStats | null {
   const runSummaries = runs.map(runToSummary);
   const capacities = runSummaries.map(r => r.capacityAh);
 
+  // IR history spans charge and discharge runs alike (unlike capacity stats)
+  const irValues = getIrHistoryForCell(cellId).map(r => r.ir_mohm);
+  const latestIrMohm = irValues.length > 0 ? round2(irValues[irValues.length - 1]) : null;
+  const medianIrMohm = irValues.length > 0 ? round2(median(irValues)) : null;
+
   if (capacities.length === 0) {
     return {
       cellId,
@@ -202,6 +215,9 @@ export function getCellCapacityStats(cellId: number): CellCapacityStats | null {
       trendPctPerCycle: null,
       healthPct: null,
       nominalAh,
+      latestIrMohm,
+      medianIrMohm,
+      irRunCount: irValues.length,
       runs: [],
     };
   }
@@ -225,6 +241,9 @@ export function getCellCapacityStats(cellId: number): CellCapacityStats | null {
     trendPctPerCycle: trend !== null && m > 0 ? round3((trend / m) * 100) : null,
     healthPct: nominalAh > 0 ? round1((latest / nominalAh) * 100) : null,
     nominalAh,
+    latestIrMohm,
+    medianIrMohm,
+    irRunCount: irValues.length,
     runs: runSummaries,
   };
 }
@@ -246,9 +265,7 @@ export function getGroupFleetSummary(groupId: number): GroupFleetSummary | null 
   }
 
   const testedCells = cellStats.filter(c => c.runCount > 0);
-  const latestValues = testedCells
-    .map(c => c.latestAh)
-    .filter((v): v is number => v !== null);
+  const latestValues = testedCells.map(c => c.latestAh).filter((v): v is number => v !== null);
 
   // Sort by latest capacity ascending (weakest first)
   testedCells.sort((a, b) => (a.latestAh ?? 0) - (b.latestAh ?? 0));
@@ -265,15 +282,16 @@ export function getGroupFleetSummary(groupId: number): GroupFleetSummary | null 
     avgLatestAh: latestValues.length > 0 ? round2(mean(latestValues)) : null,
     minLatestAh: latestValues.length > 0 ? round2(Math.min(...latestValues)) : null,
     maxLatestAh: latestValues.length > 0 ? round2(Math.max(...latestValues)) : null,
-    weakestCell: weakest?.latestAh != null
-      ? { cellId: weakest.cellId, barcode: weakest.barcode, capacityAh: weakest.latestAh }
-      : null,
-    strongestCell: strongest?.latestAh != null
-      ? { cellId: strongest.cellId, barcode: strongest.barcode, capacityAh: strongest.latestAh }
-      : null,
-    avgHealthPct: testedCells.length > 0
-      ? round1(mean(testedCells.map(c => c.healthPct ?? 0).filter(v => v > 0)))
-      : null,
+    weakestCell:
+      weakest?.latestAh != null
+        ? { cellId: weakest.cellId, barcode: weakest.barcode, capacityAh: weakest.latestAh }
+        : null,
+    strongestCell:
+      strongest?.latestAh != null
+        ? { cellId: strongest.cellId, barcode: strongest.barcode, capacityAh: strongest.latestAh }
+        : null,
+    avgHealthPct:
+      testedCells.length > 0 ? round1(mean(testedCells.map(c => c.healthPct ?? 0).filter(v => v > 0))) : null,
     cells: cellStats,
   };
 }
@@ -307,6 +325,12 @@ export function getAllCellStats(): CellCapacityStats[] {
 
 // ── Rounding helpers ──────────────────────────────────────────────────
 
-function round1(n: number): number { return Math.round(n * 10) / 10; }
-function round2(n: number): number { return Math.round(n * 100) / 100; }
-function round3(n: number): number { return Math.round(n * 1000) / 1000; }
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+function round3(n: number): number {
+  return Math.round(n * 1000) / 1000;
+}

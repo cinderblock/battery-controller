@@ -835,6 +835,17 @@ body {
   white-space: nowrap;
 }
 
+.cell-select-ir {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
 .cell-select-empty {
   color: var(--text-dim);
   padding: 12px 4px;
