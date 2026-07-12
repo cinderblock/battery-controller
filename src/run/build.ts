@@ -159,7 +159,7 @@ export async function buildServer(): Promise<BuildOutput[]> {
   const zbarJsFile = Bun.file('./node_modules/zbar.wasm/dist/zbar.js');
   const zbarWasmFile = Bun.file('./node_modules/zbar.wasm/dist/zbar.wasm.bin');
 
-  if (await zbarJsFile.exists() && await zbarWasmFile.exists()) {
+  if ((await zbarJsFile.exists()) && (await zbarWasmFile.exists())) {
     serverOutputs.push({ filename: 'zbar.js', content: await zbarJsFile.text() });
     serverOutputs.push({ filename: 'zbar.wasm.bin', content: new Uint8Array(await zbarWasmFile.arrayBuffer()) });
     logger.info('  ✅ zbar.js + zbar.wasm.bin (static assets)');
@@ -274,7 +274,7 @@ export async function buildWatch(
         needsServer = true;
       }
 
-      if (normalized.match(/^utils\/.*\.ts$/)) {
+      if (normalized.match(/^(utils|shared)\/.*\.ts$/)) {
         // Shared dependencies - rebuild both
         needsSetup = true;
         needsServer = true;
@@ -320,7 +320,7 @@ export async function buildWatch(
       normalizedFilename.match(/^server\/.*\.ts$/) ||
       normalizedFilename.match(/^frontend\/.*\.(tsx?|css|html)$/) ||
       normalizedFilename.match(/^run\/.*\.ts$/) ||
-      normalizedFilename.match(/^utils\/.*\.ts$/)
+      normalizedFilename.match(/^(utils|shared)\/.*\.ts$/)
     ) {
       // Track changed files
       changedFiles.add(normalizedFilename);
@@ -378,7 +378,7 @@ export async function buildWatchInMemory(
         needsServer = true;
       }
 
-      if (normalized.match(/^utils\/.*\.ts$/)) {
+      if (normalized.match(/^(utils|shared)\/.*\.ts$/)) {
         // Shared dependencies - rebuild both
         needsSetup = true;
         needsServer = true;
@@ -423,7 +423,7 @@ export async function buildWatchInMemory(
       normalizedFilename.match(/^server\/.*\.ts$/) ||
       normalizedFilename.match(/^frontend\/.*\.(tsx?|css|html)$/) ||
       normalizedFilename.match(/^run\/.*\.ts$/) ||
-      normalizedFilename.match(/^utils\/.*\.ts$/)
+      normalizedFilename.match(/^(utils|shared)\/.*\.ts$/)
     ) {
       // Track changed files
       changedFiles.add(normalizedFilename);
@@ -458,7 +458,8 @@ export async function buildWatchInMemory(
 // Run as CLI if executed directly
 if (import.meta.main) {
   const watchMode = process.argv.includes('--watch');
-  const outDir = process.argv.find(arg => !arg.startsWith('--')) || 'build';
+  // argv[0]=bun, argv[1]=script — only actual CLI args can name the out dir
+  const outDir = process.argv.slice(2).find(arg => !arg.startsWith('--')) || 'build';
 
   if (watchMode) {
     buildWatch(outDir, files => {

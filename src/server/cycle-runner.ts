@@ -9,6 +9,7 @@
  * Cycle state persists to SQLite so it can resume after Pi reboots.
  */
 
+import { type FieldBindings, resolveSteps, type SequenceVariable } from '../shared/sequence-vars.ts';
 import { logger } from '../utils/logger.ts';
 import {
   type CycleProgram,
@@ -19,6 +20,7 @@ import {
   getCycleStepRun,
   getRunsForCycleProgram,
   parseUtcTimestamp,
+  setRunExcludeFromCapacity,
   updateCycleProgram,
 } from './db.ts';
 import type { DeviceMode, DeviceSession, SessionEvent } from './device-session.ts';
@@ -33,6 +35,9 @@ export interface StepDCC {
   maxTimeMin?: number;
   useCRate?: boolean;
   excludeFromCount?: boolean;
+  bind?: FieldBindings;
+  /** Retry at half current (down to minA) when the cutoff trips instantly */
+  backoff?: { minA: number };
 }
 
 export interface StepDCP {
@@ -41,6 +46,7 @@ export interface StepDCP {
   cutoffV: number;
   maxTimeMin?: number;
   excludeFromCount?: boolean;
+  bind?: FieldBindings;
 }
 
 export interface StepCCV {
@@ -51,6 +57,7 @@ export interface StepCCV {
   maxTimeMin?: number;
   useCRate?: boolean;
   excludeFromCount?: boolean;
+  bind?: FieldBindings;
 }
 
 export interface StepWait {
@@ -66,6 +73,38 @@ export interface StepLoop {
 }
 
 export type CycleStep = StepDCC | StepDCP | StepCCV | StepWait | StepLoop;
+
+// ── Discharge auto-backoff ─────────────────────────────────────────
+
+/** A run this short with this little capacity is an IR-sag trip, not a real discharge */
+const BACKOFF_TRIP_MAX_S = 30;
+const BACKOFF_TRIP_MAX_MAH = 100;
+/**
+ * End reasons a device-side voltage cutoff can produce. The EBC reports
+ * a cutoff trip by returning to idle, which the recorder logs as
+ * 'manual_stop' (confirmed on real trip runs); 'complete' covers devices
+ * that signal completion. Host-initiated stops (time_limit, temp_alert,
+ * step_ended_early) must NOT trigger a retry.
+ */
+const BACKOFF_END_REASONS = new Set(['manual_stop', 'complete']);
+
+/**
+ * Decide the reduced current for a backoff retry, or null when the step
+ * should advance normally (real discharge, host-initiated stop, or the
+ * current is already at/below the floor). Halves the current per retry,
+ * floored at minA.
+ */
+export function nextBackoffCurrentA(
+  run: { end_reason: string | null; duration_s: number | null; final_capacity_mah: number | null } | null,
+  currentA: number,
+  minA: number
+): number | null {
+  if (!run || run.end_reason === null || !BACKOFF_END_REASONS.has(run.end_reason)) return null;
+  if ((run.duration_s ?? Number.POSITIVE_INFINITY) >= BACKOFF_TRIP_MAX_S) return null;
+  if ((run.final_capacity_mah ?? Number.POSITIVE_INFINITY) >= BACKOFF_TRIP_MAX_MAH) return null;
+  if (!(minA > 0) || currentA <= minA + 1e-9) return null;
+  return Math.max(minA, currentA / 2);
+}
 
 /** Short parameter summary for a step, for timeline labels */
 function stepParamLabel(step: StepDCC | StepDCP | StepCCV | StepWait): string {
@@ -184,6 +223,9 @@ export class CycleRunner {
   private waitTimer: Timer | null = null;
   private waitEndTime: number | null = null;
 
+  // True between a step completing and the deferred advance/backoff decision
+  private advancePending = false;
+
   // Cached per-step metadata (updated as steps complete)
   private stepCapacities: (number | null)[] = [];
   private stepDurations: (number | null)[] = [];
@@ -276,7 +318,12 @@ export class CycleRunner {
   // ── Public commands ──────────────────────────────────────────
 
   /** Start running a sequence */
-  async startSequence(name: string, steps: CycleStep[], cellId: number | null = null): Promise<void> {
+  async startSequence(
+    name: string,
+    steps: CycleStep[],
+    cellId: number | null = null,
+    variables: SequenceVariable[] = []
+  ): Promise<void> {
     if (this.status === 'running' || this.status === 'waiting') {
       throw new Error('A cycle is already running');
     }
@@ -285,8 +332,10 @@ export class CycleRunner {
       throw new Error('Device is already running a test');
     }
 
-    // Migrate V1 format if needed
-    const migratedSteps = migrateV1Steps(steps);
+    // Migrate V1 format if needed, then bake variable values into the
+    // steps — the program stores resolved numbers so resume and the
+    // timeline endpoint never need to know about variables
+    const migratedSteps = resolveSteps(migrateV1Steps(steps), variables);
 
     // Look up cell capacity for C-rate resolution
     this.resolveCapacity(cellId);
@@ -554,7 +603,9 @@ export class CycleRunner {
 
     if (isIdle && this.execIndex < this.execPlan.length) {
       const currentStep = this.execPlan[this.execIndex].step;
-      if (currentStep.type !== 'wait') {
+      if (currentStep.type !== 'wait' && !this.advancePending) {
+        this.advancePending = true;
+
         // Capture final capacity and duration from device before advancing
         const reading = this.session.getReading();
         if (reading.capacityMah > 0 && this.stepCapacities[this.execIndex] === null) {
@@ -564,15 +615,66 @@ export class CycleRunner {
           this.stepDurations[this.execIndex] = Math.round(reading.elapsedS);
         }
 
-        // Test step completed — advance to next
         logger.info(`Cycle step ${this.execIndex + 1} completed (device → ${to})`);
-        this.recorder.clearCycleContext();
-        this.execIndex++;
         this.emit(); // push updated capacities to frontend
-        // Small delay before starting next step to let device settle
-        setTimeout(() => this.executeCurrentStep(), 2000);
+
+        // Small delay before advancing: lets the device settle, and the
+        // recorder (which subscribed after us, so it runs after this
+        // handler) has finalized the run row by then — advanceAfterStep
+        // needs it to decide whether to back off.
+        setTimeout(() => this.advanceAfterStep(), 2000);
       }
     }
+  }
+
+  /** Advance past a completed test step, or retry it at reduced current */
+  private advanceAfterStep(): void {
+    this.advancePending = false;
+    if (this.status !== 'running') return;
+
+    if (this.tryBackoff()) return;
+
+    this.recorder.clearCycleContext();
+    this.execIndex++;
+    this.emit();
+    this.executeCurrentStep();
+  }
+
+  /**
+   * When a backoff-enabled d-cc step tripped its cutoff instantly (voltage
+   * sag from internal resistance at high current, not a truly empty cell),
+   * exclude the junk run from capacity stats and retry the step at reduced
+   * current. Returns true when a retry was started.
+   */
+  private tryBackoff(): boolean {
+    const entry = this.execPlan[this.execIndex];
+    const step = entry?.step;
+    if (!step || step.type !== 'd-cc' || !step.backoff) return false;
+
+    const run = this.programId !== null ? getCycleStepRun(this.programId, this.execIndex) : null;
+    const currentA = this.resolveCurrentA(step);
+    const nextA = nextBackoffCurrentA(run, currentA, step.backoff.minA);
+    if (nextA === null) return false;
+
+    if (run) setRunExcludeFromCapacity(run.id, true);
+    this.stepCapacities[this.execIndex] = null;
+    this.stepDurations[this.execIndex] = null;
+
+    // Replace only this exec-plan entry — loop iterations share step
+    // objects, and the next iteration should start back at the
+    // programmed current (re-tripping costs only seconds)
+    this.execPlan[this.execIndex] = {
+      step: { ...step, currentA: nextA, useCRate: false },
+      cycleNum: entry.cycleNum,
+    };
+
+    logger.info(
+      `Cycle step ${this.execIndex + 1}: cutoff tripped instantly at ${currentA}A ` +
+        `(run #${run?.id}, ${run?.duration_s?.toFixed(1)}s, ${run?.final_capacity_mah ?? 0} mAh) — retrying at ${nextA}A`
+    );
+    this.emit();
+    this.executeCurrentStep();
+    return true;
   }
 
   private completeProgram(): void {
@@ -712,6 +814,7 @@ export class CycleRunner {
 
   private reset(): void {
     this.status = 'idle';
+    this.advancePending = false;
     this.programId = null;
     this.programName = null;
     this.cellName = null;

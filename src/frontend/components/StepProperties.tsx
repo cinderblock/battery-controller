@@ -6,8 +6,8 @@
  */
 
 import { useCallback, useRef } from 'react';
-import type { SequenceStep, StepPath } from '../lib/sequence-types.ts';
-import { estimateDurationH, resolveCurrentA, parseDurationInput, formatMinutes } from '../lib/sequence-types.ts';
+import type { SequenceStep, SequenceVariable, StepPath } from '../lib/sequence-types.ts';
+import { estimateDurationH, formatMinutes, parseDurationInput, resolveCurrentA } from '../lib/sequence-types.ts';
 
 // ── Props ──────────────────────────────────────────────────────────
 
@@ -15,6 +15,7 @@ interface StepPropertiesProps {
   step: SequenceStep;
   path: StepPath;
   capacityAh: number;
+  variables: SequenceVariable[];
   onUpdate: (path: StepPath, step: SequenceStep) => void;
   onRemove: (path: StepPath) => void;
   onDuplicate: (path: StepPath) => void;
@@ -26,16 +27,16 @@ const TYPE_LABELS: Record<string, string> = {
   'd-cc': 'Discharge (D-CC)',
   'd-cp': 'Discharge (D-CP)',
   'c-cv': 'Charge (C-CV)',
-  'wait': 'Wait / Rest',
-  'loop': 'Loop',
+  wait: 'Wait / Rest',
+  loop: 'Loop',
 };
 
 const TYPE_COLORS: Record<string, string> = {
   'd-cc': '#fb923c',
   'd-cp': '#ffb74d',
   'c-cv': '#60a5fa',
-  'wait': '#777',
-  'loop': '#a78bfa',
+  wait: '#777',
+  loop: '#a78bfa',
 };
 
 function formatDuration(hours: number): string {
@@ -67,6 +68,8 @@ function ParamRow({
   color,
   onChange,
   toggle,
+  bindControl,
+  disabled,
 }: {
   label: string;
   value: number;
@@ -77,6 +80,10 @@ function ParamRow({
   color?: string;
   onChange: (value: number) => void;
   toggle?: React.ReactNode;
+  /** Variable-binding dropdown, rendered after the unit */
+  bindControl?: React.ReactNode;
+  /** Disable the number input (field is variable-bound) */
+  disabled?: boolean;
 }) {
   return (
     <div className="sp-row">
@@ -89,15 +96,45 @@ function ParamRow({
           step={step}
           min={min}
           max={max}
+          disabled={disabled}
           onChange={e => onChange(parseFloat(e.target.value) || 0)}
         />
         <span className="sp-unit">{unit}</span>
         {toggle}
+        {bindControl}
       </div>
-      {color && min !== max && (
-        <SetpointBar value={value} min={min} max={max} color={color} />
-      )}
+      {color && min !== max && <SetpointBar value={value} min={min} max={max} color={color} />}
     </div>
+  );
+}
+
+// ── Variable binding dropdown ──────────────────────────────────────
+
+function BindSelect({
+  bound,
+  variables,
+  onBind,
+}: {
+  bound: string | undefined;
+  variables: SequenceVariable[];
+  onBind: (key: string | null) => void;
+}) {
+  if (variables.length === 0 && !bound) return null;
+  return (
+    <select
+      className={`sp-bind-select ${bound ? 'sp-bind-active' : ''}`}
+      value={bound ?? ''}
+      onChange={e => onBind(e.target.value || null)}
+      title={bound ? `Bound to variable "${bound}"` : 'Bind to a sequence variable'}
+    >
+      <option value="">{'—'}</option>
+      {variables.map(v => (
+        <option key={v.key} value={v.key}>
+          {v.key}
+        </option>
+      ))}
+      {bound && !variables.some(v => v.key === bound) && <option value={bound}>{bound} (missing)</option>}
+    </select>
   );
 }
 
@@ -105,16 +142,19 @@ function ParamRow({
 function TimeRow({ label, minutes, onChange }: { label: string; minutes: number; onChange: (min: number) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const commit = useCallback((raw: string) => {
-    const parsed = parseDurationInput(raw);
-    if (parsed !== null) {
-      onChange(parsed);
-      if (inputRef.current) inputRef.current.value = formatMinutes(parsed);
-    } else {
-      // Reset to current value on invalid input
-      if (inputRef.current) inputRef.current.value = formatMinutes(minutes);
-    }
-  }, [minutes, onChange]);
+  const commit = useCallback(
+    (raw: string) => {
+      const parsed = parseDurationInput(raw);
+      if (parsed !== null) {
+        onChange(parsed);
+        if (inputRef.current) inputRef.current.value = formatMinutes(parsed);
+      } else {
+        // Reset to current value on invalid input
+        if (inputRef.current) inputRef.current.value = formatMinutes(minutes);
+      }
+    },
+    [minutes, onChange]
+  );
 
   return (
     <div className="sp-row">
@@ -129,7 +169,10 @@ function TimeRow({ label, minutes, onChange }: { label: string; minutes: number;
           placeholder="e.g. 8h 30m"
           onBlur={e => commit(e.target.value)}
           onKeyDown={e => {
-            if (e.key === 'Enter') { e.preventDefault(); commit((e.target as HTMLInputElement).value); }
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commit((e.target as HTMLInputElement).value);
+            }
           }}
         />
       </div>
@@ -158,6 +201,7 @@ export function StepProperties({
   step,
   path,
   capacityAh,
+  variables,
   onUpdate,
   onRemove,
   onDuplicate,
@@ -165,10 +209,53 @@ export function StepProperties({
   const color = TYPE_COLORS[step.type] ?? '#888';
   const duration = estimateDurationH(step, capacityAh);
 
-  const handleFieldChange = useCallback((field: string, value: number | boolean) => {
-    const updated = { ...step, [field]: value } as SequenceStep;
-    onUpdate(path, updated);
-  }, [step, path, onUpdate]);
+  const handleFieldChange = useCallback(
+    (field: string, value: number | boolean) => {
+      const updated = { ...step, [field]: value } as SequenceStep;
+      onUpdate(path, updated);
+    },
+    [step, path, onUpdate]
+  );
+
+  // ── Variable bindings ─────────────────────────────────────────
+  const bind = step.type !== 'loop' && step.type !== 'wait' ? (step.bind ?? {}) : {};
+
+  /** Displayed value: the bound variable's value, else the stored number */
+  const fieldValue = useCallback(
+    (field: string, stored: number): number => {
+      const key = bind[field];
+      const v = variables.find(x => x.key === key)?.value;
+      return typeof v === 'number' ? v : stored;
+    },
+    [bind, variables]
+  );
+
+  const handleBind = useCallback(
+    (field: string, key: string | null) => {
+      if (step.type === 'loop' || step.type === 'wait') return;
+      const newBind = { ...(step.bind ?? {}) };
+      if (key === null) {
+        delete newBind[field];
+      } else {
+        newBind[field] = key;
+      }
+      const updated: Record<string, unknown> = {
+        ...(step as unknown as Record<string, unknown>),
+        bind: Object.keys(newBind).length > 0 ? newBind : undefined,
+      };
+      // Snap the stored number to the variable so unbinding later keeps the value
+      const v = variables.find(x => x.key === key)?.value;
+      if (key !== null && typeof v === 'number') {
+        updated[field] = v;
+      }
+      onUpdate(path, updated as unknown as SequenceStep);
+    },
+    [step, path, onUpdate, variables]
+  );
+
+  const bindSelect = (field: string) => (
+    <BindSelect bound={bind[field]} variables={variables} onBind={key => handleBind(field, key)} />
+  );
 
   const toggleCRate = useCallback(() => {
     if (step.type !== 'd-cc' && step.type !== 'c-cv') return;
@@ -183,9 +270,10 @@ export function StepProperties({
   }, [step, path, capacityAh, onUpdate]);
 
   // Display values for current field
-  const currentDisplay = (step.type === 'd-cc' || step.type === 'c-cv')
-    ? { value: step.currentA, unit: step.useCRate ? 'C' : 'A', max: step.useCRate ? 2 : 40 }
-    : null;
+  const currentDisplay =
+    step.type === 'd-cc' || step.type === 'c-cv'
+      ? { value: step.currentA, unit: step.useCRate ? 'C' : 'A', max: step.useCRate ? 2 : 40 }
+      : null;
 
   return (
     <div className="step-properties">
@@ -197,18 +285,10 @@ export function StepProperties({
           {step.type === 'loop' ? `\u00D7${step.count}` : `~${formatDuration(duration)}`}
         </span>
         <div className="step-properties-actions">
-          <button
-            className="step-prop-btn"
-            onClick={() => onDuplicate(path)}
-            title="Duplicate step"
-          >
+          <button className="step-prop-btn" onClick={() => onDuplicate(path)} title="Duplicate step">
             {'\u2398'}
           </button>
-          <button
-            className="step-prop-btn step-prop-btn-danger"
-            onClick={() => onRemove(path)}
-            title="Delete step"
-          >
+          <button className="step-prop-btn step-prop-btn-danger" onClick={() => onRemove(path)} title="Delete step">
             {'\u2715'}
           </button>
         </div>
@@ -220,33 +300,56 @@ export function StepProperties({
           <>
             <ParamRow
               label="Current"
-              value={currentDisplay.value}
+              value={fieldValue('currentA', currentDisplay.value)}
               unit={currentDisplay.unit}
               step={0.01}
               min={0}
               max={currentDisplay.max}
               color={color}
+              disabled={!!bind.currentA}
               onChange={v => handleFieldChange('currentA', v)}
-              toggle={<CRateToggle useCRate={step.useCRate ?? false} onToggle={toggleCRate} />}
+              toggle={
+                bind.currentA ? undefined : <CRateToggle useCRate={step.useCRate ?? false} onToggle={toggleCRate} />
+              }
+              bindControl={bindSelect('currentA')}
             />
-            {step.useCRate && (
-              <div className="sp-hint">{resolveCurrentA(step, capacityAh).toFixed(2)} A</div>
-            )}
+            {step.useCRate && <div className="sp-hint">{resolveCurrentA(step, capacityAh).toFixed(2)} A</div>}
             <ParamRow
               label="Cutoff V"
-              value={step.cutoffV}
+              value={fieldValue('cutoffV', step.cutoffV)}
               unit="V"
               step={0.01}
               min={2.0}
               max={5.0}
               color={color}
+              disabled={!!bind.cutoffV}
               onChange={v => handleFieldChange('cutoffV', v)}
+              bindControl={bindSelect('cutoffV')}
             />
             <TimeRow
               label="Max time"
               minutes={step.maxTimeMin ?? 0}
-              onChange={v => handleFieldChange('maxTimeMin', v || undefined as any)}
+              onChange={v => handleFieldChange('maxTimeMin', v || (undefined as any))}
             />
+            <label className="sp-exclude">
+              <input
+                type="checkbox"
+                checked={!!step.backoff}
+                onChange={e => onUpdate(path, { ...step, backoff: e.target.checked ? { minA: 10 } : undefined })}
+              />
+              <span>Auto-backoff: retry at half current when the cutoff trips instantly</span>
+            </label>
+            {step.backoff && (
+              <ParamRow
+                label="Backoff floor"
+                value={step.backoff.minA}
+                unit="A"
+                step={1}
+                min={1}
+                max={40}
+                onChange={v => onUpdate(path, { ...step, backoff: { minA: v } })}
+              />
+            )}
           </>
         )}
 
@@ -254,28 +357,32 @@ export function StepProperties({
           <>
             <ParamRow
               label="Power"
-              value={step.powerW}
+              value={fieldValue('powerW', step.powerW)}
               unit="W"
               step={1}
               min={0}
               max={350}
               color={color}
+              disabled={!!bind.powerW}
               onChange={v => handleFieldChange('powerW', v)}
+              bindControl={bindSelect('powerW')}
             />
             <ParamRow
               label="Cutoff V"
-              value={step.cutoffV}
+              value={fieldValue('cutoffV', step.cutoffV)}
               unit="V"
               step={0.01}
               min={2.0}
               max={5.0}
               color={color}
+              disabled={!!bind.cutoffV}
               onChange={v => handleFieldChange('cutoffV', v)}
+              bindControl={bindSelect('cutoffV')}
             />
             <TimeRow
               label="Max time"
               minutes={step.maxTimeMin ?? 0}
-              onChange={v => handleFieldChange('maxTimeMin', v || undefined as any)}
+              onChange={v => handleFieldChange('maxTimeMin', v || (undefined as any))}
             />
           </>
         )}
@@ -284,42 +391,48 @@ export function StepProperties({
           <>
             <ParamRow
               label="Current"
-              value={currentDisplay.value}
+              value={fieldValue('currentA', currentDisplay.value)}
               unit={currentDisplay.unit}
               step={0.01}
               min={0}
               max={currentDisplay.max}
               color={color}
+              disabled={!!bind.currentA}
               onChange={v => handleFieldChange('currentA', v)}
-              toggle={<CRateToggle useCRate={step.useCRate ?? false} onToggle={toggleCRate} />}
+              toggle={
+                bind.currentA ? undefined : <CRateToggle useCRate={step.useCRate ?? false} onToggle={toggleCRate} />
+              }
+              bindControl={bindSelect('currentA')}
             />
-            {step.useCRate && (
-              <div className="sp-hint">{resolveCurrentA(step, capacityAh).toFixed(2)} A</div>
-            )}
+            {step.useCRate && <div className="sp-hint">{resolveCurrentA(step, capacityAh).toFixed(2)} A</div>}
             <ParamRow
               label="Target V"
-              value={step.targetV}
+              value={fieldValue('targetV', step.targetV)}
               unit="V"
               step={0.001}
               min={2.0}
               max={5.0}
               color={color}
+              disabled={!!bind.targetV}
               onChange={v => handleFieldChange('targetV', v)}
+              bindControl={bindSelect('targetV')}
             />
             <ParamRow
               label="Cutoff I"
-              value={step.cutoffCurrentA}
+              value={fieldValue('cutoffCurrentA', step.cutoffCurrentA)}
               unit="A"
               step={0.01}
               min={0}
               max={40}
               color={color}
+              disabled={!!bind.cutoffCurrentA}
               onChange={v => handleFieldChange('cutoffCurrentA', v)}
+              bindControl={bindSelect('cutoffCurrentA')}
             />
             <TimeRow
               label="Max time"
               minutes={step.maxTimeMin ?? 0}
-              onChange={v => handleFieldChange('maxTimeMin', v || undefined as any)}
+              onChange={v => handleFieldChange('maxTimeMin', v || (undefined as any))}
             />
           </>
         )}

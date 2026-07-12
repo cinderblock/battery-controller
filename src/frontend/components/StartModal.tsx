@@ -6,11 +6,12 @@
  *   simple modes (D-CC / D-CP / C-CV) as secondary option, cell notes field.
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
-import { useSession, type StartTestParams } from '../hooks/useDeviceSession.ts';
-import { api, apiPost, type CellGroup, type Cell, type TestRun, type TempChannelConfig } from '../api-client.ts';
-import { BarcodeScanner } from './BarcodeScanner.tsx';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { api, apiPost, type Cell, type CellGroup, type TempChannelConfig, type TestRun } from '../api-client.ts';
+import { type StartTestParams, useSession } from '../hooks/useDeviceSession.ts';
 import type { SequenceStep } from '../lib/sequence-types.ts';
+import { parseSequenceDoc } from '../lib/sequence-types.ts';
+import { BarcodeScanner } from './BarcodeScanner.tsx';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -34,12 +35,18 @@ type ConfigTab = 'sequence' | 'manual';
 
 // ── Defaults per mode ──────────────────────────────────────────────
 
-const DEFAULTS: Record<TestMode, {
-  currentA: number; voltageV: number; powerW: number;
-  cutoffV: number; cutoffCurrentA: number;
-}> = {
-  'd-cc': { currentA: 40.0, voltageV: 0, powerW: 0, cutoffV: 2.50, cutoffCurrentA: 0 },
-  'd-cp': { currentA: 0, voltageV: 0, powerW: 100, cutoffV: 2.50, cutoffCurrentA: 0 },
+const DEFAULTS: Record<
+  TestMode,
+  {
+    currentA: number;
+    voltageV: number;
+    powerW: number;
+    cutoffV: number;
+    cutoffCurrentA: number;
+  }
+> = {
+  'd-cc': { currentA: 40.0, voltageV: 0, powerW: 0, cutoffV: 2.5, cutoffCurrentA: 0 },
+  'd-cp': { currentA: 0, voltageV: 0, powerW: 100, cutoffV: 2.5, cutoffCurrentA: 0 },
   'c-cv': { currentA: 40.0, voltageV: 3.65, powerW: 0, cutoffV: 0, cutoffCurrentA: 2.0 },
 };
 
@@ -49,23 +56,20 @@ const STEP_COLORS: Record<string, string> = {
   'c-cv': 'var(--charge-color)',
   'd-cc': 'var(--discharge-color)',
   'd-cp': '#ff7043',
-  'wait': '#666',
+  wait: '#666',
 };
 
 const STEP_LABELS: Record<string, string> = {
   'c-cv': 'Charge',
   'd-cc': 'Disch',
   'd-cp': 'D-CP',
-  'wait': 'Wait',
+  wait: 'Wait',
 };
 
 // ── Sequence step preview ─────────────────────────────────────────
 
 function SequencePreview({ stepsJson }: { stepsJson: string }) {
-  const steps: SequenceStep[] = useMemo(() => {
-    try { return JSON.parse(stepsJson); }
-    catch { return []; }
-  }, [stepsJson]);
+  const steps: SequenceStep[] = useMemo(() => parseSequenceDoc<SequenceStep>(stepsJson).steps, [stepsJson]);
 
   // Flatten for display (expand loops once)
   const flat: { type: string; label: string; color: string; loopCount?: number }[] = [];
@@ -93,16 +97,15 @@ function SequencePreview({ stepsJson }: { stepsJson: string }) {
     <div className="seq-preview">
       {flat.map((s, i) => {
         if (s.type === 'loop-start') {
-          return <span key={i} className="seq-preview-loop-badge">{s.label}</span>;
+          return (
+            <span key={i} className="seq-preview-loop-badge">
+              {s.label}
+            </span>
+          );
         }
         if (s.type === 'loop-end') return null;
         return (
-          <span
-            key={i}
-            className="seq-preview-block"
-            style={{ background: s.color }}
-            title={s.label}
-          >
+          <span key={i} className="seq-preview-block" style={{ background: s.color }} title={s.label}>
             {s.label}
           </span>
         );
@@ -147,6 +150,9 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
   // Temperature alert overrides (channelId → threshold °C)
   const [tempAlertOverrides, setTempAlertOverrides] = useState<Record<string, string>>({});
 
+  // Sequence variable overrides for this launch (variable key → value string)
+  const [seqVarValues, setSeqVarValues] = useState<Record<string, string>>({});
+
   const selectedGroup = cellGroups.find(g => g.id === selectedGroupId) ?? cellGroups[0];
   const capacityAh = selectedGroup ? selectedGroup.nominal_capacity_mah / 1000 : 200;
 
@@ -165,7 +171,9 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
 
       // Fetch most recently used cell for quick-continue
       api<Cell[]>('/api/cells/recent')
-        .then(cells => { if (cells[0]) setLastCell(cells[0]); })
+        .then(cells => {
+          if (cells[0]) setLastCell(cells[0]);
+        })
         .catch(() => {});
     }
   }, [open]);
@@ -197,6 +205,18 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
       .catch(() => {});
   }, [wizardStep, sequencesLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Seed variable inputs when the selected sequence changes ───
+  const selectedSeqVariables = useMemo(() => {
+    const seq = sequences.find(s => s.id === selectedSequenceId);
+    return seq ? parseSequenceDoc(seq.steps_json).variables : [];
+  }, [sequences, selectedSequenceId]);
+
+  useEffect(() => {
+    const init: Record<string, string> = {};
+    for (const v of selectedSeqVariables) init[v.key] = String(v.value);
+    setSeqVarValues(init);
+  }, [selectedSeqVariables]);
+
   // ── Look up cell info when barcode changes ───────────────────
   const lookupCell = useCallback(async (bc: string) => {
     if (!bc.trim()) {
@@ -217,10 +237,13 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
 
   // ── Handlers ─────────────────────────────────────────────────
 
-  const handleScan = useCallback((scannedBarcode: string) => {
-    setBarcode(scannedBarcode);
-    lookupCell(scannedBarcode).then(() => setWizardStep('configure'));
-  }, [lookupCell]);
+  const handleScan = useCallback(
+    (scannedBarcode: string) => {
+      setBarcode(scannedBarcode);
+      lookupCell(scannedBarcode).then(() => setWizardStep('configure'));
+    },
+    [lookupCell]
+  );
 
   const handleSkipScan = useCallback(() => {
     if (barcode.trim()) {
@@ -263,7 +286,9 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
           method: 'PATCH',
           body: JSON.stringify({ notes: cellNotes }),
         });
-      } catch { /* best-effort */ }
+      } catch {
+        /* best-effort */
+      }
     }
   }, [cellInfo, cellNotes, notesDirty]);
 
@@ -277,16 +302,26 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
 
       if (configTab === 'sequence') {
         const seq = sequences.find(s => s.id === selectedSequenceId);
-        if (!seq) { setError('No sequence selected'); setSubmitting(false); return; }
+        if (!seq) {
+          setError('No sequence selected');
+          setSubmitting(false);
+          return;
+        }
 
-        const steps = JSON.parse(seq.steps_json);
+        const doc = parseSequenceDoc<SequenceStep>(seq.steps_json);
         let cellId: number | undefined;
         if (barcode.trim()) {
           const cell = await apiPost<{ id: number }>('/api/cells', { barcode: barcode.trim() });
           cellId = cell.id;
         }
 
-        await apiPost('/api/cycle/start', { name: seq.name, steps, cellId });
+        // Variable values for this launch: edited value, or the saved default
+        const variables = doc.variables.map(v => {
+          const parsed = parseFloat(seqVarValues[v.key] ?? '');
+          return { key: v.key, value: Number.isFinite(parsed) ? parsed : v.value };
+        });
+
+        await apiPost('/api/cycle/start', { name: seq.name, steps: doc.steps, cellId, variables });
         onClose();
       } else {
         const actualCurrentA = useCRate ? currentA * capacityAh : currentA;
@@ -328,7 +363,24 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
     } finally {
       setSubmitting(false);
     }
-  }, [configTab, barcode, currentA, voltageV, powerW, cutoffV, cutoffCurrentA, useCRate, capacityAh, startTest, onClose, sequences, selectedSequenceId, mode, saveNotesIfDirty]);
+  }, [
+    configTab,
+    barcode,
+    currentA,
+    voltageV,
+    powerW,
+    cutoffV,
+    cutoffCurrentA,
+    useCRate,
+    capacityAh,
+    startTest,
+    onClose,
+    sequences,
+    selectedSequenceId,
+    seqVarValues,
+    mode,
+    saveNotesIfDirty,
+  ]);
 
   if (!open) return null;
 
@@ -340,14 +392,13 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
         <div className="wizard-panel wizard-scan" onClick={e => e.stopPropagation()}>
           <div className="wizard-scan-header">
             <h2>Scan Cell</h2>
-            <button className="scanner-close" onClick={onClose}>&times;</button>
+            <button className="scanner-close" onClick={onClose}>
+              &times;
+            </button>
           </div>
 
           <div className="wizard-scan-camera">
-            <BarcodeScanner
-              onScan={handleScan}
-              onClose={onClose}
-            />
+            <BarcodeScanner onScan={handleScan} onClose={onClose} />
           </div>
 
           <div className="wizard-scan-footer">
@@ -393,7 +444,9 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
             &larr;
           </button>
           <h2>Start Test</h2>
-          <button className="scanner-close" onClick={onClose}>&times;</button>
+          <button className="scanner-close" onClick={onClose}>
+            &times;
+          </button>
         </div>
 
         <div className="wizard-config-body">
@@ -402,12 +455,17 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
             <div className="wizard-cell-info">
               <div className="wizard-cell-barcode">{barcode}</div>
               {selectedGroup && (
-                <span className="wizard-cell-group">{selectedGroup.name} ({capacityAh} Ah)</span>
+                <span className="wizard-cell-group">
+                  {selectedGroup.name} ({capacityAh} Ah)
+                </span>
               )}
               <textarea
                 className="wizard-cell-notes"
                 value={cellNotes}
-                onChange={e => { setCellNotes(e.target.value); setNotesDirty(true); }}
+                onChange={e => {
+                  setCellNotes(e.target.value);
+                  setNotesDirty(true);
+                }}
                 placeholder="Cell notes..."
                 rows={2}
               />
@@ -448,13 +506,48 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
             </div>
           )}
 
+          {/* Sequence variables — adjust for this launch */}
+          {configTab === 'sequence' && selectedSeqVariables.length > 0 && (
+            <div className="wizard-seq-vars">
+              <label className="wizard-section-label">Variables</label>
+              <div className="wizard-temp-alert-list">
+                {selectedSeqVariables.map(v => (
+                  <div key={v.key} className="wizard-temp-alert-row">
+                    <span className="wizard-temp-alert-name">{v.key}</span>
+                    <input
+                      type="number"
+                      value={seqVarValues[v.key] ?? String(v.value)}
+                      onChange={e => setSeqVarValues(prev => ({ ...prev, [v.key]: e.target.value }))}
+                      step={0.1}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Manual mode */}
           {configTab === 'manual' && (
             <div className="wizard-manual">
               <div className="mode-selector">
-                <button className={`mode-btn ${mode === 'd-cc' ? 'active' : ''}`} onClick={() => handleModeChange('d-cc')}>D-CC</button>
-                <button className={`mode-btn ${mode === 'd-cp' ? 'active' : ''}`} onClick={() => handleModeChange('d-cp')}>D-CP</button>
-                <button className={`mode-btn ${mode === 'c-cv' ? 'active' : ''}`} onClick={() => handleModeChange('c-cv')}>C-CV</button>
+                <button
+                  className={`mode-btn ${mode === 'd-cc' ? 'active' : ''}`}
+                  onClick={() => handleModeChange('d-cc')}
+                >
+                  D-CC
+                </button>
+                <button
+                  className={`mode-btn ${mode === 'd-cp' ? 'active' : ''}`}
+                  onClick={() => handleModeChange('d-cp')}
+                >
+                  D-CP
+                </button>
+                <button
+                  className={`mode-btn ${mode === 'c-cv' ? 'active' : ''}`}
+                  onClick={() => handleModeChange('c-cv')}
+                >
+                  C-CV
+                </button>
               </div>
 
               <div className="form-params">
@@ -462,36 +555,69 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
                   <div className="form-group">
                     <label>
                       {mode === 'c-cv' ? 'Charge Current' : 'Discharge Current'}
-                      <button className={`crate-toggle ${useCRate ? 'active' : ''}`} onClick={() => setUseCRate(!useCRate)}>
+                      <button
+                        className={`crate-toggle ${useCRate ? 'active' : ''}`}
+                        onClick={() => setUseCRate(!useCRate)}
+                      >
                         {useCRate ? 'C' : 'A'}
                       </button>
                     </label>
-                    <input type="number" value={currentA} onChange={e => setCurrentA(parseFloat(e.target.value) || 0)} step={0.01} min={0} />
+                    <input
+                      type="number"
+                      value={currentA}
+                      onChange={e => setCurrentA(parseFloat(e.target.value) || 0)}
+                      step={0.01}
+                      min={0}
+                    />
                     {useCRate && <span className="form-hint">{(currentA * capacityAh).toFixed(2)} A</span>}
                   </div>
                 )}
                 {mode === 'd-cp' && (
                   <div className="form-group">
                     <label>Power (W)</label>
-                    <input type="number" value={powerW} onChange={e => setPowerW(parseFloat(e.target.value) || 0)} step={1} min={0} />
+                    <input
+                      type="number"
+                      value={powerW}
+                      onChange={e => setPowerW(parseFloat(e.target.value) || 0)}
+                      step={1}
+                      min={0}
+                    />
                   </div>
                 )}
                 {mode === 'c-cv' && (
                   <div className="form-group">
                     <label>Target Voltage (V)</label>
-                    <input type="number" value={voltageV} onChange={e => setVoltageV(parseFloat(e.target.value) || 0)} step={0.01} min={0} />
+                    <input
+                      type="number"
+                      value={voltageV}
+                      onChange={e => setVoltageV(parseFloat(e.target.value) || 0)}
+                      step={0.01}
+                      min={0}
+                    />
                   </div>
                 )}
                 {(mode === 'd-cc' || mode === 'd-cp') && (
                   <div className="form-group">
                     <label>Cutoff Voltage (V)</label>
-                    <input type="number" value={cutoffV} onChange={e => setCutoffV(parseFloat(e.target.value) || 0)} step={0.01} min={0} />
+                    <input
+                      type="number"
+                      value={cutoffV}
+                      onChange={e => setCutoffV(parseFloat(e.target.value) || 0)}
+                      step={0.01}
+                      min={0}
+                    />
                   </div>
                 )}
                 {mode === 'c-cv' && (
                   <div className="form-group">
                     <label>Cutoff Current (A)</label>
-                    <input type="number" value={cutoffCurrentA} onChange={e => setCutoffCurrentA(parseFloat(e.target.value) || 0)} step={0.01} min={0} />
+                    <input
+                      type="number"
+                      value={cutoffCurrentA}
+                      onChange={e => setCutoffCurrentA(parseFloat(e.target.value) || 0)}
+                      step={0.01}
+                      min={0}
+                    />
                   </div>
                 )}
               </div>
@@ -528,7 +654,9 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
 
         {/* Footer */}
         <div className="wizard-config-footer">
-          <button className="btn btn-cancel" onClick={onClose} disabled={submitting}>Cancel</button>
+          <button className="btn btn-cancel" onClick={onClose} disabled={submitting}>
+            Cancel
+          </button>
           <button className="btn btn-start" onClick={handleSubmit} disabled={submitting}>
             {submitting ? 'Starting...' : configTab === 'sequence' ? 'Run Sequence' : 'Start'}
           </button>

@@ -6,6 +6,19 @@
  * to give the user a visual preview of what will happen.
  */
 
+import type { FieldBindings, SequenceVariable } from '../../shared/sequence-vars.ts';
+
+export {
+  BINDABLE_FIELDS,
+  type FieldBindings,
+  parseSequenceDoc,
+  resolveSteps,
+  type SequenceDoc,
+  type SequenceVariable,
+  serializeSequenceDoc,
+  toSequenceDoc,
+} from '../../shared/sequence-vars.ts';
+
 // ── Step definitions ───────────────────────────────────────────────
 
 export interface StepDCC {
@@ -17,6 +30,10 @@ export interface StepDCC {
   useCRate?: boolean;
   /** When true, this step's measurements are excluded from cycle results (setup/teardown step) */
   excludeFromCount?: boolean;
+  /** Fields bound to sequence variables (field name → variable key) */
+  bind?: FieldBindings;
+  /** Retry at half current (down to minA) when the cutoff trips instantly (IR sag) */
+  backoff?: { minA: number };
 }
 
 export interface StepDCP {
@@ -26,6 +43,8 @@ export interface StepDCP {
   maxTimeMin?: number;
   /** When true, this step's measurements are excluded from cycle results (setup/teardown step) */
   excludeFromCount?: boolean;
+  /** Fields bound to sequence variables (field name → variable key) */
+  bind?: FieldBindings;
 }
 
 export interface StepCCV {
@@ -38,6 +57,8 @@ export interface StepCCV {
   useCRate?: boolean;
   /** When true, this step's measurements are excluded from cycle results (setup/teardown step) */
   excludeFromCount?: boolean;
+  /** Fields bound to sequence variables (field name → variable key) */
+  bind?: FieldBindings;
 }
 
 export interface StepWait {
@@ -112,7 +133,7 @@ export function updateStepAtPath(steps: SequenceStep[], path: StepPath, updated:
   if (path.length === 0) return steps;
   const idx = path[0];
   if (path.length === 1) {
-    return steps.map((s, i) => i === idx ? updated : s);
+    return steps.map((s, i) => (i === idx ? updated : s));
   }
   return steps.map((s, i) => {
     if (i !== idx || s.type !== 'loop') return s;
@@ -159,8 +180,7 @@ export function moveStep(steps: SequenceStep[], fromPath: StepPath, toPath: Step
   // at the same level, shift the insertion index down by 1
   const adjustedTo = [...toPath];
   if (fromPath.length === toPath.length) {
-    const sameParent = fromPath.length === 1 ||
-      fromPath.slice(0, -1).every((v, i) => v === toPath[i]);
+    const sameParent = fromPath.length === 1 || fromPath.slice(0, -1).every((v, i) => v === toPath[i]);
     if (sameParent) {
       const fromIdx = fromPath[fromPath.length - 1];
       const toIdx = toPath[toPath.length - 1];
@@ -176,7 +196,12 @@ export function moveStep(steps: SequenceStep[], fromPath: StepPath, toPath: Step
 
 // ── V1 migration ──────────────────────────────────────────────────
 
-interface V1Loop { type: 'loop'; count: number; startIndex: number; endIndex: number; }
+interface V1Loop {
+  type: 'loop';
+  count: number;
+  startIndex: number;
+  endIndex: number;
+}
 
 function isV1Loop(step: any): step is V1Loop {
   return step?.type === 'loop' && 'startIndex' in step && !('children' in step);
@@ -208,18 +233,14 @@ export function migrateV1Steps(steps: any[]): SequenceStep[] {
   const inside = execSteps.slice(loop.startIndex, loop.endIndex + 1);
   const after = execSteps.slice(loop.endIndex + 1);
 
-  return [
-    ...before,
-    { type: 'loop', count: loop.count, children: inside },
-    ...after,
-  ];
+  return [...before, { type: 'loop', count: loop.count, children: inside }, ...after];
 }
 
 // ── LiFePO4 simulation parameters ──────────────────────────────────
 
-const LFP_NOMINAL_V = 3.20;
-const LFP_FULL_V = 3.35;     // OCV at ~100% SOC
-const LFP_EMPTY_V = 2.80;    // OCV at ~10% SOC
+const LFP_NOMINAL_V = 3.2;
+const LFP_FULL_V = 3.35; // OCV at ~100% SOC
+const LFP_EMPTY_V = 2.8; // OCV at ~10% SOC
 const LFP_SETTLE_DELTA = 0.05; // OCV recovery during rest
 
 // ── Resolve current ───────────────────────────────────────────────
@@ -242,7 +263,7 @@ export function estimateDurationH(step: SequenceStep, capacityAh: number): numbe
       return amps > 0 ? (capacityAh / amps) * 0.95 : 0;
     }
     case 'd-cp':
-      return step.powerW > 0 ? (capacityAh * LFP_NOMINAL_V / step.powerW) * 0.95 : 0;
+      return step.powerW > 0 ? ((capacityAh * LFP_NOMINAL_V) / step.powerW) * 0.95 : 0;
     case 'c-cv': {
       // CC phase: bulk charge at constant current
       const amps = resolveCurrentA(step, capacityAh);
@@ -252,7 +273,7 @@ export function estimateDurationH(step: SequenceStep, capacityAh: number): numbe
       // Model as exponential decay with time constant tau.
       // Duration ≈ tau * ln(amps / cutoff), tau ≈ capacityAh / amps.
       const cutoff = Math.max(step.cutoffCurrentA, 0.01);
-      const tau = capacityAh / amps * 0.3; // empirical time constant
+      const tau = (capacityAh / amps) * 0.3; // empirical time constant
       const cvHours = tau * Math.log(amps / cutoff);
       return ccHours + Math.max(0, cvHours);
     }
@@ -292,7 +313,7 @@ export function simulateStep(
   step: ExecutableStep,
   startV: number,
   numPoints: number,
-  capacityAh: number = 200,
+  capacityAh: number = 200
 ): SimPoint[] {
   const pts: SimPoint[] = [];
 
@@ -307,10 +328,10 @@ export function simulateStep(
         if (f < 0.05) {
           v = startV - (startV - (startV - 0.04)) * (f / 0.05);
         } else if (f < 0.85) {
-          v = (startV - 0.04) - 0.04 * ((f - 0.05) / 0.8);
+          v = startV - 0.04 - 0.04 * ((f - 0.05) / 0.8);
         } else {
           const flatEndV = startV - 0.08;
-          v = flatEndV - (flatEndV - step.cutoffV) * Math.pow((f - 0.85) / 0.15, 2);
+          v = flatEndV - (flatEndV - step.cutoffV) * ((f - 0.85) / 0.15) ** 2;
         }
         break;
       }
@@ -318,11 +339,11 @@ export function simulateStep(
       case 'd-cp': {
         if (f < 0.05) {
           v = startV - 0.04 * (f / 0.05);
-        } else if (f < 0.80) {
-          v = (startV - 0.04) - 0.06 * ((f - 0.05) / 0.75);
+        } else if (f < 0.8) {
+          v = startV - 0.04 - 0.06 * ((f - 0.05) / 0.75);
         } else {
-          const flatEndV = startV - 0.10;
-          v = flatEndV - (flatEndV - step.cutoffV) * Math.pow((f - 0.80) / 0.20, 1.8);
+          const flatEndV = startV - 0.1;
+          v = flatEndV - (flatEndV - step.cutoffV) * ((f - 0.8) / 0.2) ** 1.8;
         }
         current = v > 0.1 ? step.powerW / v : 0;
         break;
@@ -336,7 +357,7 @@ export function simulateStep(
         const maxCurrent = resolveCurrentA(step, capacityAh);
         const cutoff = Math.max(step.cutoffCurrentA, 0.01);
         const ccTime = 0.8; // CC fills ~80% of capacity → relative time units
-        const tau = 0.3;    // CV time constant (same as estimateDurationH)
+        const tau = 0.3; // CV time constant (same as estimateDurationH)
         const cvTime = tau * Math.log(maxCurrent / cutoff);
         const totalTime = ccTime + Math.max(0, cvTime);
         const ccFraction = ccTime / totalTime;
@@ -347,7 +368,7 @@ export function simulateStep(
           // has nonzero slope at the CC→CV boundary — no visual lag between
           // voltage flattening and current starting to drop.
           const ccProgress = f / ccFraction;
-          v = startV + (step.targetV - startV) * Math.pow(ccProgress, 1.3);
+          v = startV + (step.targetV - startV) * ccProgress ** 1.3;
           current = maxCurrent;
         } else {
           // CV phase: voltage flat at targetV, current decays to cutoff
@@ -362,9 +383,7 @@ export function simulateStep(
       }
 
       case 'wait': {
-        const restV = startV > LFP_NOMINAL_V
-          ? startV - LFP_SETTLE_DELTA
-          : startV + LFP_SETTLE_DELTA;
+        const restV = startV > LFP_NOMINAL_V ? startV - LFP_SETTLE_DELTA : startV + LFP_SETTLE_DELTA;
         v = startV + (restV - startV) * (1 - Math.exp(-3 * f));
         current = 0;
         break;
@@ -382,13 +401,14 @@ export function simulateStep(
  */
 export function stepEndVoltage(step: ExecutableStep, startV: number): number {
   switch (step.type) {
-    case 'd-cc': return step.cutoffV;
-    case 'd-cp': return step.cutoffV;
-    case 'c-cv': return step.targetV;
+    case 'd-cc':
+      return step.cutoffV;
+    case 'd-cp':
+      return step.cutoffV;
+    case 'c-cv':
+      return step.targetV;
     case 'wait':
-      return startV > LFP_NOMINAL_V
-        ? startV - LFP_SETTLE_DELTA
-        : startV + LFP_SETTLE_DELTA;
+      return startV > LFP_NOMINAL_V ? startV - LFP_SETTLE_DELTA : startV + LFP_SETTLE_DELTA;
   }
 }
 
@@ -417,11 +437,11 @@ export function flattenForTimeline(steps: SequenceStep[]): { step: ExecutableSte
 // ── Defaults ───────────────────────────────────────────────────────
 
 export function defaultDCC(): StepDCC {
-  return { type: 'd-cc', currentA: 40, cutoffV: 2.50, maxTimeMin: 600 };
+  return { type: 'd-cc', currentA: 40, cutoffV: 2.5, maxTimeMin: 600, backoff: { minA: 10 } };
 }
 
 export function defaultDCP(): StepDCP {
-  return { type: 'd-cp', powerW: 100, cutoffV: 2.50, maxTimeMin: 600 };
+  return { type: 'd-cp', powerW: 100, cutoffV: 2.5, maxTimeMin: 600 };
 }
 
 export function defaultCCV(): StepCCV {
@@ -441,6 +461,7 @@ export function defaultLoop(): StepLoop {
 export interface SequencePreset {
   name: string;
   steps: SequenceStep[];
+  variables?: SequenceVariable[];
 }
 
 export const PRESETS: SequencePreset[] = [
@@ -449,21 +470,48 @@ export const PRESETS: SequencePreset[] = [
     steps: [
       { type: 'c-cv', currentA: 40, targetV: 3.65, cutoffCurrentA: 2.0, maxTimeMin: 600 },
       { type: 'wait', durationS: 1800 },
-      { type: 'd-cc', currentA: 40, cutoffV: 2.50, maxTimeMin: 600 },
+      { type: 'd-cc', currentA: 40, cutoffV: 2.5, maxTimeMin: 600 },
+    ],
+  },
+  {
+    // One knob per setpoint: adjust "Discharge A" / "Cutoff V" once and every
+    // bound step follows. High-IR cells that trip the cutoff instantly at the
+    // programmed current auto-retry at half current down to 5 A.
+    name: 'Parametric Cycle',
+    variables: [
+      { key: 'Discharge A', value: 10 },
+      { key: 'Cutoff V', value: 2.5 },
+    ],
+    steps: [
+      {
+        type: 'loop',
+        count: 3,
+        children: [
+          { type: 'c-cv', currentA: 40, targetV: 3.65, cutoffCurrentA: 2.0, maxTimeMin: 720 },
+          { type: 'wait', durationS: 1800 },
+          {
+            type: 'd-cc',
+            currentA: 10,
+            cutoffV: 2.5,
+            maxTimeMin: 1440,
+            bind: { currentA: 'Discharge A', cutoffV: 'Cutoff V' },
+            backoff: { minA: 5 },
+          },
+          { type: 'wait', durationS: 1800 },
+        ],
+      },
     ],
   },
   {
     name: 'Quick Check',
-    steps: [
-      { type: 'd-cc', currentA: 20, cutoffV: 2.80, maxTimeMin: 720 },
-    ],
+    steps: [{ type: 'd-cc', currentA: 20, cutoffV: 2.8, maxTimeMin: 720 }],
   },
   {
     name: 'Gentle Cycle',
     steps: [
       { type: 'c-cv', currentA: 20, targetV: 3.65, cutoffCurrentA: 2.0, maxTimeMin: 720 },
       { type: 'wait', durationS: 1800 },
-      { type: 'd-cc', currentA: 20, cutoffV: 2.80, maxTimeMin: 720 },
+      { type: 'd-cc', currentA: 20, cutoffV: 2.8, maxTimeMin: 720 },
       { type: 'wait', durationS: 1800 },
     ],
   },
@@ -476,7 +524,7 @@ export const PRESETS: SequencePreset[] = [
         children: [
           { type: 'c-cv', currentA: 40, targetV: 3.65, cutoffCurrentA: 2.0, maxTimeMin: 600 },
           { type: 'wait', durationS: 1800 },
-          { type: 'd-cc', currentA: 40, cutoffV: 2.50, maxTimeMin: 600 },
+          { type: 'd-cc', currentA: 40, cutoffV: 2.5, maxTimeMin: 600 },
           { type: 'wait', durationS: 1800 },
         ],
       },

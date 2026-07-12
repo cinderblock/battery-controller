@@ -15,28 +15,32 @@
  * - Step palette (add new steps)
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, apiPost, type CellGroup, type Sequence } from '../api-client.ts';
-import type { SequenceStep, StepPath } from '../lib/sequence-types.ts';
-import {
-  totalEstimatedDurationH,
-  getStepAtPath,
-  updateStepAtPath,
-  removeStepAtPath,
-  insertStepAtPath,
-  moveStep,
-  migrateV1Steps,
-  PRESETS,
-} from '../lib/sequence-types.ts';
 import { SequenceTimeline } from '../components/SequenceTimeline.tsx';
-import { StepProperties } from '../components/StepProperties.tsx';
 import { StepPalette } from '../components/StepPalette.tsx';
+import { StepProperties } from '../components/StepProperties.tsx';
+import type { FieldBindings, SequenceStep, SequenceVariable, StepPath } from '../lib/sequence-types.ts';
+import {
+  getStepAtPath,
+  insertStepAtPath,
+  migrateV1Steps,
+  moveStep,
+  PRESETS,
+  parseSequenceDoc,
+  removeStepAtPath,
+  resolveSteps,
+  serializeSequenceDoc,
+  totalEstimatedDurationH,
+  updateStepAtPath,
+} from '../lib/sequence-types.ts';
 
 // ── Component ──────────────────────────────────────────────────────
 
 export function SequenceEditor() {
   // ── Sequence state ────────────────────────────────────────────
   const [steps, setSteps] = useState<SequenceStep[]>(PRESETS[0].steps);
+  const [variables, setVariables] = useState<SequenceVariable[]>(PRESETS[0].variables ?? []);
   const [name, setName] = useState(PRESETS[0].name);
   const [selectedPath, setSelectedPath] = useState<StepPath | null>([0]);
   const [activePreset, setActivePreset] = useState<string>(PRESETS[0].name);
@@ -61,34 +65,111 @@ export function SequenceEditor() {
 
   // ── Load data ─────────────────────────────────────────────────
   useEffect(() => {
-    api<CellGroup[]>('/api/cell-groups').then(groups => {
-      setCellGroups(groups);
-      if (groups.length > 0) setSelectedGroupId(groups[0].id);
-    }).catch(() => {});
+    api<CellGroup[]>('/api/cell-groups')
+      .then(groups => {
+        setCellGroups(groups);
+        if (groups.length > 0) setSelectedGroupId(groups[0].id);
+      })
+      .catch(() => {});
 
-    api<Sequence[]>('/api/sequences').then(setSavedSequences).catch(() => {});
+    api<Sequence[]>('/api/sequences')
+      .then(setSavedSequences)
+      .catch(() => {});
   }, []);
 
+  // ── Resolved steps (variables baked in) for preview/estimation ──
+  const resolvedSteps = useMemo(() => resolveSteps(steps, variables), [steps, variables]);
+
   // ── Duration estimate ─────────────────────────────────────────
-  const totalH = totalEstimatedDurationH(steps, capacityAh);
-  const durationStr = totalH < 1
-    ? `~${Math.round(totalH * 60)}m`
-    : `~${Math.floor(totalH)}h ${Math.round((totalH % 1) * 60)}m`;
+  const totalH = totalEstimatedDurationH(resolvedSteps, capacityAh);
+  const durationStr =
+    totalH < 1 ? `~${Math.round(totalH * 60)}m` : `~${Math.floor(totalH)}h ${Math.round((totalH % 1) * 60)}m`;
 
   // ── Selected step ─────────────────────────────────────────────
   const selectedStep = selectedPath ? getStepAtPath(steps, selectedPath) : null;
 
   // ── Step management (path-based) ──────────────────────────────
 
-  const addStep = useCallback((step: SequenceStep) => {
-    setSteps(prev => [...prev, step]);
-    const newPath: StepPath = [steps.length];
-    setSelectedPath(newPath);
-    setActivePreset('');
-  }, [steps.length]);
+  const addStep = useCallback(
+    (step: SequenceStep) => {
+      setSteps(prev => [...prev, step]);
+      const newPath: StepPath = [steps.length];
+      setSelectedPath(newPath);
+      setActivePreset('');
+    },
+    [steps.length]
+  );
 
   const handleUpdate = useCallback((path: StepPath, step: SequenceStep) => {
     setSteps(prev => updateStepAtPath(prev, path, step));
+    setActivePreset('');
+  }, []);
+
+  /**
+   * Updates coming from the timeline carry RESOLVED steps (variables baked
+   * in). Restore the raw stored value and bind marker for bound fields so
+   * a pill-drag on a bound field doesn't bake the variable's value into
+   * the sequence — bound fields are governed by their variable.
+   */
+  const handleTimelineUpdate = useCallback((path: StepPath, updated: SequenceStep) => {
+    setSteps(prev => {
+      const raw = getStepAtPath(prev, path);
+      let merged = updated;
+      if (raw && raw.type !== 'loop' && raw.type !== 'wait' && raw.bind) {
+        const rawRec = raw as unknown as Record<string, unknown>;
+        const mergedRec: Record<string, unknown> = {
+          ...(updated as unknown as Record<string, unknown>),
+          bind: raw.bind,
+        };
+        for (const field of Object.keys(raw.bind)) {
+          mergedRec[field] = rawRec[field];
+        }
+        merged = mergedRec as unknown as SequenceStep;
+      }
+      return updateStepAtPath(prev, path, merged);
+    });
+    setActivePreset('');
+  }, []);
+
+  // ── Variables ─────────────────────────────────────────────────
+
+  const addVariable = useCallback(() => {
+    setVariables(prev => {
+      let n = prev.length + 1;
+      while (prev.some(v => v.key === `Var ${n}`)) n++;
+      return [...prev, { key: `Var ${n}`, value: 10 }];
+    });
+    setActivePreset('');
+  }, []);
+
+  /** Rename a variable and rewrite every step binding that references it */
+  const renameVariable = useCallback(
+    (index: number, newKey: string) => {
+      const oldKey = variables[index]?.key;
+      if (oldKey === undefined || oldKey === newKey) return;
+      const renameBinds = (list: SequenceStep[]): SequenceStep[] =>
+        list.map(s => {
+          if (s.type === 'loop') return { ...s, children: renameBinds(s.children) };
+          if (s.type === 'wait' || !s.bind) return s;
+          const bind = Object.fromEntries(
+            Object.entries(s.bind).map(([field, key]) => [field, key === oldKey ? newKey : key])
+          ) as FieldBindings;
+          return { ...s, bind };
+        });
+      setVariables(prev => prev.map((v, i) => (i === index ? { ...v, key: newKey } : v)));
+      setSteps(prev => renameBinds(prev));
+      setActivePreset('');
+    },
+    [variables]
+  );
+
+  const setVariableValue = useCallback((index: number, value: number) => {
+    setVariables(prev => prev.map((v, i) => (i === index ? { ...v, value } : v)));
+    setActivePreset('');
+  }, []);
+
+  const removeVariable = useCallback((index: number) => {
+    setVariables(prev => prev.filter((_, i) => i !== index));
     setActivePreset('');
   }, []);
 
@@ -98,17 +179,20 @@ export function SequenceEditor() {
     setActivePreset('');
   }, []);
 
-  const handleDuplicate = useCallback((path: StepPath) => {
-    const step = getStepAtPath(steps, path);
-    if (!step) return;
-    const clone = JSON.parse(JSON.stringify(step)) as SequenceStep;
-    // Insert after the current step
-    const insertPath = [...path];
-    insertPath[insertPath.length - 1]++;
-    setSteps(prev => insertStepAtPath(prev, insertPath, clone));
-    setSelectedPath(insertPath);
-    setActivePreset('');
-  }, [steps]);
+  const handleDuplicate = useCallback(
+    (path: StepPath) => {
+      const step = getStepAtPath(steps, path);
+      if (!step) return;
+      const clone = JSON.parse(JSON.stringify(step)) as SequenceStep;
+      // Insert after the current step
+      const insertPath = [...path];
+      insertPath[insertPath.length - 1]++;
+      setSteps(prev => insertStepAtPath(prev, insertPath, clone));
+      setSelectedPath(insertPath);
+      setActivePreset('');
+    },
+    [steps]
+  );
 
   const handleTimelineSelect = useCallback((path: number[]) => {
     setSelectedPath(path);
@@ -121,8 +205,9 @@ export function SequenceEditor() {
   }, []);
 
   // ── Presets ───────────────────────────────────────────────────
-  const loadPreset = useCallback((preset: typeof PRESETS[number]) => {
+  const loadPreset = useCallback((preset: (typeof PRESETS)[number]) => {
     setSteps([...preset.steps]);
+    setVariables(preset.variables ? [...preset.variables] : []);
     setName(preset.name);
     setSelectedPath([0]);
     setActivePreset(preset.name);
@@ -130,29 +215,36 @@ export function SequenceEditor() {
   }, []);
 
   // ── Load saved sequence ───────────────────────────────────────
-  const loadSaved = useCallback((seq: Sequence) => {
-    // Skip reload if already editing this sequence (avoids resetting name edits)
-    if (editingId === seq.id) return;
-    try {
-      const raw = JSON.parse(seq.steps_json);
-      const parsed = migrateV1Steps(raw);
-      setSteps(parsed);
-      setName(seq.name);
-      setEditingId(seq.id);
-      setSelectedPath([0]);
-      setActivePreset('');
-    } catch {
-      setError('Failed to parse saved sequence');
-    }
-  }, [editingId]);
+  const loadSaved = useCallback(
+    (seq: Sequence) => {
+      // Skip reload if already editing this sequence (avoids resetting name edits)
+      if (editingId === seq.id) return;
+      try {
+        const doc = parseSequenceDoc(seq.steps_json);
+        const parsed = migrateV1Steps(doc.steps);
+        setSteps(parsed);
+        setVariables(doc.variables);
+        setName(seq.name);
+        setEditingId(seq.id);
+        setSelectedPath([0]);
+        setActivePreset('');
+      } catch {
+        setError('Failed to parse saved sequence');
+      }
+    },
+    [editingId]
+  );
 
   // ── Save ──────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
-    if (!name.trim()) { setError('Enter a sequence name'); return; }
+    if (!name.trim()) {
+      setError('Enter a sequence name');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const stepsJson = JSON.stringify(steps);
+      const stepsJson = serializeSequenceDoc({ variables, steps });
       if (editingId) {
         await api(`/api/sequences/${editingId}`, {
           method: 'PUT',
@@ -173,14 +265,20 @@ export function SequenceEditor() {
     } finally {
       setSaving(false);
     }
-  }, [name, steps, editingId, selectedGroupId]);
+  }, [name, steps, variables, editingId, selectedGroupId]);
 
   // ── Create cell group ────────────────────────────────────────
   const handleCreateGroup = useCallback(async () => {
     const trimmed = newGroupName.trim();
-    if (!trimmed) { setError('Enter a cell group name'); return; }
+    if (!trimmed) {
+      setError('Enter a cell group name');
+      return;
+    }
     const capAh = parseFloat(newGroupCapacity);
-    if (!capAh || capAh <= 0) { setError('Enter a valid capacity'); return; }
+    if (!capAh || capAh <= 0) {
+      setError('Enter a valid capacity');
+      return;
+    }
     setError(null);
     try {
       const group = await apiPost<CellGroup>('/api/cell-groups', {
@@ -200,26 +298,30 @@ export function SequenceEditor() {
   }, [newGroupName, newGroupCapacity, newGroupChemistry]);
 
   // ── Delete sequence ──────────────────────────────────────────
-  const handleDeleteSequence = useCallback(async (seqId: number) => {
-    try {
-      await api(`/api/sequences/${seqId}`, { method: 'DELETE' });
-      setSavedSequences(prev => prev.filter(s => s.id !== seqId));
-      if (editingId === seqId) {
-        setEditingId(null);
+  const handleDeleteSequence = useCallback(
+    async (seqId: number) => {
+      try {
+        await api(`/api/sequences/${seqId}`, { method: 'DELETE' });
+        setSavedSequences(prev => prev.filter(s => s.id !== seqId));
+        if (editingId === seqId) {
+          setEditingId(null);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Delete failed');
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Delete failed');
-    }
-  }, [editingId]);
+    },
+    [editingId]
+  );
 
   // ── Duplicate sequence ──────────────────────────────────────
   const handleDuplicateSequence = useCallback((seq: Sequence) => {
     try {
-      const raw = JSON.parse(seq.steps_json);
-      const parsed = migrateV1Steps(raw);
+      const doc = parseSequenceDoc(seq.steps_json);
+      const parsed = migrateV1Steps(doc.steps);
       setSteps(parsed);
+      setVariables(doc.variables);
       setName(`${seq.name} (copy)`);
-      setEditingId(null);  // Save will create a new sequence
+      setEditingId(null); // Save will create a new sequence
       setSelectedPath([0]);
       setActivePreset('');
     } catch {
@@ -231,7 +333,9 @@ export function SequenceEditor() {
     <div className="seq-editor">
       {/* Header */}
       <div className="seq-header">
-        <a className="btn btn-back" href="/">{'\u2190'} Back</a>
+        <a className="btn btn-back" href="/">
+          {'\u2190'} Back
+        </a>
         <input
           className="seq-header-name"
           value={name}
@@ -253,7 +357,9 @@ export function SequenceEditor() {
             onChange={e => setSelectedGroupId(parseInt(e.target.value, 10) || null)}
           >
             {cellGroups.map(g => (
-              <option key={g.id} value={g.id}>{g.name} — {g.nominal_capacity_mah / 1000} Ah</option>
+              <option key={g.id} value={g.id}>
+                {g.name} — {g.nominal_capacity_mah / 1000} Ah
+              </option>
             ))}
           </select>
           <button
@@ -299,8 +405,12 @@ export function SequenceEditor() {
               <option value="NiMH">NiMH</option>
               <option value="Lead-acid">Lead-acid</option>
             </select>
-            <button className="btn btn-confirm-group" onClick={handleCreateGroup}>Add</button>
-            <button className="btn btn-cancel-group" onClick={() => setShowNewGroup(false)}>Cancel</button>
+            <button className="btn btn-confirm-group" onClick={handleCreateGroup}>
+              Add
+            </button>
+            <button className="btn btn-cancel-group" onClick={() => setShowNewGroup(false)}>
+              Cancel
+            </button>
           </div>
         )}
       </div>
@@ -326,14 +436,20 @@ export function SequenceEditor() {
             </button>
             <button
               className="saved-seq-dup"
-              onClick={e => { e.stopPropagation(); handleDuplicateSequence(s); }}
+              onClick={e => {
+                e.stopPropagation();
+                handleDuplicateSequence(s);
+              }}
               title="Duplicate sequence"
             >
               {'\u2398'}
             </button>
             <button
               className="saved-seq-delete"
-              onClick={e => { e.stopPropagation(); handleDeleteSequence(s.id); }}
+              onClick={e => {
+                e.stopPropagation();
+                handleDeleteSequence(s.id);
+              }}
               title="Delete sequence"
             >
               {'\u00D7'}
@@ -342,14 +458,47 @@ export function SequenceEditor() {
         ))}
       </div>
 
+      {/* Variables — one number that every bound step field follows */}
+      <div className="seq-variables">
+        <span className="seq-variables-label">Variables</span>
+        {variables.map((v, i) => (
+          <span key={i} className="seq-var-row">
+            <input
+              className="seq-var-name"
+              value={v.key}
+              onChange={e => renameVariable(i, e.target.value)}
+              placeholder="Name"
+            />
+            <input
+              className="seq-var-value"
+              type="number"
+              value={v.value}
+              step={0.1}
+              onChange={e => setVariableValue(i, parseFloat(e.target.value) || 0)}
+            />
+            <button
+              type="button"
+              className="seq-var-delete"
+              onClick={() => removeVariable(i)}
+              title="Delete variable (bound fields keep their current value)"
+            >
+              {'×'}
+            </button>
+          </span>
+        ))}
+        <button type="button" className="btn seq-var-add" onClick={addVariable}>
+          + Variable
+        </button>
+      </div>
+
       {/* Visual timeline */}
       <SequenceTimeline
-        steps={steps}
+        steps={resolvedSteps}
         selectedPath={selectedPath}
         capacityAh={capacityAh}
         onSelectStep={handleTimelineSelect}
         onReorder={handleReorder}
-        onUpdate={handleUpdate}
+        onUpdate={handleTimelineUpdate}
       />
 
       {/* Estimated duration */}
@@ -364,6 +513,7 @@ export function SequenceEditor() {
           step={selectedStep}
           path={selectedPath}
           capacityAh={capacityAh}
+          variables={variables}
           onUpdate={handleUpdate}
           onRemove={handleRemove}
           onDuplicate={handleDuplicate}

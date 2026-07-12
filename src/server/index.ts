@@ -47,6 +47,7 @@ import {
   markIncompleteRuns,
   parseUtcTimestamp,
   setCellGroup,
+  setRunExcludeFromCapacity,
   setSetting,
   updateCell,
   updateSequence,
@@ -735,6 +736,19 @@ async function main() {
       return jsonResponse(run);
     }
 
+    if (runByIdMatch && method === 'PATCH') {
+      const runId = parseInt(runByIdMatch[1], 10);
+      const run = getTestRun(runId);
+      if (!run) return errorResponse('Run not found', 404);
+
+      const body = await parseBody<{ excludeFromCapacity?: boolean }>(req);
+      if (typeof body?.excludeFromCapacity !== 'boolean') {
+        return errorResponse('Missing excludeFromCapacity');
+      }
+      setRunExcludeFromCapacity(runId, body.excludeFromCapacity);
+      return jsonResponse(getTestRun(runId));
+    }
+
     // /api/runs/:id/data
     const runDataMatch = pathname.match(/^\/api\/runs\/(\d+)\/data$/);
     if (runDataMatch && method === 'GET') {
@@ -915,11 +929,20 @@ async function main() {
       const locked = requireUnlocked();
       if (locked) return locked;
 
-      const body = await parseBody<{ name: string; steps: unknown[]; cellId?: number }>(req);
+      const body = await parseBody<{
+        name: string;
+        steps: unknown[];
+        cellId?: number;
+        variables?: { key: string; value: number }[];
+      }>(req);
       if (!body?.name || !body?.steps) return errorResponse('Missing name or steps');
 
+      const variables = Array.isArray(body.variables)
+        ? body.variables.filter(v => v && typeof v.key === 'string' && Number.isFinite(v.value))
+        : [];
+
       try {
-        await cycleRunner.startSequence(body.name, body.steps as any, body.cellId ?? null);
+        await cycleRunner.startSequence(body.name, body.steps as any, body.cellId ?? null, variables);
         return jsonResponse({ ok: true, state: cycleRunner.getState() });
       } catch (e) {
         return errorResponse(e instanceof Error ? e.message : 'Failed to start cycle', 409);

@@ -2017,6 +2017,73 @@ body {
   flex-shrink: 0;
 }
 
+/* ── Sequence variables bar ─────────────────────────────────────── */
+
+.seq-variables {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.seq-variables-label {
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.seq-var-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+
+.seq-var-name {
+  width: 110px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  padding: 2px 4px;
+}
+
+.seq-var-value {
+  width: 64px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 2px 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.seq-var-delete {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 14px;
+}
+
+.seq-var-delete:hover {
+  color: #ef5350;
+}
+
+.seq-var-add {
+  white-space: nowrap;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
 .preset-btn {
   white-space: nowrap;
   padding: 6px 14px;
@@ -2434,6 +2501,25 @@ body {
   align-items: center;
   gap: 4px;
   flex: 1;
+}
+
+.sp-bind-select {
+  max-width: 92px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 2px;
+}
+
+.sp-bind-select.sp-bind-active {
+  color: var(--text);
+  border-color: #a78bfa;
+}
+
+.sp-input:disabled {
+  opacity: 0.6;
 }
 
 .sp-input {
@@ -2999,6 +3085,12 @@ body {
 
 /* Temperature alerts in StartModal */
 .wizard-temp-alerts {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.wizard-seq-vars {
   margin-top: 12px;
   border-top: 1px solid var(--border);
   padding-top: 10px;

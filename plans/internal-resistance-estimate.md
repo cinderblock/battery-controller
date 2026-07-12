@@ -1,5 +1,8 @@
 # Internal Resistance Estimate Per Cell
 
+> Follow-up work (sequence variables + discharge auto-backoff) is tracked in
+> `plans/sequence-variables-and-backoff.md`.
+
 ## Goal
 
 Auto-compute a DC internal-resistance (IR) estimate for each cell, updated as cells are

@@ -481,6 +481,10 @@ export function setRunIrMohm(runId: number, irMohm: number): void {
   getDb().run('UPDATE test_runs SET ir_mohm = ? WHERE id = ?', [irMohm, runId]);
 }
 
+export function setRunExcludeFromCapacity(runId: number, exclude: boolean): void {
+  getDb().run('UPDATE test_runs SET exclude_from_capacity = ? WHERE id = ?', [exclude ? 1 : 0, runId]);
+}
+
 /** Ended runs whose IR hasn't been computed yet (for the one-time startup backfill) */
 export function getRunsNeedingIr(): TestRun[] {
   return getDb()
