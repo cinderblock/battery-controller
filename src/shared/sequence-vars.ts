@@ -11,9 +11,19 @@
  * Shared between the frontend sequence editor and the server cycle runner.
  */
 
+/** Units a variable can be locked to. Undefined unit = untyped (binds anywhere). */
+export type VariableUnit = 'A' | 'V' | 'W';
+
+export const VARIABLE_UNITS: VariableUnit[] = ['A', 'V', 'W'];
+
 export interface SequenceVariable {
   key: string;
   value: number;
+  /**
+   * Optional unit. When set, the variable may only bind to step fields of the
+   * same unit (a 'V' variable can't drive a current field). Undefined = any.
+   */
+  unit?: VariableUnit;
 }
 
 /** field name → variable key */
@@ -25,6 +35,23 @@ export const BINDABLE_FIELDS: Record<string, string[]> = {
   'd-cp': ['powerW', 'cutoffV'],
   'c-cv': ['currentA', 'targetV', 'cutoffCurrentA'],
 };
+
+/** The physical unit each bindable field carries */
+export const FIELD_UNIT: Record<string, VariableUnit> = {
+  currentA: 'A',
+  cutoffCurrentA: 'A',
+  cutoffV: 'V',
+  targetV: 'V',
+  powerW: 'W',
+};
+
+/**
+ * Whether a variable of the given unit may bind to `field`. Untyped variables
+ * (no unit) bind anywhere; typed ones only to a field of the matching unit.
+ */
+export function variableMatchesField(unit: VariableUnit | undefined, field: string): boolean {
+  return unit === undefined || FIELD_UNIT[field] === unit;
+}
 
 interface StepLike {
   type: string;
@@ -81,7 +108,13 @@ export function toSequenceDoc<S = unknown>(raw: unknown): SequenceDoc<S> {
   if (raw !== null && typeof raw === 'object' && Array.isArray((raw as { steps?: unknown }).steps)) {
     const doc = raw as { variables?: unknown; steps: S[] };
     const variables = Array.isArray(doc.variables)
-      ? (doc.variables as SequenceVariable[]).filter(v => v && typeof v.key === 'string' && typeof v.value === 'number')
+      ? (doc.variables as SequenceVariable[])
+          .filter(v => v && typeof v.key === 'string' && typeof v.value === 'number')
+          .map(v =>
+            v.unit && VARIABLE_UNITS.includes(v.unit)
+              ? { key: v.key, value: v.value, unit: v.unit }
+              : { key: v.key, value: v.value }
+          )
       : [];
     return { variables, steps: doc.steps };
   }

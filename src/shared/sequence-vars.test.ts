@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { parseSequenceDoc, resolveSteps, serializeSequenceDoc, toSequenceDoc } from './sequence-vars.ts';
+import {
+  parseSequenceDoc,
+  resolveSteps,
+  serializeSequenceDoc,
+  toSequenceDoc,
+  variableMatchesField,
+} from './sequence-vars.ts';
 
 const VARS = [
   { key: 'Discharge A', value: 10 },
@@ -81,5 +87,37 @@ describe('sequence doc parse/serialize', () => {
       steps: [],
     });
     expect(doc.variables).toEqual([{ key: 'B', value: 5 }]);
+  });
+
+  test('valid units are preserved, invalid ones dropped', () => {
+    const doc = toSequenceDoc({
+      variables: [
+        { key: 'I', value: 10, unit: 'A' },
+        { key: 'bad', value: 1, unit: 'kg' },
+      ],
+      steps: [],
+    });
+    expect(doc.variables).toEqual([
+      { key: 'I', value: 10, unit: 'A' },
+      { key: 'bad', value: 1 },
+    ]);
+  });
+});
+
+describe('variableMatchesField', () => {
+  test('untyped variables bind to any field', () => {
+    expect(variableMatchesField(undefined, 'currentA')).toBe(true);
+    expect(variableMatchesField(undefined, 'cutoffV')).toBe(true);
+    expect(variableMatchesField(undefined, 'powerW')).toBe(true);
+  });
+
+  test('typed variables bind only to matching-unit fields', () => {
+    expect(variableMatchesField('A', 'currentA')).toBe(true);
+    expect(variableMatchesField('A', 'cutoffCurrentA')).toBe(true);
+    expect(variableMatchesField('A', 'cutoffV')).toBe(false);
+    expect(variableMatchesField('V', 'targetV')).toBe(true);
+    expect(variableMatchesField('V', 'currentA')).toBe(false);
+    expect(variableMatchesField('W', 'powerW')).toBe(true);
+    expect(variableMatchesField('W', 'cutoffV')).toBe(false);
   });
 });

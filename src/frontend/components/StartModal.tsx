@@ -494,6 +494,7 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
                       onChange={e => setSeqVarValues(prev => ({ ...prev, [v.key]: e.target.value }))}
                       step={0.1}
                     />
+                    {v.unit && <span className="wizard-seq-var-unit">{v.unit}</span>}
                   </div>
                 ))}
               </div>

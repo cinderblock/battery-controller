@@ -10,6 +10,7 @@ import type { FieldBindings, SequenceVariable } from '../../shared/sequence-vars
 
 export {
   BINDABLE_FIELDS,
+  FIELD_UNIT,
   type FieldBindings,
   parseSequenceDoc,
   resolveSteps,
@@ -17,6 +18,9 @@ export {
   type SequenceVariable,
   serializeSequenceDoc,
   toSequenceDoc,
+  VARIABLE_UNITS,
+  type VariableUnit,
+  variableMatchesField,
 } from '../../shared/sequence-vars.ts';
 
 // ── Step definitions ───────────────────────────────────────────────
@@ -479,8 +483,8 @@ export const PRESETS: SequencePreset[] = [
     // programmed current auto-retry at half current down to 5 A.
     name: 'Parametric Cycle',
     variables: [
-      { key: 'Discharge A', value: 10 },
-      { key: 'Cutoff V', value: 2.5 },
+      { key: 'Discharge A', value: 10, unit: 'A' },
+      { key: 'Cutoff V', value: 2.5, unit: 'V' },
     ],
     steps: [
       {

@@ -20,7 +20,7 @@ import { api, apiPost, type CellGroup, type Sequence } from '../api-client.ts';
 import { SequenceTimeline } from '../components/SequenceTimeline.tsx';
 import { StepPalette } from '../components/StepPalette.tsx';
 import { StepProperties } from '../components/StepProperties.tsx';
-import type { FieldBindings, SequenceStep, SequenceVariable, StepPath } from '../lib/sequence-types.ts';
+import type { FieldBindings, SequenceStep, SequenceVariable, StepPath, VariableUnit } from '../lib/sequence-types.ts';
 import {
   getStepAtPath,
   insertStepAtPath,
@@ -33,6 +33,8 @@ import {
   serializeSequenceDoc,
   totalEstimatedDurationH,
   updateStepAtPath,
+  VARIABLE_UNITS,
+  variableMatchesField,
 } from '../lib/sequence-types.ts';
 
 // ── Component ──────────────────────────────────────────────────────
@@ -167,6 +169,27 @@ export function SequenceEditor() {
     setVariables(prev => prev.map((v, i) => (i === index ? { ...v, value } : v)));
     setActivePreset('');
   }, []);
+
+  /** Set/clear a variable's unit, unbinding any field the new unit no longer fits */
+  const setVariableUnit = useCallback(
+    (index: number, unit: VariableUnit | undefined) => {
+      const key = variables[index]?.key;
+      if (key === undefined) return;
+      const pruneBinds = (list: SequenceStep[]): SequenceStep[] =>
+        list.map(s => {
+          if (s.type === 'loop') return { ...s, children: pruneBinds(s.children) };
+          if (s.type === 'wait' || !s.bind) return s;
+          const bind = Object.fromEntries(
+            Object.entries(s.bind).filter(([field, k]) => k !== key || variableMatchesField(unit, field))
+          ) as FieldBindings;
+          return { ...s, bind: Object.keys(bind).length > 0 ? bind : undefined };
+        });
+      setVariables(prev => prev.map((v, i) => (i === index ? { ...v, unit } : v)));
+      setSteps(prev => pruneBinds(prev));
+      setActivePreset('');
+    },
+    [variables]
+  );
 
   const removeVariable = useCallback((index: number) => {
     setVariables(prev => prev.filter((_, i) => i !== index));
@@ -473,6 +496,25 @@ export function SequenceEditor() {
               step={0.1}
               onChange={e => setVariableValue(i, parseFloat(e.target.value) || 0)}
             />
+            <span className="seq-var-units">
+              <button
+                type="button"
+                className={`seq-var-unit${v.unit === undefined ? ' active' : ''}`}
+                onClick={() => setVariableUnit(i, undefined)}
+              >
+                any
+              </button>
+              {VARIABLE_UNITS.map(u => (
+                <button
+                  key={u}
+                  type="button"
+                  className={`seq-var-unit${v.unit === u ? ' active' : ''}`}
+                  onClick={() => setVariableUnit(i, u)}
+                >
+                  {u}
+                </button>
+              ))}
+            </span>
             <button type="button" className="seq-var-delete" onClick={() => removeVariable(i)}>
               {'×'}
             </button>

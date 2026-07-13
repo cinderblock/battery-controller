@@ -7,7 +7,13 @@
 
 import { useCallback, useRef } from 'react';
 import type { SequenceStep, SequenceVariable, StepPath } from '../lib/sequence-types.ts';
-import { estimateDurationH, formatMinutes, parseDurationInput, resolveCurrentA } from '../lib/sequence-types.ts';
+import {
+  estimateDurationH,
+  formatMinutes,
+  parseDurationInput,
+  resolveCurrentA,
+  variableMatchesField,
+} from '../lib/sequence-types.ts';
 
 // ── Props ──────────────────────────────────────────────────────────
 
@@ -257,7 +263,13 @@ export function StepProperties({
   );
 
   const bindChips = (field: string) => (
-    <BindChips bound={bind[field]} variables={variables} onBind={key => handleBind(field, key)} />
+    <BindChips
+      bound={bind[field]}
+      // Only variables whose unit fits this field — plus the currently-bound
+      // one (so a now-mismatched binding stays visible to unbind)
+      variables={variables.filter(v => variableMatchesField(v.unit, field) || v.key === bind[field])}
+      onBind={key => handleBind(field, key)}
+    />
   );
 
   const toggleCRate = useCallback(() => {
