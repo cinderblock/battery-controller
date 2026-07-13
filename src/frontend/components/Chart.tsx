@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import uPlot from 'uplot';
 import type { BandDef, ChartSeriesInfo, MetricKey, ThresholdLine } from '../lib/chart-data.ts';
 import { formatElapsedShort } from '../lib/chart-data.ts';
+import { attachWheelZoom } from '../lib/uplot-wheel-zoom.ts';
 
 const MAX_TOOLTIP_ROWS = 16;
 
@@ -645,6 +646,7 @@ export function Chart({
     const opts = buildOptions();
     const u = new uPlot(opts, data as uPlot.AlignedData, container);
     uplotRef.current = u;
+    attachWheelZoom(u, 10); // never narrower than 10 s
     const unregisterZoomSync = syncKeyRef.current ? registerZoomSync(syncKeyRef.current, u) : null;
 
     return () => {

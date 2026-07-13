@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import uPlot from 'uplot';
 import type { CapacitySeriesInfo, ThresholdLine } from '../lib/chart-data.ts';
+import { attachWheelZoom } from '../lib/uplot-wheel-zoom.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -305,6 +306,7 @@ export function CapacityChart({ data, seriesInfo, thresholds = [], className }: 
     const opts = buildOptions();
     const u = new uPlot(opts, data as uPlot.AlignedData, container);
     uplotRef.current = u;
+    attachWheelZoom(u, 1); // x is Ah — never narrower than 1 Ah
 
     return () => {
       u.destroy();
