@@ -6,7 +6,7 @@
  * behind the measured run data. Includes a custom hover tooltip.
  */
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import uPlot from 'uplot';
 import type { CapacitySeriesInfo, ThresholdLine } from '../lib/chart-data.ts';
 
@@ -101,9 +101,7 @@ export function CapacityChart({ data, seriesInfo, thresholds = [], className }: 
     ];
 
     for (const info of seriesInfo) {
-      const dash = info.isReference && info.refStyle
-        ? DASH_PATTERNS[info.refStyle]
-        : undefined;
+      const dash = info.isReference && info.refStyle ? DASH_PATTERNS[info.refStyle] : undefined;
 
       const scale = info.metric === 'current' ? 'A' : 'V';
 
@@ -165,24 +163,15 @@ export function CapacityChart({ data, seriesInfo, thresholds = [], className }: 
       scales: {
         x: {
           time: false,
-          range: (_u: uPlot, min: number, max: number) => [
-            Math.max(0, min),
-            Math.min(100, max),
-          ],
+          range: (_u: uPlot, min: number, max: number) => [Math.max(0, min), Math.min(100, max)],
         },
         V: {
           auto: true,
-          range: (_u: uPlot, min: number, max: number) => [
-            Math.max(2.0, min - 0.05),
-            Math.min(4.0, max + 0.05),
-          ],
+          range: (_u: uPlot, min: number, max: number) => [Math.max(2.0, min - 0.05), Math.min(4.0, max + 0.05)],
         },
         A: {
           auto: true,
-          range: (_u: uPlot, min: number, max: number) => [
-            Math.max(0, min - 1),
-            max + 1,
-          ],
+          range: (_u: uPlot, min: number, max: number) => [Math.max(0, min - 1), max + 1],
         },
       },
       axes,
@@ -353,10 +342,5 @@ export function CapacityChart({ data, seriesInfo, thresholds = [], className }: 
     return () => observer.disconnect();
   }, []);
 
-  return (
-    <div
-      ref={containerRef}
-      className={`chart-container cap-chart ${className ?? ''}`}
-    />
-  );
+  return <div ref={containerRef} className={`chart-container cap-chart ${className ?? ''}`} />;
 }

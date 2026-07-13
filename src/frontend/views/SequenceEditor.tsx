@@ -368,7 +368,6 @@ export function SequenceEditor() {
               setShowNewGroup(v => !v);
               setTimeout(() => newGroupNameRef.current?.focus(), 50);
             }}
-            title="Add cell type"
           >
             +
           </button>
@@ -440,7 +439,6 @@ export function SequenceEditor() {
                 e.stopPropagation();
                 handleDuplicateSequence(s);
               }}
-              title="Duplicate sequence"
             >
               {'\u2398'}
             </button>
@@ -450,7 +448,6 @@ export function SequenceEditor() {
                 e.stopPropagation();
                 handleDeleteSequence(s.id);
               }}
-              title="Delete sequence"
             >
               {'\u00D7'}
             </button>
@@ -476,12 +473,7 @@ export function SequenceEditor() {
               step={0.1}
               onChange={e => setVariableValue(i, parseFloat(e.target.value) || 0)}
             />
-            <button
-              type="button"
-              className="seq-var-delete"
-              onClick={() => removeVariable(i)}
-              title="Delete variable (bound fields keep their current value)"
-            >
+            <button type="button" className="seq-var-delete" onClick={() => removeVariable(i)}>
               {'×'}
             </button>
           </span>

@@ -8,7 +8,7 @@
  * - Moving steps into/out of loop containers
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { SequenceStep, StepPath } from '../lib/sequence-types.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -41,8 +41,8 @@ const PILL_COLORS: Record<string, string> = {
   'd-cc': '#fb923c',
   'd-cp': '#ffb74d',
   'c-cv': '#60a5fa',
-  'wait': '#777',
-  'loop': '#a78bfa',
+  wait: '#777',
+  loop: '#a78bfa',
 };
 
 // ── Hook ───────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ const PILL_COLORS: Record<string, string> = {
 export function useDragReorder(
   steps: SequenceStep[],
   onReorder: (fromPath: StepPath, toPath: StepPath) => void,
-  onInsertNew: (step: SequenceStep, atPath: StepPath) => void,
+  onInsertNew: (step: SequenceStep, atPath: StepPath) => void
 ) {
   const [dragState, setDragState] = useState<DragState>(INITIAL_STATE);
   const pressRef = useRef<{
@@ -110,8 +110,7 @@ export function useDragReorder(
     const loopContainers = bar.querySelectorAll('.loop-children');
     for (const lc of loopContainers) {
       const rect = lc.getBoundingClientRect();
-      if (clientX >= rect.left && clientX <= rect.right &&
-          clientY >= rect.top && clientY <= rect.bottom) {
+      if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
         // We're inside a loop container
         const parentSlot = lc.closest('.pill-slot');
         const parentPath = parentSlot?.getAttribute('data-path');
@@ -130,67 +129,71 @@ export function useDragReorder(
   }, []);
 
   // Start a drag (from existing pill)
-  const startDrag = useCallback((
-    path: StepPath,
-    label: string,
-    color: string,
-    x: number,
-    y: number,
-    pointerId: number,
-    newStep: SequenceStep | null = null,
-  ) => {
-    pressRef.current = { path, startX: x, startY: y, label, color, timer: null, pointerId, newStep };
+  const startDrag = useCallback(
+    (
+      path: StepPath,
+      label: string,
+      color: string,
+      x: number,
+      y: number,
+      pointerId: number,
+      newStep: SequenceStep | null = null
+    ) => {
+      pressRef.current = { path, startX: x, startY: y, label, color, timer: null, pointerId, newStep };
 
-    // Start press timer — after delay, even small moves count as drag
-    pressRef.current.timer = setTimeout(() => {
-      if (pressRef.current) {
-        pressRef.current.timer = null;
-      }
-    }, PRESS_DELAY_MS);
-  }, []);
+      // Start press timer — after delay, even small moves count as drag
+      pressRef.current.timer = setTimeout(() => {
+        if (pressRef.current) {
+          pressRef.current.timer = null;
+        }
+      }, PRESS_DELAY_MS);
+    },
+    []
+  );
 
-  const onPointerDown = useCallback((
-    path: StepPath,
-    label: string,
-    color: string,
-    e: React.PointerEvent,
-  ) => {
-    e.preventDefault();
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-    startDrag(path, label, color, e.clientX, e.clientY, e.pointerId);
-  }, [startDrag]);
+  const onPointerDown = useCallback(
+    (path: StepPath, label: string, color: string, e: React.PointerEvent) => {
+      e.preventDefault();
+      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+      startDrag(path, label, color, e.clientX, e.clientY, e.pointerId);
+    },
+    [startDrag]
+  );
 
-  const onPointerMove = useCallback((e: React.PointerEvent) => {
-    const press = pressRef.current;
-    if (!press) return;
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      const press = pressRef.current;
+      if (!press) return;
 
-    const dx = e.clientX - press.startX;
-    const dy = e.clientY - press.startY;
-    const dist = Math.sqrt(dx * dx + dy * dy);
+      const dx = e.clientX - press.startX;
+      const dy = e.clientY - press.startY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
 
-    if (!dragState.isDragging) {
-      // Check if we've moved enough to start dragging
-      if (dist > DRAG_THRESHOLD_PX) {
-        setDragState({
-          isDragging: true,
-          sourcePath: press.newStep ? null : press.path,
+      if (!dragState.isDragging) {
+        // Check if we've moved enough to start dragging
+        if (dist > DRAG_THRESHOLD_PX) {
+          setDragState({
+            isDragging: true,
+            sourcePath: press.newStep ? null : press.path,
+            ghostPosition: { x: e.clientX, y: e.clientY },
+            ghostLabel: press.label,
+            ghostColor: press.color,
+            dropTarget: null,
+            newStep: press.newStep,
+          });
+        }
+      } else {
+        // Update ghost position and compute drop target
+        const dropTarget = computeDropTarget(e.clientX, e.clientY);
+        setDragState(prev => ({
+          ...prev,
           ghostPosition: { x: e.clientX, y: e.clientY },
-          ghostLabel: press.label,
-          ghostColor: press.color,
-          dropTarget: null,
-          newStep: press.newStep,
-        });
+          dropTarget,
+        }));
       }
-    } else {
-      // Update ghost position and compute drop target
-      const dropTarget = computeDropTarget(e.clientX, e.clientY);
-      setDragState(prev => ({
-        ...prev,
-        ghostPosition: { x: e.clientX, y: e.clientY },
-        dropTarget,
-      }));
-    }
-  }, [dragState.isDragging, computeDropTarget]);
+    },
+    [dragState.isDragging, computeDropTarget]
+  );
 
   const onPointerUp = useCallback(() => {
     const press = pressRef.current;
@@ -223,45 +226,48 @@ export function useDragReorder(
   }, []);
 
   // Generate drag props for a pill at a given path
-  const dragPropsForPath = useCallback((path: StepPath): Record<string, any> => {
-    const step = getStepByPath(steps, path);
-    if (!step) return {};
-    const label = pillLabelForDrag(step);
-    const color = PILL_COLORS[step.type] ?? '#888';
+  const dragPropsForPath = useCallback(
+    (path: StepPath): Record<string, any> => {
+      const step = getStepByPath(steps, path);
+      if (!step) return {};
+      const label = pillLabelForDrag(step);
+      const color = PILL_COLORS[step.type] ?? '#888';
 
-    return {
-      onPointerDown: (e: React.PointerEvent) => onPointerDown(path, label, color, e),
-      'data-path': path.join('-'),
-      style: { touchAction: 'none' },
-    };
-  }, [steps, onPointerDown]);
+      return {
+        onPointerDown: (e: React.PointerEvent) => onPointerDown(path, label, color, e),
+        'data-path': path.join('-'),
+        style: { touchAction: 'none' },
+      };
+    },
+    [steps, onPointerDown]
+  );
 
   // Start drag from palette (new step)
-  const startPaletteDrag = useCallback((
-    step: SequenceStep,
-    label: string,
-    color: string,
-    e: React.PointerEvent,
-  ) => {
-    e.preventDefault();
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-    pressRef.current = {
-      path: [steps.length], // tentative insert at end
-      startX: e.clientX,
-      startY: e.clientY,
-      label,
-      color,
-      timer: null,
-      pointerId: e.pointerId,
-      newStep: step,
-    };
-  }, [steps.length]);
+  const startPaletteDrag = useCallback(
+    (step: SequenceStep, label: string, color: string, e: React.PointerEvent) => {
+      e.preventDefault();
+      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+      pressRef.current = {
+        path: [steps.length], // tentative insert at end
+        startX: e.clientX,
+        startY: e.clientY,
+        label,
+        color,
+        timer: null,
+        pointerId: e.pointerId,
+        newStep: step,
+      };
+    },
+    [steps.length]
+  );
 
   const barProps = {
     onPointerMove,
     onPointerUp,
     onPointerLeave: cancelDrag,
-    ref: (el: HTMLDivElement | null) => { barRef.current = el; },
+    ref: (el: HTMLDivElement | null) => {
+      barRef.current = el;
+    },
   };
 
   return { dragState, dragPropsForPath, startPaletteDrag, barProps };
@@ -279,10 +285,15 @@ function getStepByPath(steps: SequenceStep[], path: StepPath): SequenceStep | un
 
 function pillLabelForDrag(step: SequenceStep): string {
   switch (step.type) {
-    case 'd-cc': return `DCC ${step.currentA}A`;
-    case 'd-cp': return `DCP ${step.powerW}W`;
-    case 'c-cv': return `CCV ${step.currentA}A`;
-    case 'wait': return `Wait ${Math.round(step.durationS / 60)}m`;
-    case 'loop': return `Loop \u00D7${step.count}`;
+    case 'd-cc':
+      return `DCC ${step.currentA}A`;
+    case 'd-cp':
+      return `DCP ${step.powerW}W`;
+    case 'c-cv':
+      return `CCV ${step.currentA}A`;
+    case 'wait':
+      return `Wait ${Math.round(step.durationS / 60)}m`;
+    case 'loop':
+      return `Loop \u00D7${step.count}`;
   }
 }

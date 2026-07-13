@@ -6,11 +6,11 @@
  * Supports drag-and-drop reordering via pointer events.
  */
 
-import { useRef, useEffect } from 'react';
-import type { SequenceStep, StepPath } from '../lib/sequence-types.ts';
-import { StepPill } from './StepPill.tsx';
-import { LoopContainer } from './LoopContainer.tsx';
+import { useEffect, useRef } from 'react';
 import type { DragState } from '../hooks/useDragReorder.ts';
+import type { SequenceStep, StepPath } from '../lib/sequence-types.ts';
+import { LoopContainer } from './LoopContainer.tsx';
+import { StepPill } from './StepPill.tsx';
 
 // ── Props ──────────────────────────────────────────────────────────
 
@@ -52,9 +52,7 @@ export function StepPillBar({
 
   return (
     <div className="pill-bar" ref={barRef} {...barProps}>
-      {steps.length === 0 && (
-        <div className="pill-bar-empty">Add or drag steps to build a sequence</div>
-      )}
+      {steps.length === 0 && <div className="pill-bar-empty">Add or drag steps to build a sequence</div>}
       {steps.map((step, i) => {
         const stepPath: StepPath = [i];
         const isBeforeDrop = pathsEqual(dragState.dropTarget, stepPath);
@@ -88,9 +86,7 @@ export function StepPillBar({
         );
       })}
       {/* Drop indicator at end of list */}
-      {pathsEqual(dragState.dropTarget, [steps.length]) && (
-        <div className="drop-indicator" />
-      )}
+      {pathsEqual(dragState.dropTarget, [steps.length]) && <div className="drop-indicator" />}
 
       {/* Drag ghost */}
       {dragState.isDragging && dragState.ghostLabel && (

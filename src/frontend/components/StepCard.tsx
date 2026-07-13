@@ -53,8 +53,8 @@ const TYPE_CONFIG = {
   'd-cc': { label: 'Discharge (D-CC)', icon: 'D', iconClass: 'step-icon-discharge', color: '#fb923c' },
   'd-cp': { label: 'Discharge (D-CP)', icon: 'D', iconClass: 'step-icon-discharge', color: '#ffb74d' },
   'c-cv': { label: 'Charge (C-CV)', icon: 'C', iconClass: 'step-icon-charge', color: '#60a5fa' },
-  'wait': { label: 'Wait', icon: '\u23F8', iconClass: 'step-icon-wait', color: '#777' },
-  'loop': { label: 'Loop', icon: '\u27F3', iconClass: 'step-icon-loop', color: '#a78bfa' },
+  wait: { label: 'Wait', icon: '\u23F8', iconClass: 'step-icon-wait', color: '#777' },
+  loop: { label: 'Loop', icon: '\u27F3', iconClass: 'step-icon-loop', color: '#a78bfa' },
 } as const;
 
 // ── Component ──────────────────────────────────────────────────────
@@ -77,10 +77,13 @@ export function StepCard({
 
   const subtitle = getSubtitle(step, capacityAh, useCRate);
 
-  const handleFieldChange = useCallback((field: string, value: number) => {
-    const updated = { ...step, [field]: value } as SequenceStep;
-    onUpdate(index, updated);
-  }, [step, index, onUpdate]);
+  const handleFieldChange = useCallback(
+    (field: string, value: number) => {
+      const updated = { ...step, [field]: value } as SequenceStep;
+      onUpdate(index, updated);
+    },
+    [step, index, onUpdate]
+  );
 
   const handleClick = useCallback(() => {
     onSelect(index);
@@ -102,7 +105,10 @@ export function StepCard({
         </span>
         <span
           className="step-remove"
-          onClick={e => { e.stopPropagation(); onRemove(index); }}
+          onClick={e => {
+            e.stopPropagation();
+            onRemove(index);
+          }}
         >
           {'\u00D7'}
         </span>
@@ -257,13 +263,14 @@ export function StepCard({
                     onUpdate(index, { ...step, startIndex: s, endIndex: en });
                   }}
                 >
-                  <option value={`0-${totalSteps - 2}`}>
-                    All steps (1–{totalSteps - 1})
-                  </option>
+                  <option value={`0-${totalSteps - 2}`}>All steps (1–{totalSteps - 1})</option>
                   {/* Allow selecting sub-ranges if there are enough steps */}
-                  {totalSteps > 3 && Array.from({ length: totalSteps - 1 }, (_, i) => (
-                    <option key={i} value={`${i}-${i}`}>Step {i + 1} only</option>
-                  ))}
+                  {totalSteps > 3 &&
+                    Array.from({ length: totalSteps - 1 }, (_, i) => (
+                      <option key={i} value={`${i}-${i}`}>
+                        Step {i + 1} only
+                      </option>
+                    ))}
                 </select>
               </div>
               <div className="sp-note">
@@ -313,9 +320,7 @@ function ParamRow({
         />
         <span className="sp-unit">{unit}</span>
       </div>
-      {color && min !== max && (
-        <SetpointBar value={value} min={min} max={max} color={color} />
-      )}
+      {color && min !== max && <SetpointBar value={value} min={min} max={max} color={color} />}
     </div>
   );
 }

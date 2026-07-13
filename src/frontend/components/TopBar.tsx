@@ -61,13 +61,6 @@ const STEP_TIMELINE_CLASSES: Record<string, string> = {
   wait: 'step-wait',
 };
 
-const STEP_TIMELINE_LABELS: Record<string, string> = {
-  'c-cv': 'Charge',
-  'd-cc': 'Discharge CC',
-  'd-cp': 'Discharge CP',
-  wait: 'Wait',
-};
-
 const MODE_CLASSES: Record<DeviceMode, string> = {
   idle: 'badge-idle',
   'd-cc': 'badge-discharge',
@@ -184,15 +177,20 @@ export function TopBar({ activeCellIrMohm = null }: TopBarProps) {
                 const totalW = reading.voltage * reading.current;
                 const pct = totalW > 0 ? Math.round((heatW / totalW) * 100) : 0;
                 return (
-                  <span
-                    className="reading-val rv-heat"
-                    title={`Estimated I²R heating from this cell's ${activeCellIrMohm.toFixed(1)} mΩ internal resistance — ${pct}% of the ${totalW.toFixed(0)} W at the terminals`}
-                  >
+                  <span className="reading-val rv-heat">
                     <span className="reading-num">{heatW.toFixed(1)}</span>
-                    <span className="reading-unit">W heat</span>
+                    <span className="reading-unit">W heat · {pct}%</span>
                   </span>
                 );
               })()}
+            {activeCellIrMohm != null && activeCellIrMohm > 0 && (
+              <span className="reading-val rv-ir">
+                <span className="reading-num">
+                  {activeCellIrMohm < 10 ? activeCellIrMohm.toFixed(1) : Math.round(activeCellIrMohm)}
+                </span>
+                <span className="reading-unit">mΩ</span>
+              </span>
+            )}
             <span className="reading-val rv-capacity">
               <span className="reading-num">{reading.capacityAh.toFixed(1)}</span>
               <span className="reading-unit">Ah</span>
@@ -244,7 +242,7 @@ export function TopBar({ activeCellIrMohm = null }: TopBarProps) {
 
         {/* Live temperature readings — click through to channel/limit settings */}
         {state.tempReadings.length > 0 && (
-          <a href="/temperature" className="temp-live-readings" title="Temperature channels & stop limits">
+          <a href="/temperature" className="temp-live-readings">
             {state.tempReadings.map(r => (
               <span
                 key={r.channelId}
@@ -267,11 +265,7 @@ export function TopBar({ activeCellIrMohm = null }: TopBarProps) {
         {cycleActive && cycleState && (
           <div className="top-bar-cycle">
             <span className="cycle-name">{cycleState.programName ?? 'Sequence'}</span>
-            {cycleState.cellName && (
-              <span className="cycle-cell" title="Cell under test">
-                {cycleState.cellName}
-              </span>
-            )}
+            {cycleState.cellName && <span className="cycle-cell">{cycleState.cellName}</span>}
             {cycleState.status === 'waiting' && waitRemaining !== null && (
               <span className="cycle-wait-countdown">Wait {formatCountdown(waitRemaining)}</span>
             )}
@@ -379,7 +373,6 @@ export function TopBar({ activeCellIrMohm = null }: TopBarProps) {
                     key={i}
                     className={`cycle-timeline-step ${STEP_TIMELINE_CLASSES[stepType] ?? 'step-unknown'}${isDone ? ' step-done' : ''}${isActive ? ' step-active' : ''}${isFuture ? ' step-future' : ''}`}
                     style={{ flex: flexWeight }}
-                    title={`Step ${i + 1}: ${STEP_TIMELINE_LABELS[stepType] ?? stepType}${label ? ` — ${label}` : ''}`}
                   >
                     <div className="step-fill" style={{ width: `${fillPct}%` }} />
                     {label && <span className="step-capacity-label">{label}</span>}

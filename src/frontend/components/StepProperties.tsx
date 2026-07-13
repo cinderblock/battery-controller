@@ -132,20 +132,14 @@ function BindChips({
           key={v.key}
           type="button"
           className={`sp-bind-chip ${bound === v.key ? 'sp-bind-chip-active' : ''}`}
-          title={bound === v.key ? `Unbind from "${v.key}"` : `Bind to variable "${v.key}" (${v.value})`}
           onClick={() => onBind(bound === v.key ? null : v.key)}
         >
           {v.key}
         </button>
       ))}
       {missing && (
-        <button
-          type="button"
-          className="sp-bind-chip sp-bind-chip-missing"
-          title={`Bound to missing variable "${bound}" — tap to unbind`}
-          onClick={() => onBind(null)}
-        >
-          {bound}?
+        <button type="button" className="sp-bind-chip sp-bind-chip-missing" onClick={() => onBind(null)}>
+          {bound} missing
         </button>
       )}
     </span>
@@ -198,12 +192,7 @@ function TimeRow({ label, minutes, onChange }: { label: string; minutes: number;
 
 function CRateToggle({ useCRate, onToggle }: { useCRate: boolean; onToggle: () => void }) {
   return (
-    <button
-      className={`crate-step-toggle ${useCRate ? 'crate-active' : ''}`}
-      onClick={onToggle}
-      type="button"
-      title={useCRate ? 'Switch to Amps' : 'Switch to C-rate'}
-    >
+    <button className={`crate-step-toggle ${useCRate ? 'crate-active' : ''}`} onClick={onToggle} type="button">
       {useCRate ? 'C' : 'A'}
     </button>
   );
@@ -299,10 +288,10 @@ export function StepProperties({
           {step.type === 'loop' ? `\u00D7${step.count}` : `~${formatDuration(duration)}`}
         </span>
         <div className="step-properties-actions">
-          <button className="step-prop-btn" onClick={() => onDuplicate(path)} title="Duplicate step">
+          <button className="step-prop-btn" onClick={() => onDuplicate(path)}>
             {'\u2398'}
           </button>
-          <button className="step-prop-btn step-prop-btn-danger" onClick={() => onRemove(path)} title="Delete step">
+          <button className="step-prop-btn step-prop-btn-danger" onClick={() => onRemove(path)}>
             {'\u2715'}
           </button>
         </div>

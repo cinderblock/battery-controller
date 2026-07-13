@@ -5,7 +5,7 @@
  */
 
 import type { SequenceStep } from '../lib/sequence-types.ts';
-import { defaultDCC, defaultCCV, defaultWait, defaultLoop } from '../lib/sequence-types.ts';
+import { defaultCCV, defaultDCC, defaultLoop, defaultWait } from '../lib/sequence-types.ts';
 
 // ── Props ──────────────────────────────────────────────────────────
 
@@ -28,11 +28,7 @@ export function StepPalette({ onAdd }: StepPaletteProps) {
   return (
     <div className="step-palette">
       {PALETTE_ITEMS.map(item => (
-        <button
-          key={item.label}
-          className="palette-btn"
-          onClick={() => onAdd(item.factory())}
-        >
+        <button key={item.label} className="palette-btn" onClick={() => onAdd(item.factory())}>
           <span className="palette-dot" style={{ background: item.color }} />
           {item.label}
         </button>

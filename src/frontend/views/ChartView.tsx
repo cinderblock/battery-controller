@@ -611,12 +611,7 @@ export function ChartView() {
                 </div>
                 {showTempChart && (
                   <>
-                    <button
-                      type="button"
-                      className="chart-temps-toggle"
-                      onClick={toggleTempsCollapsed}
-                      title={tempsCollapsed ? 'Show the temperature chart' : 'Hide the temperature chart'}
-                    >
+                    <button type="button" className="chart-temps-toggle" onClick={toggleTempsCollapsed}>
                       <span className={`chart-temps-chevron${tempsCollapsed ? '' : ' open'}`}>{'▸'}</span>
                       Temperatures
                     </button>
@@ -708,7 +703,6 @@ export function ChartView() {
               className="filter-select"
               value={daysPast}
               onChange={e => setDaysPast(parseInt(e.target.value, 10))}
-              title="Show runs from the last N days"
             >
               <option value="0">All runs</option>
               <option value="1">Last 24h</option>
@@ -718,16 +712,10 @@ export function ChartView() {
             <button
               className={`filter-chip${hiddenCellIds.size > 0 ? ' active' : ''}`}
               onClick={() => setCellsModalOpen(true)}
-              title="Choose which cells' runs are plotted"
             >
               Cells{hiddenCellIds.size > 0 ? ` (${hiddenCellIds.size} hidden)` : '…'}
             </button>
-            <select
-              className="filter-select"
-              value={colorBy}
-              onChange={e => setColorBy(e.target.value as ColorBy)}
-              title="How to color runs on the chart"
-            >
+            <select className="filter-select" value={colorBy} onChange={e => setColorBy(e.target.value as ColorBy)}>
               <option value="run">Color: run</option>
               <option value="mode">Color: chg/dis</option>
               <option value="cell">Color: cell</option>
@@ -768,11 +756,7 @@ export function ChartView() {
           <div className="bottom-spacer" />
 
           {cycleActive && (
-            <button
-              className={`btn btn-end-step${endStepArmed ? ' armed' : ''}`}
-              onClick={handleEndStep}
-              title="Finish the current sequence step now and move on to the next one"
-            >
+            <button className={`btn btn-end-step${endStepArmed ? ' armed' : ''}`} onClick={handleEndStep}>
               {endStepArmed ? 'Really end step?' : 'End Step'}
             </button>
           )}
@@ -795,13 +779,6 @@ export function ChartView() {
             className={`btn ${state.bridgeActive ? 'btn-bridge-active' : 'btn-link'}`}
             onClick={toggleBridge}
             disabled={bridgeLoading || isTestActive}
-            title={
-              isTestActive
-                ? 'Cannot enable bridge while a test is running'
-                : state.bridgeActive
-                  ? 'Disable bridge mode — return serial to this app'
-                  : 'Enable serial proxy — forward serial port over TCP'
-            }
           >
             {bridgeLoading ? '...' : state.bridgeActive ? 'Proxy On' : 'Serial Proxy'}
           </button>

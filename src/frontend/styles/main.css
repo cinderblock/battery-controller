@@ -234,6 +234,10 @@ body {
 .rv-heat .reading-num {
   color: #ff8a65;
 }
+
+.rv-ir .reading-num {
+  color: #a78bfa;
+}
 .reading-unit {
   color: var(--text-dim);
   font-size: 11px;
@@ -1794,6 +1798,11 @@ body {
 .fleet-cell-runs {
   color: var(--text-dim);
   font-size: 11px;
+}
+.fleet-cell-ir {
+  color: #a78bfa;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 .fleet-cell-none {
   color: var(--text-dim);

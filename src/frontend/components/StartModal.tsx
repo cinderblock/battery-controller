@@ -105,7 +105,7 @@ function SequencePreview({ stepsJson }: { stepsJson: string }) {
         }
         if (s.type === 'loop-end') return null;
         return (
-          <span key={i} className="seq-preview-block" style={{ background: s.color }} title={s.label}>
+          <span key={i} className="seq-preview-block" style={{ background: s.color }}>
             {s.label}
           </span>
         );

@@ -18,15 +18,30 @@ export function LiveOverlay() {
   return (
     <div className="live-overlay">
       <div className="live-row live-primary">
-        <span className="live-val">{reading.voltage.toFixed(3)}<small>V</small></span>
-        <span className="live-val">{reading.current.toFixed(2)}<small>A</small></span>
+        <span className="live-val">
+          {reading.voltage.toFixed(3)}
+          <small>V</small>
+        </span>
+        <span className="live-val">
+          {reading.current.toFixed(2)}
+          <small>A</small>
+        </span>
       </div>
       <div className="live-row">
-        <span className="live-val">{reading.power.toFixed(1)}<small>W</small></span>
-        <span className="live-val">{reading.capacityAh.toFixed(3)}<small>Ah</small></span>
+        <span className="live-val">
+          {reading.power.toFixed(1)}
+          <small>W</small>
+        </span>
+        <span className="live-val">
+          {reading.capacityAh.toFixed(3)}
+          <small>Ah</small>
+        </span>
       </div>
       <div className="live-row">
-        <span className="live-val">{reading.energyWh.toFixed(1)}<small>Wh</small></span>
+        <span className="live-val">
+          {reading.energyWh.toFixed(1)}
+          <small>Wh</small>
+        </span>
         <span className="live-val live-time">{formatElapsedShort(reading.elapsedS)}</span>
       </div>
     </div>

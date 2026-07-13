@@ -46,15 +46,16 @@ export function LoopContainer({
     <div className={`loop-container ${isLoopSelected ? 'loop-container-selected' : ''}`}>
       <div
         className="loop-header"
-        onClick={(e) => { e.stopPropagation(); onSelect(path); }}
+        onClick={e => {
+          e.stopPropagation();
+          onSelect(path);
+        }}
       >
         <span className="loop-icon">{'\u27F3'}</span>
         <span>Loop \u00D7{step.count}</span>
       </div>
       <div className="loop-children">
-        {step.children.length === 0 && (
-          <div className="loop-empty">Drop steps here</div>
-        )}
+        {step.children.length === 0 && <div className="loop-empty">Drop steps here</div>}
         {step.children.map((child, i) => {
           const childPath: StepPath = [parentIndex, i];
           const isBeforeDrop = pathsEqual(dropIndicatorPath, childPath);
@@ -88,9 +89,7 @@ export function LoopContainer({
           );
         })}
         {/* Drop indicator at end of loop children */}
-        {pathsEqual(dropIndicatorPath, [parentIndex, step.children.length]) && (
-          <div className="drop-indicator" />
-        )}
+        {pathsEqual(dropIndicatorPath, [parentIndex, step.children.length]) && <div className="drop-indicator" />}
       </div>
     </div>
   );

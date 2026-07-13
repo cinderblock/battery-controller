@@ -99,12 +99,7 @@ export function CellSelectModal({
                   <input type="checkbox" checked={visible} onChange={() => onToggleCell(cell.id)} />
                   <span className="cell-select-name">{name}</span>
                   {cell.latest_ir_mohm != null && (
-                    <span
-                      className="cell-select-ir"
-                      title="Estimated DC internal resistance (from ΔV/ΔI at load steps in the most recent run)"
-                    >
-                      {formatIr(cell.latest_ir_mohm)}
-                    </span>
+                    <span className="cell-select-ir">{formatIr(cell.latest_ir_mohm)}</span>
                   )}
                   <span className="cell-select-detail">
                     {loadingCellId === cell.id
@@ -143,7 +138,6 @@ export function CellSelectModal({
                 ) : (
                   <button
                     className="btn-cell-delete"
-                    title="Delete this cell"
                     onClick={() => setDeleteState({ cellId: cell.id, stage: 'confirm' })}
                   >
                     ✕

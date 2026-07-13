@@ -11,16 +11,16 @@
  * Tap a pill to edit its value inline.
  */
 
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import type { SequenceStep, ExecutableStep, SimPoint } from '../lib/sequence-types.ts';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ExecutableStep, SequenceStep, SimPoint } from '../lib/sequence-types.ts';
 import {
-  simulateStep,
-  stepEndVoltage,
   estimateDurationH,
   flattenForTimeline,
-  resolveCurrentA,
-  parseDurationInput,
   formatMinutes,
+  parseDurationInput,
+  resolveCurrentA,
+  simulateStep,
+  stepEndVoltage,
 } from '../lib/sequence-types.ts';
 
 // ── Props ──────────────────────────────────────────────────────────
@@ -99,11 +99,16 @@ const COLORS = {
 
 function stepColor(step: SequenceStep): string {
   switch (step.type) {
-    case 'd-cc': return COLORS.dcc;
-    case 'd-cp': return COLORS.dcp;
-    case 'c-cv': return COLORS.ccv;
-    case 'wait': return COLORS.wait;
-    case 'loop': return COLORS.loop;
+    case 'd-cc':
+      return COLORS.dcc;
+    case 'd-cp':
+      return COLORS.dcp;
+    case 'c-cv':
+      return COLORS.ccv;
+    case 'wait':
+      return COLORS.wait;
+    case 'loop':
+      return COLORS.loop;
   }
 }
 
@@ -137,89 +142,174 @@ function getStepPills(step: ExecutableStep, capacityAh: number, durationH: numbe
     case 'd-cc':
       return [
         {
-          position: 'tl', field: 'currentA', value: step.currentA,
+          position: 'tl',
+          field: 'currentA',
+          value: step.currentA,
           display: step.useCRate ? `${step.currentA}C` : `${Math.round(resolveCurrentA(step, capacityAh))}A`,
-          unit: step.useCRate ? 'C' : 'A', editable: true,
-          inputStep: step.useCRate ? 0.01 : 1, minWidth: 45,
+          unit: step.useCRate ? 'C' : 'A',
+          editable: true,
+          inputStep: step.useCRate ? 0.01 : 1,
+          minWidth: 45,
         },
         {
-          position: 'center', field: '_est', value: 0,
+          position: 'center',
+          field: '_est',
+          value: 0,
           display: formatDuration(durationH),
-          unit: '', editable: false, inputStep: 0, minWidth: 55,
+          unit: '',
+          editable: false,
+          inputStep: 0,
+          minWidth: 55,
         },
         {
-          position: 'br', field: 'cutoffV', value: step.cutoffV,
+          position: 'br',
+          field: 'cutoffV',
+          value: step.cutoffV,
           display: `${step.cutoffV.toFixed(2)}V`,
-          unit: 'V', editable: true, inputStep: 0.01, minWidth: 45,
+          unit: 'V',
+          editable: true,
+          inputStep: 0.01,
+          minWidth: 45,
         },
-        ...(step.maxTimeMin ? [{
-          position: 'bl' as const, field: 'maxTimeMin', value: step.maxTimeMin,
-          display: formatTimePill(step.maxTimeMin),
-          unit: '', editable: true, inputStep: 1, minWidth: 85, isTime: true,
-        }] : []),
+        ...(step.maxTimeMin
+          ? [
+              {
+                position: 'bl' as const,
+                field: 'maxTimeMin',
+                value: step.maxTimeMin,
+                display: formatTimePill(step.maxTimeMin),
+                unit: '',
+                editable: true,
+                inputStep: 1,
+                minWidth: 85,
+                isTime: true,
+              },
+            ]
+          : []),
       ];
 
     case 'd-cp':
       return [
         {
-          position: 'tl', field: 'powerW', value: step.powerW,
+          position: 'tl',
+          field: 'powerW',
+          value: step.powerW,
           display: `${step.powerW}W`,
-          unit: 'W', editable: true, inputStep: 1, minWidth: 45,
+          unit: 'W',
+          editable: true,
+          inputStep: 1,
+          minWidth: 45,
         },
         {
-          position: 'center', field: '_est', value: 0,
+          position: 'center',
+          field: '_est',
+          value: 0,
           display: formatDuration(durationH),
-          unit: '', editable: false, inputStep: 0, minWidth: 55,
+          unit: '',
+          editable: false,
+          inputStep: 0,
+          minWidth: 55,
         },
         {
-          position: 'br', field: 'cutoffV', value: step.cutoffV,
+          position: 'br',
+          field: 'cutoffV',
+          value: step.cutoffV,
           display: `${step.cutoffV.toFixed(2)}V`,
-          unit: 'V', editable: true, inputStep: 0.01, minWidth: 45,
+          unit: 'V',
+          editable: true,
+          inputStep: 0.01,
+          minWidth: 45,
         },
-        ...(step.maxTimeMin ? [{
-          position: 'bl' as const, field: 'maxTimeMin', value: step.maxTimeMin,
-          display: formatTimePill(step.maxTimeMin),
-          unit: '', editable: true, inputStep: 1, minWidth: 85, isTime: true,
-        }] : []),
+        ...(step.maxTimeMin
+          ? [
+              {
+                position: 'bl' as const,
+                field: 'maxTimeMin',
+                value: step.maxTimeMin,
+                display: formatTimePill(step.maxTimeMin),
+                unit: '',
+                editable: true,
+                inputStep: 1,
+                minWidth: 85,
+                isTime: true,
+              },
+            ]
+          : []),
       ];
 
     case 'c-cv':
       return [
         {
-          position: 'tl', field: 'currentA', value: step.currentA,
+          position: 'tl',
+          field: 'currentA',
+          value: step.currentA,
           display: step.useCRate ? `${step.currentA}C` : `${Math.round(resolveCurrentA(step, capacityAh))}A`,
-          unit: step.useCRate ? 'C' : 'A', editable: true,
-          inputStep: step.useCRate ? 0.01 : 1, minWidth: 45,
+          unit: step.useCRate ? 'C' : 'A',
+          editable: true,
+          inputStep: step.useCRate ? 0.01 : 1,
+          minWidth: 45,
         },
         {
-          position: 'tr', field: 'targetV', value: step.targetV,
+          position: 'tr',
+          field: 'targetV',
+          value: step.targetV,
           display: `${step.targetV.toFixed(2)}V`,
-          unit: 'V', editable: true, inputStep: 0.01, minWidth: 85,
+          unit: 'V',
+          editable: true,
+          inputStep: 0.01,
+          minWidth: 85,
         },
         {
-          position: 'center', field: '_est', value: 0,
+          position: 'center',
+          field: '_est',
+          value: 0,
           display: formatDuration(durationH),
-          unit: '', editable: false, inputStep: 0, minWidth: 55,
+          unit: '',
+          editable: false,
+          inputStep: 0,
+          minWidth: 55,
         },
-        ...(step.maxTimeMin ? [{
-          position: 'bl' as const, field: 'maxTimeMin', value: step.maxTimeMin,
-          display: formatTimePill(step.maxTimeMin),
-          unit: '', editable: true, inputStep: 1, minWidth: 85, isTime: true,
-        }] : []),
+        ...(step.maxTimeMin
+          ? [
+              {
+                position: 'bl' as const,
+                field: 'maxTimeMin',
+                value: step.maxTimeMin,
+                display: formatTimePill(step.maxTimeMin),
+                unit: '',
+                editable: true,
+                inputStep: 1,
+                minWidth: 85,
+                isTime: true,
+              },
+            ]
+          : []),
         {
-          position: 'br', field: 'cutoffCurrentA', value: step.cutoffCurrentA,
+          position: 'br',
+          field: 'cutoffCurrentA',
+          value: step.cutoffCurrentA,
           display: `${step.cutoffCurrentA}A`,
-          unit: 'A', editable: true, inputStep: 0.1, minWidth: 85,
+          unit: 'A',
+          editable: true,
+          inputStep: 0.1,
+          minWidth: 85,
         },
       ];
 
     case 'wait':
-      return [{
-        position: 'center', field: '_durationMin',
-        value: Math.round(step.durationS / 60),
-        display: formatTimePill(Math.round(step.durationS / 60)),
-        unit: '', editable: true, inputStep: 1, minWidth: 30, isTime: true,
-      }];
+      return [
+        {
+          position: 'center',
+          field: '_durationMin',
+          value: Math.round(step.durationS / 60),
+          display: formatTimePill(Math.round(step.durationS / 60)),
+          unit: '',
+          editable: true,
+          inputStep: 1,
+          minWidth: 30,
+          isTime: true,
+        },
+      ];
   }
 }
 
@@ -228,7 +318,7 @@ function getStepPills(step: ExecutableStep, capacityAh: number, durationH: numbe
 function computeLayout(
   steps: SequenceStep[],
   capacityAh: number,
-  chartWidth: number,
+  chartWidth: number
 ): { blocks: BlockLayout[]; loops: LoopLayout[] } {
   const blocks: BlockLayout[] = [];
   const loops: LoopLayout[] = [];
@@ -266,7 +356,7 @@ function computeLayout(
       topLevelIndex: i,
       count: s.count,
       x: first.x,
-      width: (last.x + last.width) - first.x,
+      width: last.x + last.width - first.x,
     });
   }
 
@@ -350,12 +440,7 @@ function EditablePill({
   }
 
   return (
-    <button
-      className={`tl-pill ${className}`}
-      style={{ background: `${color}30`, color }}
-      onClick={onTap}
-      title={`${display} \u2014 tap to edit`}
-    >
+    <button className={`tl-pill ${className}`} style={{ background: `${color}30`, color }} onClick={onTap}>
       {display}
     </button>
   );
@@ -364,7 +449,12 @@ function EditablePill({
 // ── Main component ─────────────────────────────────────────────────
 
 export function SequenceTimeline({
-  steps, selectedPath, capacityAh, onSelectStep, onReorder, onUpdate,
+  steps,
+  selectedPath,
+  capacityAh,
+  onSelectStep,
+  onReorder,
+  onUpdate,
 }: TimelineProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -397,8 +487,8 @@ export function SequenceTimeline({
   const cw = dims.w - pad.l - pad.r;
   const ch = dims.h - pad.t - pad.b;
   const layout = useMemo(
-    () => cw > 0 ? computeLayout(steps, capacityAh, cw) : { blocks: [], loops: [] },
-    [steps, capacityAh, cw],
+    () => (cw > 0 ? computeLayout(steps, capacityAh, cw) : { blocks: [], loops: [] }),
+    [steps, capacityAh, cw]
   );
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
@@ -481,12 +571,20 @@ export function SequenceTimeline({
       const isDragSource = dragRef.current?.isDragging && pathsEqual(block.path, dragRef.current.sourcePath);
       const isExcluded = 'excludeFromCount' in step && (step as any).excludeFromCount;
 
-      if (isDragSource) { ctx.save(); ctx.globalAlpha = 0.25; }
-      if (isExcluded) { ctx.save(); ctx.globalAlpha = (ctx.globalAlpha ?? 1) * 0.5; }
+      if (isDragSource) {
+        ctx.save();
+        ctx.globalAlpha = 0.25;
+      }
+      if (isExcluded) {
+        ctx.save();
+        ctx.globalAlpha = (ctx.globalAlpha ?? 1) * 0.5;
+      }
 
       // Background shading
       const bgAlpha = isSelected ? COLORS.selectedBg : COLORS.normalBg;
-      ctx.fillStyle = `${color}${Math.round(bgAlpha * 255).toString(16).padStart(2, '0')}`;
+      ctx.fillStyle = `${color}${Math.round(bgAlpha * 255)
+        .toString(16)
+        .padStart(2, '0')}`;
       ctx.fillRect(pad.l + block.x, pad.t, block.width, ch);
 
       const sim = blockSims[bi] ?? [];
@@ -591,7 +689,6 @@ export function SequenceTimeline({
       ctx.font = 'bold 11px -apple-system, system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(`\u00D7${loop.count}`, (lx + rx) / 2, bracketY + bracketH - 2);
-
     }
 
     // ── Drag overlay ───────────────────────────────────────────────
@@ -677,7 +774,7 @@ export function SequenceTimeline({
           const tw = ctx.measureText(label).width;
 
           // Flip label to left side if too close to right edge
-          const finalX = (labelX + tw + 6) > (pad.l + cw) ? hx - tw - 14 : labelX;
+          const finalX = labelX + tw + 6 > pad.l + cw ? hx - tw - 14 : labelX;
 
           ctx.fillStyle = '#000000cc';
           ctx.fillRect(finalX - 4, labelY - 11, tw + 8, 14);
@@ -691,82 +788,93 @@ export function SequenceTimeline({
     }
   }, [dims, layout, pad, cw, ch, selectedPath, capacityAh, blockSims]);
 
-  useEffect(() => { draw(); }, [draw]);
+  useEffect(() => {
+    draw();
+  }, [draw]);
 
   // ── Pointer events on canvas ─────────────────────────────────────
 
-  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const localX = x - pad.l;
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const localX = x - pad.l;
 
-    const { blocks, loops } = layoutRef.current;
+      const { blocks, loops } = layoutRef.current;
 
-    // Loop brackets
-    if (y > dims.h - 44) {
-      for (const loop of loops) {
-        if (localX >= loop.x && localX <= loop.x + loop.width) {
-          onSelectStep([loop.topLevelIndex]);
+      // Loop brackets
+      if (y > dims.h - 44) {
+        for (const loop of loops) {
+          if (localX >= loop.x && localX <= loop.x + loop.width) {
+            onSelectStep([loop.topLevelIndex]);
+            return;
+          }
+        }
+      }
+
+      // Block hit-test
+      for (const block of blocks) {
+        if (localX >= block.x && localX <= block.x + block.width) {
+          e.preventDefault();
+          (e.target as HTMLElement).setPointerCapture(e.pointerId);
+
+          const step = block.step;
+          const clr = stepColor(step);
+          let label = '';
+          if (step.type === 'd-cc') label = `D-CC ${Math.round(resolveCurrentA(step, capacityAh))}A`;
+          else if (step.type === 'd-cp') label = `D-CP ${step.powerW}W`;
+          else if (step.type === 'c-cv') label = `C-CV ${Math.round(resolveCurrentA(step, capacityAh))}A`;
+          else if (step.type === 'wait') label = `Wait ${Math.round(step.durationS / 60)}m`;
+
+          dragRef.current = {
+            sourcePath: [...block.path],
+            startX: x,
+            startY: y,
+            currentX: x,
+            currentY: y,
+            isDragging: false,
+            dropPath: null,
+            label,
+            color: clr,
+          };
           return;
         }
       }
-    }
+    },
+    [onSelectStep, capacityAh, pad.l, dims.h]
+  );
 
-    // Block hit-test
-    for (const block of blocks) {
-      if (localX >= block.x && localX <= block.x + block.width) {
-        e.preventDefault();
-        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      drag.currentX = e.clientX - rect.left;
+      drag.currentY = e.clientY - rect.top;
 
-        const step = block.step;
-        const clr = stepColor(step);
-        let label = '';
-        if (step.type === 'd-cc') label = `D-CC ${Math.round(resolveCurrentA(step, capacityAh))}A`;
-        else if (step.type === 'd-cp') label = `D-CP ${step.powerW}W`;
-        else if (step.type === 'c-cv') label = `C-CV ${Math.round(resolveCurrentA(step, capacityAh))}A`;
-        else if (step.type === 'wait') label = `Wait ${Math.round(step.durationS / 60)}m`;
-
-        dragRef.current = {
-          sourcePath: [...block.path],
-          startX: x, startY: y,
-          currentX: x, currentY: y,
-          isDragging: false,
-          dropPath: null,
-          label, color: clr,
-        };
-        return;
+      if (!drag.isDragging) {
+        const dx = drag.currentX - drag.startX;
+        const dy = drag.currentY - drag.startY;
+        if (Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD) {
+          drag.isDragging = true;
+          hoverRef.current = null; // hide crosshair during drag
+          setDragSourceKey(drag.sourcePath.join(','));
+        } else {
+          return;
+        }
       }
-    }
-  }, [onSelectStep, capacityAh, pad.l, dims.h]);
 
-  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    drag.currentX = e.clientX - rect.left;
-    drag.currentY = e.clientY - rect.top;
-
-    if (!drag.isDragging) {
-      const dx = drag.currentX - drag.startX;
-      const dy = drag.currentY - drag.startY;
-      if (Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD) {
-        drag.isDragging = true;
-        hoverRef.current = null; // hide crosshair during drag
-        setDragSourceKey(drag.sourcePath.join(','));
-      } else {
-        return;
-      }
-    }
-
-    const localX = drag.currentX - pad.l;
-    drag.dropPath = computeDropPath(localX, layoutRef.current.blocks, drag.sourcePath);
-    draw();
-  }, [draw, pad.l]);
+      const localX = drag.currentX - pad.l;
+      drag.dropPath = computeDropPath(localX, layoutRef.current.blocks, drag.sourcePath);
+      draw();
+    },
+    [draw, pad.l]
+  );
 
   const handlePointerUp = useCallback(() => {
     const drag = dragRef.current;
@@ -791,14 +899,17 @@ export function SequenceTimeline({
 
   // ── Hover crosshair tracking ─────────────────────────────────────
 
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (dragRef.current) return; // don't show crosshair while dragging
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    hoverRef.current = { x: e.clientX - rect.left };
-    draw();
-  }, [draw]);
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (dragRef.current) return; // don't show crosshair while dragging
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      hoverRef.current = { x: e.clientX - rect.left };
+      draw();
+    },
+    [draw]
+  );
 
   const handleMouseLeave = useCallback(() => {
     hoverRef.current = null;
@@ -807,20 +918,21 @@ export function SequenceTimeline({
 
   // ── Pill commit handler ──────────────────────────────────────────
 
-  const handlePillCommit = useCallback((
-    path: number[], field: string, value: number, step: ExecutableStep,
-  ) => {
-    let updated: SequenceStep;
-    if (field === '_durationMin') {
-      updated = { ...step, durationS: value * 60 } as SequenceStep;
-    } else if (field === 'maxTimeMin' && value <= 0) {
-      updated = { ...step, maxTimeMin: undefined } as SequenceStep;
-    } else {
-      updated = { ...step, [field]: value } as SequenceStep;
-    }
-    onUpdate(path, updated);
-    setEditingPill(null);
-  }, [onUpdate]);
+  const handlePillCommit = useCallback(
+    (path: number[], field: string, value: number, step: ExecutableStep) => {
+      let updated: SequenceStep;
+      if (field === '_durationMin') {
+        updated = { ...step, durationS: value * 60 } as SequenceStep;
+      } else if (field === 'maxTimeMin' && value <= 0) {
+        updated = { ...step, maxTimeMin: undefined } as SequenceStep;
+      } else {
+        updated = { ...step, [field]: value } as SequenceStep;
+      }
+      onUpdate(path, updated);
+      setEditingPill(null);
+    },
+    [onUpdate]
+  );
 
   // ── Render ───────────────────────────────────────────────────────
 
@@ -839,64 +951,63 @@ export function SequenceTimeline({
       />
 
       {/* Block overlays with editable pills */}
-      {ch > 0 && layout.blocks.map(block => {
-        const key = block.path.join(',');
-        const isDragSource = dragSourceKey === key;
-        const isExcluded = 'excludeFromCount' in block.step && (block.step as any).excludeFromCount;
-        const pills = getStepPills(block.step, capacityAh, block.durationH);
-        const color = stepColor(block.step);
+      {ch > 0 &&
+        layout.blocks.map(block => {
+          const key = block.path.join(',');
+          const isDragSource = dragSourceKey === key;
+          const isExcluded = 'excludeFromCount' in block.step && (block.step as any).excludeFromCount;
+          const pills = getStepPills(block.step, capacityAh, block.durationH);
+          const color = stepColor(block.step);
 
-        return (
-          <div
-            key={key}
-            className={`tl-block${isExcluded ? ' tl-block-excluded' : ''}${isDragSource ? ' tl-block-dragging' : ''}`}
-            style={{
-              left: pad.l + block.x,
-              top: pad.t,
-              width: block.width,
-              height: ch,
-            }}
-          >
-            {pills.filter(p => block.width >= p.minWidth).map(pill =>
-              pill.editable ? (
-                <EditablePill
-                  key={pill.field}
-                  className={`tl-pill-${pill.position}`}
-                  value={pill.value}
-                  display={pill.display}
-                  unit={pill.unit}
-                  color={color}
-                  editing={editingPill?.key === key && editingPill.field === pill.field}
-                  inputStep={pill.inputStep}
-                  isTime={pill.isTime}
-                  onTap={() => setEditingPill({ key, field: pill.field })}
-                  onCommit={v => handlePillCommit(block.path, pill.field, v, block.step)}
-                  onCancel={() => setEditingPill(null)}
-                />
-              ) : (
-                <span
-                  key={pill.field}
-                  className={`tl-pill tl-pill-readonly tl-pill-${pill.position}`}
-                  style={{ color: `${color}88` }}
-                >
-                  {pill.display}
-                </span>
-              ),
-            )}
-          </div>
-        );
-      })}
+          return (
+            <div
+              key={key}
+              className={`tl-block${isExcluded ? ' tl-block-excluded' : ''}${isDragSource ? ' tl-block-dragging' : ''}`}
+              style={{
+                left: pad.l + block.x,
+                top: pad.t,
+                width: block.width,
+                height: ch,
+              }}
+            >
+              {pills
+                .filter(p => block.width >= p.minWidth)
+                .map(pill =>
+                  pill.editable ? (
+                    <EditablePill
+                      key={pill.field}
+                      className={`tl-pill-${pill.position}`}
+                      value={pill.value}
+                      display={pill.display}
+                      unit={pill.unit}
+                      color={color}
+                      editing={editingPill?.key === key && editingPill.field === pill.field}
+                      inputStep={pill.inputStep}
+                      isTime={pill.isTime}
+                      onTap={() => setEditingPill({ key, field: pill.field })}
+                      onCommit={v => handlePillCommit(block.path, pill.field, v, block.step)}
+                      onCancel={() => setEditingPill(null)}
+                    />
+                  ) : (
+                    <span
+                      key={pill.field}
+                      className={`tl-pill tl-pill-readonly tl-pill-${pill.position}`}
+                      style={{ color: `${color}88` }}
+                    >
+                      {pill.display}
+                    </span>
+                  )
+                )}
+            </div>
+          );
+        })}
     </div>
   );
 }
 
 // ── Drop path computation ──────────────────────────────────────────
 
-function computeDropPath(
-  localX: number,
-  blocks: BlockLayout[],
-  sourcePath: number[],
-): number[] | null {
+function computeDropPath(localX: number, blocks: BlockLayout[], sourcePath: number[]): number[] | null {
   if (blocks.length === 0) return null;
 
   if (sourcePath.length > 1) {
@@ -916,12 +1027,14 @@ function computeDropPath(
     let bestDist = Infinity;
     for (let i = 0; i < bounds.length; i++) {
       const dist = Math.abs(localX - bounds[i]);
-      if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = i;
+      }
     }
 
-    const dropChildIdx = bestIdx < siblings.length
-      ? siblings[bestIdx].path[1]
-      : siblings[siblings.length - 1].path[1] + 1;
+    const dropChildIdx =
+      bestIdx < siblings.length ? siblings[bestIdx].path[1] : siblings[siblings.length - 1].path[1] + 1;
 
     if (dropChildIdx === childIdx || dropChildIdx === childIdx + 1) return null;
     return [loopIdx, dropChildIdx];
@@ -930,8 +1043,11 @@ function computeDropPath(
     const ranges = new Map<number, { x: number; right: number }>();
     for (const b of blocks) {
       const r = ranges.get(b.topLevelIndex);
-      if (r) { r.right = Math.max(r.right, b.x + b.width); }
-      else { ranges.set(b.topLevelIndex, { x: b.x, right: b.x + b.width }); }
+      if (r) {
+        r.right = Math.max(r.right, b.x + b.width);
+      } else {
+        ranges.set(b.topLevelIndex, { x: b.x, right: b.x + b.width });
+      }
     }
     const sorted = [...ranges.entries()].sort((a, b) => a[1].x - b[1].x);
 
@@ -946,7 +1062,10 @@ function computeDropPath(
     let bestDist = Infinity;
     for (let i = 0; i < bounds.length; i++) {
       const dist = Math.abs(localX - bounds[i]);
-      if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = i;
+      }
     }
 
     const dropIndex = bestIdx < sorted.length ? sorted[bestIdx][0] : sorted[sorted.length - 1][0] + 1;
@@ -955,11 +1074,7 @@ function computeDropPath(
   }
 }
 
-function computeDropX(
-  dropPath: number[],
-  blocks: BlockLayout[],
-  padL: number,
-): number | null {
+function computeDropX(dropPath: number[], blocks: BlockLayout[], padL: number): number | null {
   if (dropPath.length === 2) {
     const [loopIdx, childIdx] = dropPath;
     const siblings = blocks.filter(b => b.loopIndex === loopIdx);
@@ -973,8 +1088,11 @@ function computeDropX(
     const ranges = new Map<number, { x: number; right: number }>();
     for (const b of blocks) {
       const r = ranges.get(b.topLevelIndex);
-      if (r) { r.right = Math.max(r.right, b.x + b.width); }
-      else { ranges.set(b.topLevelIndex, { x: b.x, right: b.x + b.width }); }
+      if (r) {
+        r.right = Math.max(r.right, b.x + b.width);
+      } else {
+        ranges.set(b.topLevelIndex, { x: b.x, right: b.x + b.width });
+      }
     }
     const range = ranges.get(dropIdx);
     if (range) return padL + range.x;
@@ -985,10 +1103,7 @@ function computeDropX(
 
 // ── Canvas helpers ─────────────────────────────────────────────────
 
-function drawSetpointLine(
-  ctx: CanvasRenderingContext2D,
-  x1: number, x2: number, y: number, color: string,
-) {
+function drawSetpointLine(ctx: CanvasRenderingContext2D, x1: number, x2: number, y: number, color: string) {
   ctx.save();
   ctx.strokeStyle = `${color}44`;
   ctx.lineWidth = 1;
@@ -1003,8 +1118,12 @@ function drawSetpointLine(
 /** Canvas-drawn pill for drag ghost only */
 function drawCanvasPill(
   ctx: CanvasRenderingContext2D,
-  x: number, y: number, text: string,
-  textColor: string, bgColor: string, fontSize = 10,
+  x: number,
+  y: number,
+  text: string,
+  textColor: string,
+  bgColor: string,
+  fontSize = 10
 ) {
   ctx.save();
   const font = `bold ${fontSize}px -apple-system, system-ui, sans-serif`;

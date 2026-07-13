@@ -11,7 +11,7 @@
  * calls onScan with the barcode text and stops scanning.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { hasCameraAccess, scanImageData } from '../lib/barcode-scanner.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -84,7 +84,10 @@ export function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
         await video.play();
         setScanState({ status: 'scanning' });
 
-        if (cancelled) { cleanup(); return; }
+        if (cancelled) {
+          cleanup();
+          return;
+        }
 
         const canvas = canvasRef.current;
         if (!canvas) return;
@@ -107,16 +110,18 @@ export function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
               ctx!.drawImage(v, 0, 0);
               const imageData = ctx!.getImageData(0, 0, canvas!.width, canvas!.height);
 
-              scanImageData(imageData).then(barcode => {
-                if (cancelled || !barcode) return;
-                setScanState({ status: 'found', barcode });
-                cleanup();
-                setTimeout(() => {
-                  if (!cancelled) onScan(barcode);
-                }, 400);
-              }).catch(() => {
-                // Scan errors are non-fatal — just skip this frame
-              });
+              scanImageData(imageData)
+                .then(barcode => {
+                  if (cancelled || !barcode) return;
+                  setScanState({ status: 'found', barcode });
+                  cleanup();
+                  setTimeout(() => {
+                    if (!cancelled) onScan(barcode);
+                  }, 400);
+                })
+                .catch(() => {
+                  // Scan errors are non-fatal — just skip this frame
+                });
             }
           }
 
@@ -144,14 +149,23 @@ export function BarcodeScanner({ onScan, onClose }: BarcodeScannerProps) {
     }
 
     start();
-    return () => { cancelled = true; cleanup(); };
+    return () => {
+      cancelled = true;
+      cleanup();
+    };
   }, [cleanup, onScan]);
 
   return (
     <div className="scanner-container">
       <div className="scanner-header">
         <span>Scan Barcode</span>
-        <button className="scanner-close" onClick={() => { cleanup(); onClose(); }}>
+        <button
+          className="scanner-close"
+          onClick={() => {
+            cleanup();
+            onClose();
+          }}
+        >
           &times;
         </button>
       </div>

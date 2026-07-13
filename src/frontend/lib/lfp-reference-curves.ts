@@ -7,7 +7,7 @@
  * - Computed curve generator using the simulation model from sequence-types.ts
  */
 
-import { simulateStep, type StepDCC, type StepCCV } from './sequence-types.ts';
+import { type StepCCV, type StepDCC, simulateStep } from './sequence-types.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -31,26 +31,26 @@ export interface ReferenceCurve {
 // making SOC estimation from voltage inherently imprecise in that range.
 
 const OCV_SOC_TABLE: [soc: number, voltage: number][] = [
-  [0, 2.50],
-  [2, 2.70],
-  [5, 2.90],
+  [0, 2.5],
+  [2, 2.7],
+  [5, 2.9],
   [8, 3.05],
   [10, 3.15],
-  [15, 3.20],
+  [15, 3.2],
   [20, 3.23],
   [25, 3.25],
   [30, 3.26],
   [40, 3.27],
   [50, 3.28],
   [60, 3.29],
-  [70, 3.30],
+  [70, 3.3],
   [80, 3.31],
   [85, 3.32],
   [90, 3.34],
   [95, 3.38],
   [97, 3.42],
-  [99, 3.50],
-  [100, 3.60],
+  [99, 3.5],
+  [100, 3.6],
 ];
 
 /**
@@ -104,14 +104,20 @@ const DATASHEET_DISCHARGE_05C: ReferenceCurve = {
   label: 'Datasheet 0.5C discharge',
   style: 'datasheet',
   capacityPct: [0, 1, 2, 5, 8, 10, 15, 20, 30, 40, 50, 60, 70, 75, 80, 85, 88, 90, 92, 94, 96, 98, 100],
-  voltage:     [3.35, 3.32, 3.30, 3.28, 3.27, 3.26, 3.255, 3.25, 3.24, 3.235, 3.23, 3.225, 3.21, 3.20, 3.18, 3.14, 3.08, 3.00, 2.92, 2.82, 2.70, 2.58, 2.50],
+  voltage: [
+    3.35, 3.32, 3.3, 3.28, 3.27, 3.26, 3.255, 3.25, 3.24, 3.235, 3.23, 3.225, 3.21, 3.2, 3.18, 3.14, 3.08, 3.0, 2.92,
+    2.82, 2.7, 2.58, 2.5,
+  ],
 };
 
 const DATASHEET_CHARGE_05C: ReferenceCurve = {
   label: 'Datasheet 0.5C charge',
   style: 'datasheet',
   capacityPct: [0, 2, 5, 8, 10, 15, 20, 30, 40, 50, 60, 70, 75, 80, 85, 88, 90, 92, 94, 96, 98, 100],
-  voltage:     [2.80, 3.10, 3.20, 3.25, 3.28, 3.30, 3.31, 3.32, 3.325, 3.33, 3.335, 3.34, 3.345, 3.35, 3.36, 3.38, 3.40, 3.43, 3.48, 3.52, 3.58, 3.65],
+  voltage: [
+    2.8, 3.1, 3.2, 3.25, 3.28, 3.3, 3.31, 3.32, 3.325, 3.33, 3.335, 3.34, 3.345, 3.35, 3.36, 3.38, 3.4, 3.43, 3.48,
+    3.52, 3.58, 3.65,
+  ],
 };
 
 export function getDatasheetCurves(): ReferenceCurve[] {
@@ -129,9 +135,9 @@ export function getDatasheetCurves(): ReferenceCurve[] {
  */
 export function computeDischargeRef(
   currentA: number = 40,
-  cutoffV: number = 2.50,
+  cutoffV: number = 2.5,
   capacityAh: number = 200,
-  numPoints: number = 100,
+  numPoints: number = 100
 ): ReferenceCurve {
   const step: StepDCC = { type: 'd-cc', currentA, cutoffV };
   const startV = 3.35; // OCV at 100% SoC under load
@@ -157,10 +163,10 @@ export function computeChargeRef(
   targetV: number = 3.65,
   cutoffCurrentA: number = 2.0,
   capacityAh: number = 200,
-  numPoints: number = 100,
+  numPoints: number = 100
 ): ReferenceCurve {
   const step: StepCCV = { type: 'c-cv', currentA, targetV, cutoffCurrentA };
-  const startV = 2.80; // OCV near 0% SoC under load
+  const startV = 2.8; // OCV near 0% SoC under load
   const pts = simulateStep(step, startV, numPoints, capacityAh);
 
   const capacityPct = pts.map(p => p.f * 100);
@@ -181,7 +187,7 @@ export function computeChargeRef(
 export function getDefaultReferenceCurves(capacityAh: number = 200): ReferenceCurve[] {
   return [
     ...getDatasheetCurves(),
-    computeDischargeRef(40, 2.50, capacityAh),
+    computeDischargeRef(40, 2.5, capacityAh),
     computeChargeRef(40, 3.65, 2.0, capacityAh),
   ];
 }

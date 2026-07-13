@@ -19,7 +19,7 @@
 // ── Capability detection ──────────────────────────────────────────
 
 export function hasCameraAccess(): boolean {
-  return !!(navigator.mediaDevices?.getUserMedia);
+  return !!navigator.mediaDevices?.getUserMedia;
 }
 
 export function hasNativeBarcodeDetector(): boolean {
@@ -51,12 +51,7 @@ interface ZBarModule {
   _ImageScanner_create(): number;
   _ImageScanner_scan(scanner: number, image: number): number;
   _ImageScanner_get_results(scanner: number): number;
-  _Image_create(
-    width: number, height: number,
-    format: number,
-    data: number, dataLen: number,
-    seqNum: number
-  ): number;
+  _Image_create(width: number, height: number, format: number, data: number, dataLen: number, seqNum: number): number;
   _Image_destory(image: number): void; // sic — typo in zbar.wasm
   _Image_get_symbols(image: number): number;
   _malloc(size: number): number;
@@ -70,9 +65,7 @@ let zbarLoadPromise: Promise<ZBarModule> | null = null;
 
 async function loadZbar(): Promise<ZBarModule> {
   // Fetch the Emscripten glue JS and WASM binary from our server
-  const [glueResponse] = await Promise.all([
-    fetch('/static/zbar.js'),
-  ]);
+  const [glueResponse] = await Promise.all([fetch('/static/zbar.js')]);
 
   if (!glueResponse.ok) {
     throw new Error(`Failed to load zbar.js: ${glueResponse.status}`);
@@ -104,13 +97,15 @@ async function loadZbar(): Promise<ZBarModule> {
 function getZbar(): Promise<ZBarModule> {
   if (zbarModule) return Promise.resolve(zbarModule);
   if (!zbarLoadPromise) {
-    zbarLoadPromise = loadZbar().then(mod => {
-      zbarModule = mod;
-      return mod;
-    }).catch(err => {
-      zbarLoadPromise = null;
-      throw err;
-    });
+    zbarLoadPromise = loadZbar()
+      .then(mod => {
+        zbarModule = mod;
+        return mod;
+      })
+      .catch(err => {
+        zbarLoadPromise = null;
+        throw err;
+      });
   }
   return zbarLoadPromise;
 }
@@ -195,10 +190,12 @@ async function scanWithZbar(imageData: ImageData): Promise<string | null> {
 
   // Create zbar image
   const imagePtr = mod._Image_create(
-    width, height,
+    width,
+    height,
     Y800_FOURCC,
-    dataPtr, gray.length,
-    0, // sequence number
+    dataPtr,
+    gray.length,
+    0 // sequence number
   );
 
   try {

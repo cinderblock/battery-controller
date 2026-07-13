@@ -7,7 +7,7 @@
  * - /temperature (temperature channel management)
  */
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { SessionContext, useDeviceSessionManager } from './hooks/useDeviceSession.ts';
 import { ChartView } from './views/ChartView.tsx';
 import { SequenceEditor } from './views/SequenceEditor.tsx';

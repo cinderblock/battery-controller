@@ -115,9 +115,7 @@ function CellStatRow({ cell, nominalAh }: { cell: CellCapacityStats; nominalAh: 
 
   return (
     <div className="fleet-cell-row">
-      <span className="fleet-cell-name" title={cell.barcode}>
-        {name}
-      </span>
+      <span className="fleet-cell-name">{name}</span>
       <div className="fleet-cell-stats">
         {cell.latestAh !== null ? (
           <>
@@ -127,16 +125,10 @@ function CellStatRow({ cell, nominalAh }: { cell: CellCapacityStats; nominalAh: 
                 {cell.healthPct.toFixed(0)}%
               </span>
             )}
-            {trend && (
-              <span
-                className="fleet-cell-trend"
-                title={
-                  cell.trendAhPerCycle !== null
-                    ? `${cell.trendAhPerCycle > 0 ? '+' : ''}${cell.trendAhPerCycle.toFixed(3)} Ah/cycle`
-                    : ''
-                }
-              >
-                {trend}
+            {trend && <span className="fleet-cell-trend">{trend}</span>}
+            {cell.latestIrMohm !== null && (
+              <span className="fleet-cell-ir">
+                {cell.latestIrMohm < 10 ? cell.latestIrMohm.toFixed(1) : Math.round(cell.latestIrMohm)} mΩ
               </span>
             )}
             <span className="fleet-cell-runs">{cell.runCount} runs</span>

@@ -243,9 +243,7 @@ export function TemperatureSettings() {
               ) : (
                 <>
                   <div className="temp-channel-info">
-                    <span className="temp-channel-name" title={ch.id}>
-                      {ch.name ?? <em>{ch.id.slice(-6)}</em>}
-                    </span>
+                    <span className="temp-channel-name">{ch.name ?? <em>{ch.id.slice(-6)}</em>}</span>
                     <span className="temp-channel-source">
                       {ch.sourceType === 'w1' ? '1-Wire' : 'HA'}
                       {ch.unpluggedAt && ' (unplugged)'}
@@ -254,23 +252,12 @@ export function TemperatureSettings() {
                   <div className="temp-channel-reading">
                     {ch.lastTempC != null ? `${ch.lastTempC.toFixed(1)}°C` : '—'}
                   </div>
-                  {ch.alertMaxC != null && (
-                    <div
-                      className="temp-channel-alert"
-                      title="Exceeding this stops the test and aborts any running sequence"
-                    >
-                      Stops at {ch.alertMaxC}°C
-                    </div>
-                  )}
+                  {ch.alertMaxC != null && <div className="temp-channel-alert">Stops at {ch.alertMaxC}°C</div>}
                   <div className="temp-channel-actions">
-                    <button onClick={() => startEditing(ch)} title="Edit">
-                      Edit
-                    </button>
-                    <button onClick={() => toggleChannel(ch)} title={ch.enabled ? 'Disable' : 'Enable'}>
-                      {ch.enabled ? 'Disable' : 'Enable'}
-                    </button>
+                    <button onClick={() => startEditing(ch)}>Edit</button>
+                    <button onClick={() => toggleChannel(ch)}>{ch.enabled ? 'Disable' : 'Enable'}</button>
                     {ch.sourceType === 'http' && (
-                      <button onClick={() => deleteChannel(ch)} title="Delete" className="btn-danger">
+                      <button onClick={() => deleteChannel(ch)} className="btn-danger">
                         Delete
                       </button>
                     )}

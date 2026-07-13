@@ -286,6 +286,11 @@ export function Chart({
   // Live-point marker overlays, keyed by series index
   const liveMarkersRef = useRef<Map<number, LiveMarker>>(new Map());
 
+  // True while the user has an x zoom narrower than the data extents.
+  // setData() must not reset scales then, or live packets (every ~1s)
+  // would snap the view back to full immediately after every zoom.
+  const userZoomRef = useRef(false);
+
   const refreshLiveMarkers = useCallback((u: uPlot) => {
     const container = containerRef.current;
     if (!container) return;
@@ -465,7 +470,17 @@ export function Chart({
       hooks: {
         setScale: [
           (u: uPlot, scaleKey: string) => {
-            if (scaleKey === 'x' && sync) propagateXZoom(sync, u);
+            if (scaleKey !== 'x') return;
+            // Track whether the user is zoomed in (x window narrower than the
+            // data) — data updates must not reset the view while zoomed
+            const xs = u.data?.[0];
+            if (xs && xs.length > 1) {
+              const dataMin = xs[0];
+              const dataMax = xs[xs.length - 1];
+              const { min, max } = u.scales.x;
+              userZoomRef.current = min != null && max != null && (min > dataMin || max < dataMax);
+            }
+            if (sync) propagateXZoom(sync, u);
           },
         ],
         draw: [
@@ -642,13 +657,15 @@ export function Chart({
     };
   }, [seriesKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Update data when it changes (without recreating chart)
+  // Update data when it changes (without recreating chart). While the user
+  // is zoomed in, keep their x window instead of re-running auto-range;
+  // double-click (uPlot's built-in reset) returns to the growing full view.
   useEffect(() => {
     const u = uplotRef.current;
     if (!u) return;
     if (data.length === 0) return;
 
-    u.setData(data as uPlot.AlignedData);
+    u.setData(data as uPlot.AlignedData, !userZoomRef.current);
     refreshLiveMarkers(u);
   }, [data, refreshLiveMarkers]);
 

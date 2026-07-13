@@ -26,8 +26,8 @@ const PILL_COLORS: Record<string, string> = {
   'd-cc': '#fb923c',
   'd-cp': '#ffb74d',
   'c-cv': '#60a5fa',
-  'wait': '#777',
-  'loop': '#a78bfa',
+  wait: '#777',
+  loop: '#a78bfa',
 };
 
 function pillLabel(step: SequenceStep, capacityAh: number): string {
@@ -51,22 +51,17 @@ function pillLabel(step: SequenceStep, capacityAh: number): string {
 
 // ── Component ──────────────────────────────────────────────────────
 
-export function StepPill({
-  step,
-  path,
-  selected,
-  capacityAh,
-  onSelect,
-  dragProps,
-  isDragging,
-}: StepPillProps) {
+export function StepPill({ step, path, selected, capacityAh, onSelect, dragProps, isDragging }: StepPillProps) {
   const color = PILL_COLORS[step.type] ?? '#888';
 
   return (
     <div
       className={`step-pill ${selected ? 'step-pill-selected' : ''} ${isDragging ? 'step-pill-dragging' : ''}`}
       style={{ borderColor: selected ? color : undefined }}
-      onClick={(e) => { e.stopPropagation(); onSelect(path); }}
+      onClick={e => {
+        e.stopPropagation();
+        onSelect(path);
+      }}
       {...dragProps}
     >
       <span className="step-pill-dot" style={{ background: color }} />
