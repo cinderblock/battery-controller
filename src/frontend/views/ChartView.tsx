@@ -430,6 +430,24 @@ export function ChartView() {
 
   const showTempChart = tempChartData.seriesInfo.length > 0 && (tempChartData.data[0]?.length ?? 0) > 0;
 
+  // Shared full-view x-domain for the stacked main+temperature charts. The
+  // temperature series usually cover only part of the timeline (only runs with
+  // temp data), so without a shared extent the temp chart would autoscale to
+  // its own narrow window and — via the x-sync — snap the whole view in on
+  // every temp packet. Union both charts' x extents and hand it to both.
+  const sharedXExtent = useMemo((): [number, number] | undefined => {
+    const mins: number[] = [];
+    const maxs: number[] = [];
+    for (const xs of [chartData.data[0], tempChartData.data[0]]) {
+      if (xs && xs.length > 0) {
+        mins.push(xs[0] as number);
+        maxs.push(xs[xs.length - 1] as number);
+      }
+    }
+    if (mins.length === 0) return undefined;
+    return [Math.min(...mins), Math.max(...maxs)];
+  }, [chartData, tempChartData]);
+
   // ── Temp chart collapse — persisted; phones start collapsed since the
   //    TopBar chips already show live temperatures ─────────────────────
   const [tempsCollapsed, setTempsCollapsed] = useState<boolean>(() => {
@@ -605,6 +623,7 @@ export function ChartView() {
                     scaleRanges={scaleRanges}
                     bands={chartData.bands}
                     syncKey="bc-time"
+                    xExtent={sharedXExtent}
                     padLeft={mainPadLeft}
                     padRight={mainPadRight}
                   />
@@ -621,6 +640,7 @@ export function ChartView() {
                           data={tempChartData.data}
                           seriesInfo={tempChartData.seriesInfo}
                           syncKey="bc-time"
+                          xExtent={sharedXExtent}
                           padLeft={tempPadLeft}
                           padRight={tempPadRight}
                         />

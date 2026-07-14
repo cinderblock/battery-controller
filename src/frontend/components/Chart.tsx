@@ -221,6 +221,14 @@ export interface ChartProps {
   className?: string;
   /** Charts sharing a syncKey share crosshair position and x-axis zoom */
   syncKey?: string;
+  /**
+   * Shared full-view x-domain for stacked/synced charts. When set and the user
+   * is not zoomed in, the chart expands its x range to this extent instead of
+   * its own data extent — so a chart with a narrower series (e.g. temperatures
+   * that only cover part of the timeline) stays aligned with its peers and
+   * doesn't snap the synced view to its own smaller window on every packet.
+   */
+  xExtent?: [number, number];
   /** Extra left/right padding (px) to align plot areas of stacked charts */
   padLeft?: number;
   padRight?: number;
@@ -254,6 +262,7 @@ export function Chart({
   bands: bandDefs = [],
   className,
   syncKey,
+  xExtent,
   padLeft = 0,
   padRight = 0,
 }: ChartProps) {
@@ -291,6 +300,17 @@ export function Chart({
   // setData() must not reset scales then, or live packets (every ~1s)
   // would snap the view back to full immediately after every zoom.
   const userZoomRef = useRef(false);
+
+  // Shared full-view x-domain, read at scale time via a ref (buildOptions is
+  // memoized and xExtent grows every packet — a ref avoids rebuilding).
+  const xExtentRef = useRef(xExtent);
+  xExtentRef.current = xExtent;
+
+  // Set while an internal setData()/creation autoscale is running, so the
+  // setScale hook can tell an autoscale apart from a genuine user gesture and
+  // skip cross-chart propagation for the former. Otherwise two stacked charts
+  // with different data extents fight over the synced x window every packet.
+  const autoscalingRef = useRef(false);
 
   const refreshLiveMarkers = useCallback((u: uPlot) => {
     const container = containerRef.current;
@@ -447,7 +467,17 @@ export function Chart({
             const dataMin = xs?.[0];
             const dataMax = xs?.[xs.length - 1];
             const isFullView = dataMin == null || dataMax == null || (min <= dataMin && max >= dataMax);
-            if (isFullView && max - min < 180) return [min, min + 180] as [number, number];
+            // In full view, adopt the shared extent (if any) so stacked/synced
+            // charts align to the same x-domain regardless of each one's own
+            // series coverage. Union with the data extent so we never clip.
+            if (isFullView) {
+              const ext = xExtentRef.current;
+              if (ext) {
+                min = Math.min(min, ext[0]);
+                max = Math.max(max, ext[1]);
+              }
+              if (max - min < 180) return [min, min + 180] as [number, number];
+            }
             return [min, max] as [number, number];
           },
         },
@@ -481,7 +511,10 @@ export function Chart({
               const { min, max } = u.scales.x;
               userZoomRef.current = min != null && max != null && (min > dataMin || max < dataMax);
             }
-            if (sync) propagateXZoom(sync, u);
+            // Only genuine user gestures (drag/wheel/dblclick) sync across
+            // charts. An internal setData/creation autoscale must NOT push this
+            // chart's own extent onto its peers — that's the snap-back bug.
+            if (sync && !autoscalingRef.current) propagateXZoom(sync, u);
           },
         ],
         draw: [
@@ -644,7 +677,9 @@ export function Chart({
     }
 
     const opts = buildOptions();
+    autoscalingRef.current = true;
     const u = new uPlot(opts, data as uPlot.AlignedData, container);
+    autoscalingRef.current = false;
     uplotRef.current = u;
     attachWheelZoom(u, 10); // never narrower than 10 s
     const unregisterZoomSync = syncKeyRef.current ? registerZoomSync(syncKeyRef.current, u) : null;
@@ -667,7 +702,11 @@ export function Chart({
     if (!u) return;
     if (data.length === 0) return;
 
+    // A reset autoscales x; flag it so the setScale hook doesn't propagate this
+    // chart's own extent onto synced peers (see autoscalingRef).
+    autoscalingRef.current = true;
     u.setData(data as uPlot.AlignedData, !userZoomRef.current);
+    autoscalingRef.current = false;
     refreshLiveMarkers(u);
   }, [data, refreshLiveMarkers]);
 
