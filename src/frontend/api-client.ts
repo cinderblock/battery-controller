@@ -152,6 +152,8 @@ export interface CycleState {
   stepExpectedS: number[];
   stepLabels?: string[];
   stepDetails?: (StepDetail | null)[];
+  /** test_runs.id backing each completed step, for chart cross-highlighting */
+  stepRunIds?: (number | null)[];
 }
 
 export interface WsCycleState {

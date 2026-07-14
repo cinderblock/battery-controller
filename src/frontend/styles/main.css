@@ -498,7 +498,7 @@ body {
 .step-detail-pop {
   position: fixed;
   z-index: 3000;
-  transform: translate(-50%, calc(-100% - 8px));
+  transform: translate(-50%, 8px);
   min-width: 160px;
   max-width: 260px;
   padding: 0.5rem 0.6rem;

@@ -224,6 +224,9 @@ export interface CycleState {
   stepLabels: string[];
   /** Rich detail per completed test step (null until done / n/a for waits) */
   stepDetails: (StepDetail | null)[];
+  /** test_runs.id backing each completed step, so the UI can cross-highlight
+   *  the matching chart trace on hover/select (null until done / n/a). */
+  stepRunIds: (number | null)[];
 }
 
 /** Map a finalized test-run row to a timeline StepDetail. */
@@ -290,6 +293,7 @@ export class CycleRunner {
   private stepDurations: (number | null)[] = [];
   private stepExpectedS: number[] = [];
   private stepDetails: (StepDetail | null)[] = [];
+  private stepRunIds: (number | null)[] = [];
 
   constructor(
     private session: DeviceSession,
@@ -362,6 +366,7 @@ export class CycleRunner {
       stepExpectedS: this.stepExpectedS,
       stepLabels: this.execPlan.map(e => stepParamLabel(e.step)),
       stepDetails: this.stepDetails,
+      stepRunIds: this.stepRunIds,
     };
   }
 
@@ -369,7 +374,10 @@ export class CycleRunner {
   private captureStepDetail(execIndex: number): void {
     if (this.programId === null) return;
     const run = getCycleStepRun(this.programId, execIndex);
-    if (run) this.stepDetails[execIndex] = runToStepDetail(run);
+    if (run) {
+      this.stepDetails[execIndex] = runToStepDetail(run);
+      this.stepRunIds[execIndex] = run.id;
+    }
   }
 
   private emit(): void {
@@ -436,6 +444,7 @@ export class CycleRunner {
     this.stepCapacities = new Array(this.execPlan.length).fill(null);
     this.stepDurations = new Array(this.execPlan.length).fill(null);
     this.stepDetails = new Array(this.execPlan.length).fill(null);
+    this.stepRunIds = new Array(this.execPlan.length).fill(null);
     this.stepExpectedS = this.computeExpectedDurations();
 
     logger.info(`Starting cycle "${name}" with ${this.execPlan.length} steps`);
@@ -732,6 +741,7 @@ export class CycleRunner {
     this.stepCapacities[this.execIndex] = null;
     this.stepDurations[this.execIndex] = null;
     this.stepDetails[this.execIndex] = null;
+    this.stepRunIds[this.execIndex] = null;
 
     // Replace only this exec-plan entry — loop iterations share step
     // objects, and the next iteration should start back at the
@@ -782,6 +792,7 @@ export class CycleRunner {
       this.stepCapacities = new Array(this.execPlan.length).fill(null);
       this.stepDurations = new Array(this.execPlan.length).fill(null);
       this.stepDetails = new Array(this.execPlan.length).fill(null);
+      this.stepRunIds = new Array(this.execPlan.length).fill(null);
       this.stepExpectedS = this.computeExpectedDurations();
       const completedRuns = getRunsForCycleProgram(program.id);
       for (const run of completedRuns) {
@@ -793,6 +804,7 @@ export class CycleRunner {
             this.stepDurations[run.cycle_step_index] = run.duration_s;
           }
           this.stepDetails[run.cycle_step_index] = runToStepDetail(run);
+          this.stepRunIds[run.cycle_step_index] = run.id;
         }
       }
 
@@ -899,6 +911,7 @@ export class CycleRunner {
     this.stepCapacities = [];
     this.stepDurations = [];
     this.stepDetails = [];
+    this.stepRunIds = [];
     this.stepExpectedS = [];
     this.clearWaitTimer();
   }

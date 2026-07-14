@@ -448,6 +448,9 @@ export function ChartView() {
     return [Math.min(...mins), Math.max(...maxs)];
   }, [chartData, tempChartData]);
 
+  // Chart trace to emphasize, driven by hovering/selecting a timeline step.
+  const [highlightedRunId, setHighlightedRunId] = useState<number | null>(null);
+
   // ── Temp chart collapse — persisted; phones start collapsed since the
   //    TopBar chips already show live temperatures ─────────────────────
   const [tempsCollapsed, setTempsCollapsed] = useState<boolean>(() => {
@@ -607,7 +610,7 @@ export function ChartView() {
       <CameraView onVisibilityChange={handleCameraVisibility} />
 
       <div className="chart-view-body">
-        <TopBar activeCellIrMohm={activeCellIrMohm} />
+        <TopBar activeCellIrMohm={activeCellIrMohm} onHighlightRun={setHighlightedRunId} />
 
         <div className="chart-area">
           {loading ? (
@@ -624,6 +627,7 @@ export function ChartView() {
                     bands={chartData.bands}
                     syncKey="bc-time"
                     xExtent={sharedXExtent}
+                    focusRunId={highlightedRunId}
                     padLeft={mainPadLeft}
                     padRight={mainPadRight}
                   />
@@ -641,6 +645,7 @@ export function ChartView() {
                           seriesInfo={tempChartData.seriesInfo}
                           syncKey="bc-time"
                           xExtent={sharedXExtent}
+                          focusRunId={highlightedRunId}
                           padLeft={tempPadLeft}
                           padRight={tempPadRight}
                         />

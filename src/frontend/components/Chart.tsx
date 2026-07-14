@@ -229,6 +229,12 @@ export interface ChartProps {
    * doesn't snap the synced view to its own smaller window on every packet.
    */
   xExtent?: [number, number];
+  /**
+   * Externally-driven series focus: when set, the run's trace is emphasized and
+   * the rest dimmed (same visual as cursor-proximity focus). Used to
+   * cross-highlight a chart trace from the timeline's step hover/select.
+   */
+  focusRunId?: number | null;
   /** Extra left/right padding (px) to align plot areas of stacked charts */
   padLeft?: number;
   padRight?: number;
@@ -263,6 +269,7 @@ export function Chart({
   className,
   syncKey,
   xExtent,
+  focusRunId = null,
   padLeft = 0,
   padRight = 0,
 }: ChartProps) {
@@ -709,6 +716,20 @@ export function Chart({
     autoscalingRef.current = false;
     refreshLiveMarkers(u);
   }, [data, refreshLiveMarkers]);
+
+  // Externally-driven focus (timeline step hover/select): emphasize the run's
+  // trace. Cursor movement over the chart overrides this via the setCursor hook.
+  useEffect(() => {
+    const u = uplotRef.current;
+    if (!u) return;
+    if (focusRunId == null) {
+      setFocusedSeries(u, -1);
+      return;
+    }
+    const info = seriesInfoRef.current;
+    const si = info.findIndex(s => s.runId === focusRunId && s.label && s.color !== 'transparent');
+    setFocusedSeries(u, si);
+  }, [focusRunId]);
 
   // Handle container resize
   useEffect(() => {

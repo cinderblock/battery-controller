@@ -174,6 +174,10 @@ interface TimelineStepProps {
   timedOut: boolean;
   /** A preceding test step timed out, so this step's result is less reliable */
   suspect: boolean;
+  /** test_runs.id of this step's run, for cross-highlighting the chart trace */
+  runId: number | null;
+  /** Emphasize (runId) or clear (null) the matching chart trace */
+  onHighlight: (runId: number | null) => void;
 }
 
 /**
@@ -194,31 +198,44 @@ function TimelineStep({
   showDetail,
   timedOut,
   suspect,
+  runId,
+  onHighlight,
 }: TimelineStepProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [pop, setPop] = useState<{ left: number; top: number } | null>(null);
   const canPop = showDetail || suspect;
+  const canInteract = canPop || runId != null;
 
   const open = () => {
+    if (runId != null) onHighlight(runId);
+    if (!canPop) return;
     const el = ref.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    setPop({ left: r.left + r.width / 2, top: r.top });
+    // The timeline sits at the very top of the viewport, so the popover drops
+    // below the step. Clamp its center so a wide popover can't run off screen.
+    const half = 130; // ~ half of max-width
+    const margin = 6;
+    const center = Math.max(half + margin, Math.min(r.left + r.width / 2, window.innerWidth - half - margin));
+    setPop({ left: center, top: r.bottom });
   };
-  const close = () => setPop(null);
+  const close = () => {
+    setPop(null);
+    if (runId != null) onHighlight(null);
+  };
 
   return (
     <div
       ref={ref}
       className={className}
       style={{ flex: flexWeight }}
-      tabIndex={canPop ? 0 : undefined}
-      role={canPop ? 'button' : undefined}
-      aria-label={canPop ? `Step details${timedOut ? ' — timed out' : ''}` : undefined}
-      onMouseEnter={canPop ? open : undefined}
-      onMouseLeave={canPop ? close : undefined}
-      onFocus={canPop ? open : undefined}
-      onBlur={canPop ? close : undefined}
+      tabIndex={canInteract ? 0 : undefined}
+      role={canInteract ? 'button' : undefined}
+      aria-label={canInteract ? `Step details${timedOut ? ' — timed out' : ''}` : undefined}
+      onMouseEnter={canInteract ? open : undefined}
+      onMouseLeave={canInteract ? close : undefined}
+      onFocus={canInteract ? open : undefined}
+      onBlur={canInteract ? close : undefined}
     >
       <div className="step-fill" style={{ width: `${fillPct}%` }} />
       {label && <span className="step-capacity-label">{label}</span>}
@@ -262,9 +279,13 @@ function TimelineStep({
 interface TopBarProps {
   /** Active cell's latest DC-IR estimate (mΩ), for the live I²R heat readout */
   activeCellIrMohm?: number | null;
+  /** Cross-highlight a chart trace when a completed step is hovered/selected */
+  onHighlightRun?: (runId: number | null) => void;
 }
 
-export function TopBar({ activeCellIrMohm = null }: TopBarProps) {
+const noop = () => {};
+
+export function TopBar({ activeCellIrMohm = null, onHighlightRun }: TopBarProps) {
   const { state } = useSession();
   const {
     wsConnected,
@@ -602,6 +623,8 @@ export function TopBar({ activeCellIrMohm = null }: TopBarProps) {
                     showDetail={showDetail}
                     timedOut={timedOut}
                     suspect={suspect}
+                    runId={cycleState.stepRunIds?.[i] ?? null}
+                    onHighlight={onHighlightRun ?? noop}
                   />
                 );
               })}
