@@ -95,7 +95,21 @@ The `cycle-timeline-bar` in `TopBar.tsx` renders each step; `CycleState`
 - [x] Task A: timeout visual — `step-timedout` red bottom stripe + ⏱ glyph;
       following test step flagged `step-suspect` (amber stripe + `!`) with a
       "prior step timed out — result less reliable" warning in its popover.
-- [ ] Verify Task A + B in browser (needs deploy — WAITING on user OK).
+- [x] Deployed (user OK'd mid-charge restart). Service recovered the active
+      program each time; `stepDetails` + `stepRunIds` confirmed in the live API.
+- [x] Feedback round 1: popover was going up off-screen (top bar is at viewport
+      top) → now drops below with horizontal clamping. Added chart
+      cross-highlight: hovering/selecting a completed step emphasizes its trace
+      (via `CycleState.stepRunIds` → ChartView `highlightedRunId` → Chart
+      `focusRunId`). Corrected end_reason label map (`manual_stop`, `fault`).
+- [ ] Await user's visual confirmation of popover placement + highlight.
+
+## Possible follow-ups (not done)
+- Chart focus emphasizes only ONE series of the highlighted run (uPlot's
+  single-series focus). If highlighting all of a run's metrics (V+I+W) is
+  wanted, needs custom per-run dimming instead of `setSeries(focus)`.
+- "Selecting" a step is currently hover/tap-focus (transient). If a sticky
+  click-to-lock selection is wanted, add persistent selection state.
 
 ## Things not to do
 - Don't re-add a timer to cycle-runner for time limits (host-side enforcement
