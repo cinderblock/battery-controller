@@ -570,31 +570,38 @@ export function Chart({
             const ctx = u.ctx;
             const { left, top, width, height } = u.bbox;
 
+            // Nothing to emphasize unless at least one series matches — bail
+            // before the (cheap but non-zero) x-position precompute.
+            const matches = info.filter(s => s.runId === hr && s.label && s.color !== 'transparent');
+            if (matches.length === 0) return;
+
+            // x pixel positions are shared across all series — compute once.
+            const xPix = new Float64Array(xs.length);
+            for (let i = 0; i < xs.length; i++) xPix[i] = u.valToPos(xs[i], 'x', true);
+
             ctx.save();
             ctx.beginPath();
             ctx.rect(left, top, width, height);
             ctx.clip();
             ctx.lineJoin = 'round';
+            ctx.lineWidth = 3 * devicePixelRatio;
 
-            for (let si = 0; si < info.length; si++) {
-              const s = info[si];
-              if (s.runId !== hr || !s.label || s.color === 'transparent') continue;
+            for (const s of matches) {
+              const si = info.indexOf(s);
               const ys = u.data[si + 1] as (number | null | undefined)[] | undefined;
               if (!ys) continue;
               const scale = METRIC_SCALE[s.metric];
 
               ctx.beginPath();
               ctx.strokeStyle = s.baseColor ?? s.color;
-              ctx.lineWidth = 3 * devicePixelRatio;
               let started = false;
               for (let i = 0; i < xs.length; i++) {
                 const y = ys[i];
                 if (y == null) continue; // spanGaps: skip nulls, keep the line going
-                const px = u.valToPos(xs[i], 'x', true);
                 const py = u.valToPos(y, scale, true);
-                if (started) ctx.lineTo(px, py);
+                if (started) ctx.lineTo(xPix[i], py);
                 else {
-                  ctx.moveTo(px, py);
+                  ctx.moveTo(xPix[i], py);
                   started = true;
                 }
               }
@@ -772,7 +779,8 @@ export function Chart({
   // series, not all of a run's metrics. Just trigger a redraw here.
   useEffect(() => {
     highlightRunIdRef.current = focusRunId;
-    uplotRef.current?.redraw();
+    // redraw(false): reuse cached series paths — only the overlay changed.
+    uplotRef.current?.redraw(false);
   }, [focusRunId]);
 
   // Handle container resize
