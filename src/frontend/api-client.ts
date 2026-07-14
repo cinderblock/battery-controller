@@ -122,6 +122,19 @@ export interface WsBridgeState {
 
 export type CycleStatus = 'idle' | 'running' | 'waiting' | 'completed' | 'aborted' | 'error';
 
+/** Rich per-step summary for a completed test step (see server StepDetail). */
+export interface StepDetail {
+  energyWh: number | null;
+  avgCurrentA: number | null;
+  peakCurrentA: number | null;
+  minVoltageV: number | null;
+  peakVoltageV: number | null;
+  irMohm: number | null;
+  heatWh: number | null;
+  endReason: string | null;
+  timedOut: boolean;
+}
+
 export interface CycleState {
   status: CycleStatus;
   programId: number | null;
@@ -138,6 +151,7 @@ export interface CycleState {
   stepDurations: (number | null)[];
   stepExpectedS: number[];
   stepLabels?: string[];
+  stepDetails?: (StepDetail | null)[];
 }
 
 export interface WsCycleState {

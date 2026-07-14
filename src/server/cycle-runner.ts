@@ -169,6 +169,35 @@ function migrateV1Steps(steps: any[]): CycleStep[] {
 
 export type CycleStatus = 'idle' | 'running' | 'waiting' | 'completed' | 'aborted' | 'error';
 
+/**
+ * Rich per-step summary for a completed test step, surfaced in the timeline's
+ * step detail popover. Derived from the finalized test_runs row. Null fields
+ * mean the device/recorder didn't provide that metric (older runs, wait steps).
+ */
+export interface StepDetail {
+  /** Energy throughput (Wh) */
+  energyWh: number | null;
+  /** Mean current (A), from capacity ÷ duration */
+  avgCurrentA: number | null;
+  /** Peak current seen (A) */
+  peakCurrentA: number | null;
+  /** Voltage extremes over the step (V) */
+  minVoltageV: number | null;
+  peakVoltageV: number | null;
+  /** DC internal resistance estimate for this step (mΩ) */
+  irMohm: number | null;
+  /** Estimated ohmic heat (Wh) */
+  heatWh: number | null;
+  /** Raw end reason from the recorder (e.g. 'complete', 'time_limit', 'manual') */
+  endReason: string | null;
+  /**
+   * True when the step ended by hitting its host-enforced max-time limit
+   * rather than reaching its cutoff — the cell was not driven to the target
+   * endpoint, so the following step starts from an unknown state.
+   */
+  timedOut: boolean;
+}
+
 export interface CycleState {
   status: CycleStatus;
   programId: number | null;
@@ -193,6 +222,36 @@ export interface CycleState {
   stepExpectedS: number[];
   /** Short parameter summary per step (e.g. "40A 2.8V", "3.8V 2A", "30m") */
   stepLabels: string[];
+  /** Rich detail per completed test step (null until done / n/a for waits) */
+  stepDetails: (StepDetail | null)[];
+}
+
+/** Map a finalized test-run row to a timeline StepDetail. */
+function runToStepDetail(run: {
+  final_energy_mwh: number | null;
+  final_capacity_mah: number | null;
+  peak_current_a: number | null;
+  min_voltage_v: number | null;
+  peak_voltage_v: number | null;
+  ir_mohm: number | null;
+  heat_mwh: number | null;
+  duration_s: number | null;
+  end_reason: string | null;
+}): StepDetail {
+  const capMah = run.final_capacity_mah;
+  const durS = run.duration_s;
+  const avgCurrentA = capMah != null && durS != null && durS > 0 ? capMah / 1000 / (durS / 3600) : null;
+  return {
+    energyWh: run.final_energy_mwh != null ? run.final_energy_mwh / 1000 : null,
+    avgCurrentA,
+    peakCurrentA: run.peak_current_a,
+    minVoltageV: run.min_voltage_v,
+    peakVoltageV: run.peak_voltage_v,
+    irMohm: run.ir_mohm,
+    heatWh: run.heat_mwh != null ? run.heat_mwh / 1000 : null,
+    endReason: run.end_reason,
+    timedOut: run.end_reason === 'time_limit',
+  };
 }
 
 type CycleListener = (state: CycleState) => void;
@@ -230,6 +289,7 @@ export class CycleRunner {
   private stepCapacities: (number | null)[] = [];
   private stepDurations: (number | null)[] = [];
   private stepExpectedS: number[] = [];
+  private stepDetails: (StepDetail | null)[] = [];
 
   constructor(
     private session: DeviceSession,
@@ -301,7 +361,15 @@ export class CycleRunner {
       stepDurations: this.stepDurations,
       stepExpectedS: this.stepExpectedS,
       stepLabels: this.execPlan.map(e => stepParamLabel(e.step)),
+      stepDetails: this.stepDetails,
     };
+  }
+
+  /** Pull the finalized run row for a completed step into stepDetails. */
+  private captureStepDetail(execIndex: number): void {
+    if (this.programId === null) return;
+    const run = getCycleStepRun(this.programId, execIndex);
+    if (run) this.stepDetails[execIndex] = runToStepDetail(run);
   }
 
   private emit(): void {
@@ -367,6 +435,7 @@ export class CycleRunner {
     this.status = 'running';
     this.stepCapacities = new Array(this.execPlan.length).fill(null);
     this.stepDurations = new Array(this.execPlan.length).fill(null);
+    this.stepDetails = new Array(this.execPlan.length).fill(null);
     this.stepExpectedS = this.computeExpectedDurations();
 
     logger.info(`Starting cycle "${name}" with ${this.execPlan.length} steps`);
@@ -634,6 +703,9 @@ export class CycleRunner {
 
     if (this.tryBackoff()) return;
 
+    // The recorder has finalized the run row by now (2s delay in caller) — pull
+    // its rich detail for the step-detail popover before moving on.
+    this.captureStepDetail(this.execIndex);
     this.recorder.clearCycleContext();
     this.execIndex++;
     this.emit();
@@ -659,6 +731,7 @@ export class CycleRunner {
     if (run) setRunExcludeFromCapacity(run.id, true);
     this.stepCapacities[this.execIndex] = null;
     this.stepDurations[this.execIndex] = null;
+    this.stepDetails[this.execIndex] = null;
 
     // Replace only this exec-plan entry — loop iterations share step
     // objects, and the next iteration should start back at the
@@ -708,6 +781,7 @@ export class CycleRunner {
       // Restore step metadata from completed runs
       this.stepCapacities = new Array(this.execPlan.length).fill(null);
       this.stepDurations = new Array(this.execPlan.length).fill(null);
+      this.stepDetails = new Array(this.execPlan.length).fill(null);
       this.stepExpectedS = this.computeExpectedDurations();
       const completedRuns = getRunsForCycleProgram(program.id);
       for (const run of completedRuns) {
@@ -718,6 +792,7 @@ export class CycleRunner {
           if (run.duration_s != null) {
             this.stepDurations[run.cycle_step_index] = run.duration_s;
           }
+          this.stepDetails[run.cycle_step_index] = runToStepDetail(run);
         }
       }
 
@@ -823,6 +898,7 @@ export class CycleRunner {
     this.totalCycles = 1;
     this.stepCapacities = [];
     this.stepDurations = [];
+    this.stepDetails = [];
     this.stepExpectedS = [];
     this.clearWaitTimer();
   }

@@ -461,6 +461,96 @@ body {
   }
 }
 
+/* Steps that ended on their max-time limit, or whose result is suspect because
+   an earlier step timed out. A thin bottom stripe survives the label clip. */
+.cycle-timeline-step.step-timedout {
+  box-shadow: inset 0 -3px 0 var(--discharge-color, #f44336);
+}
+.cycle-timeline-step.step-suspect {
+  box-shadow: inset 0 -3px 0 rgba(255, 193, 7, 0.9);
+}
+
+.cycle-timeline-step[role="button"] {
+  cursor: pointer;
+}
+.cycle-timeline-step[role="button"]:focus-visible {
+  outline: 2px solid #4fc3f7;
+  outline-offset: -2px;
+}
+
+/* Small corner glyphs (hidden on very narrow steps via overflow) */
+.step-flag {
+  position: absolute;
+  top: 0;
+  right: 1px;
+  z-index: 2;
+  font-size: 9px;
+  line-height: 1;
+  pointer-events: none;
+}
+.step-flag-suspect {
+  color: #ffc107;
+  font-weight: 800;
+}
+
+/* ── Completed-step detail popover (portalled to <body>) ─────────── */
+
+.step-detail-pop {
+  position: fixed;
+  z-index: 3000;
+  transform: translate(-50%, calc(-100% - 8px));
+  min-width: 160px;
+  max-width: 260px;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  background: #111827;
+  color: #e5e7eb;
+  border: 1px solid #1f2937;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.45);
+  font-size: 0.78rem;
+  line-height: 1.2rem;
+  pointer-events: none;
+}
+
+.step-detail-title {
+  font-weight: 700;
+  margin-bottom: 0.3rem;
+  color: #fff;
+}
+
+.step-detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.step-detail-key {
+  color: #9ca3af;
+}
+.step-detail-val {
+  color: #e5e7eb;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.step-detail-end {
+  margin-top: 0.35rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid #1f2937;
+  color: #9ca3af;
+}
+.step-detail-end.is-timeout {
+  color: #ffb74d;
+  font-weight: 600;
+}
+
+.step-detail-warn {
+  margin-top: 0.4rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid #1f2937;
+  color: #ffca28;
+  white-space: normal;
+}
+
 @keyframes banner-slide-in {
   from {
     transform: translateY(-100%);

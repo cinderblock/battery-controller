@@ -7,7 +7,8 @@
  */
 
 import { useEffect, useReducer, useRef, useState } from 'react';
-import type { DeviceMode } from '../api-client.ts';
+import { createPortal } from 'react-dom';
+import type { DeviceMode, StepDetail } from '../api-client.ts';
 import { useSession } from '../hooks/useDeviceSession.ts';
 
 function formatCountdown(ms: number): string {
@@ -69,6 +70,194 @@ const MODE_CLASSES: Record<DeviceMode, string> = {
   complete: 'badge-complete',
   fault: 'badge-fault',
 };
+
+const STEP_TYPE_TITLES: Record<string, string> = {
+  'c-cv': 'Charge (CC-CV)',
+  'd-cc': 'Discharge (CC)',
+  'd-cp': 'Discharge (CP)',
+  wait: 'Wait',
+};
+
+const END_REASON_LABELS: Record<string, string> = {
+  complete: 'Reached cutoff',
+  time_limit: 'Timed out — hit max time',
+  manual_stop: 'Stopped manually',
+  step_ended_early: 'Ended early',
+  temp_alert: 'Temperature limit',
+  fault: 'Fault',
+  service_restart: 'Interrupted (service restart)',
+  service_shutdown: 'Interrupted (shutdown)',
+};
+
+// ── Completed-step detail popover ──────────────────────────────────
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="step-detail-row">
+      <span className="step-detail-key">{label}</span>
+      <span className="step-detail-val">{value}</span>
+    </div>
+  );
+}
+
+/** Body of the detail popover for a completed test step. */
+function StepDetailBody({
+  detail,
+  durS,
+  expectedS,
+  capMah,
+  stepType,
+  timedOut,
+}: {
+  detail: StepDetail | null;
+  durS: number | null;
+  expectedS: number;
+  capMah: number | null;
+  stepType: string;
+  timedOut: boolean;
+}) {
+  const rows: { k: string; v: string }[] = [];
+
+  if (durS != null) {
+    const exp = expectedS > 0 ? ` / ${formatDurationCompact(expectedS)}` : '';
+    rows.push({ k: 'Time', v: `${formatElapsed(durS)}${exp}` });
+  }
+  if (capMah != null) rows.push({ k: 'Capacity', v: `${(capMah / 1000).toFixed(2)} Ah` });
+  if (detail?.energyWh != null) rows.push({ k: 'Energy', v: `${detail.energyWh.toFixed(1)} Wh` });
+
+  if (detail?.avgCurrentA != null || detail?.peakCurrentA != null) {
+    const avg = detail?.avgCurrentA != null ? `${detail.avgCurrentA.toFixed(2)} A avg` : '';
+    const peak = detail?.peakCurrentA != null ? `${detail.peakCurrentA.toFixed(2)} A peak` : '';
+    rows.push({ k: 'Current', v: [avg, peak].filter(Boolean).join(' · ') });
+  }
+  if (detail?.minVoltageV != null && detail?.peakVoltageV != null) {
+    rows.push({ k: 'Voltage', v: `${detail.minVoltageV.toFixed(3)}–${detail.peakVoltageV.toFixed(3)} V` });
+  }
+  if (detail?.irMohm != null) {
+    rows.push({
+      k: 'IR',
+      v: detail.irMohm < 10 ? `${detail.irMohm.toFixed(1)} mΩ` : `${Math.round(detail.irMohm)} mΩ`,
+    });
+  }
+  if (detail?.heatWh != null) {
+    const pct =
+      detail.energyWh && detail.energyWh > 0 ? ` · ${Math.round((detail.heatWh / detail.energyWh) * 100)}%` : '';
+    rows.push({ k: 'Heat', v: `${detail.heatWh.toFixed(2)} Wh${pct}` });
+  }
+
+  const endLabel = detail?.endReason ? (END_REASON_LABELS[detail.endReason] ?? detail.endReason) : null;
+
+  return (
+    <>
+      <div className="step-detail-title">{STEP_TYPE_TITLES[stepType] ?? stepType}</div>
+      {rows.map(r => (
+        <DetailRow key={r.k} label={r.k} value={r.v} />
+      ))}
+      {endLabel && <div className={`step-detail-end${timedOut ? ' is-timeout' : ''}`}>{endLabel}</div>}
+    </>
+  );
+}
+
+interface TimelineStepProps {
+  stepType: string;
+  className: string;
+  flexWeight: number;
+  fillPct: number;
+  label: string;
+  detail: StepDetail | null;
+  durS: number | null;
+  expectedS: number;
+  capMah: number | null;
+  /** Show the metric breakdown (true for completed test steps) */
+  showDetail: boolean;
+  /** This step ended on its max-time limit */
+  timedOut: boolean;
+  /** A preceding test step timed out, so this step's result is less reliable */
+  suspect: boolean;
+}
+
+/**
+ * One segment of the cycle timeline. Completed test steps (and steps made
+ * suspect by an earlier timeout) expose a tap/hover detail popover. The popover
+ * is portalled to <body> because the 20px-tall bar clips its own overflow.
+ */
+function TimelineStep({
+  stepType,
+  className,
+  flexWeight,
+  fillPct,
+  label,
+  detail,
+  durS,
+  expectedS,
+  capMah,
+  showDetail,
+  timedOut,
+  suspect,
+}: TimelineStepProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pop, setPop] = useState<{ left: number; top: number } | null>(null);
+  const canPop = showDetail || suspect;
+
+  const open = () => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPop({ left: r.left + r.width / 2, top: r.top });
+  };
+  const close = () => setPop(null);
+
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={{ flex: flexWeight }}
+      tabIndex={canPop ? 0 : undefined}
+      role={canPop ? 'button' : undefined}
+      aria-label={canPop ? `Step details${timedOut ? ' — timed out' : ''}` : undefined}
+      onMouseEnter={canPop ? open : undefined}
+      onMouseLeave={canPop ? close : undefined}
+      onFocus={canPop ? open : undefined}
+      onBlur={canPop ? close : undefined}
+    >
+      <div className="step-fill" style={{ width: `${fillPct}%` }} />
+      {label && <span className="step-capacity-label">{label}</span>}
+      {timedOut && (
+        <span className="step-flag step-flag-timeout" aria-hidden>
+          ⏱
+        </span>
+      )}
+      {suspect && !timedOut && (
+        <span className="step-flag step-flag-suspect" aria-hidden>
+          !
+        </span>
+      )}
+      {canPop &&
+        pop &&
+        createPortal(
+          <div className="step-detail-pop" role="tooltip" style={{ left: pop.left, top: pop.top }}>
+            {showDetail && (
+              <StepDetailBody
+                detail={detail}
+                durS={durS}
+                expectedS={expectedS}
+                capMah={capMah}
+                stepType={stepType}
+                timedOut={timedOut}
+              />
+            )}
+            {suspect && (
+              <div className="step-detail-warn">
+                A preceding charge/discharge step timed out, so this step started from an unknown state — its result is
+                a less reliable measurement.
+              </div>
+            )}
+          </div>,
+          document.body
+        )}
+    </div>
+  );
+}
 
 interface TopBarProps {
   /** Active cell's latest DC-IR estimate (mΩ), for the live I²R heat readout */
@@ -315,6 +504,19 @@ export function TopBar({ activeCellIrMohm = null }: TopBarProps) {
             }
           }
 
+          // Per-step "suspect" flag: a test step is a less-reliable measurement
+          // when the nearest preceding test step timed out (the cell wasn't
+          // driven to its endpoint, so this step's start state is unknown).
+          // Waits are transparent — they neither carry nor clear the concern.
+          const stepDetails = cycleState.stepDetails ?? [];
+          const suspectFlags: boolean[] = new Array(cycleState.execStepTypes.length).fill(false);
+          let prevTestTimedOut = false;
+          cycleState.execStepTypes.forEach((stepType, i) => {
+            if (stepType === 'wait') return;
+            suspectFlags[i] = prevTestTimedOut;
+            prevTestTimedOut = stepDetails[i]?.timedOut ?? false;
+          });
+
           return (
             <div className="cycle-timeline-bar">
               {cycleState.execStepTypes.map((stepType, i) => {
@@ -368,15 +570,39 @@ export function TopBar({ activeCellIrMohm = null }: TopBarProps) {
                   }
                 }
 
+                const detail = stepDetails[i] ?? null;
+                const timedOut = detail?.timedOut ?? false;
+                const suspect = suspectFlags[i];
+                const showDetail = isDone && stepType !== 'wait';
+
+                const className = [
+                  'cycle-timeline-step',
+                  STEP_TIMELINE_CLASSES[stepType] ?? 'step-unknown',
+                  isDone && 'step-done',
+                  isActive && 'step-active',
+                  isFuture && 'step-future',
+                  timedOut && 'step-timedout',
+                  suspect && !timedOut && 'step-suspect',
+                ]
+                  .filter(Boolean)
+                  .join(' ');
+
                 return (
-                  <div
+                  <TimelineStep
                     key={i}
-                    className={`cycle-timeline-step ${STEP_TIMELINE_CLASSES[stepType] ?? 'step-unknown'}${isDone ? ' step-done' : ''}${isActive ? ' step-active' : ''}${isFuture ? ' step-future' : ''}`}
-                    style={{ flex: flexWeight }}
-                  >
-                    <div className="step-fill" style={{ width: `${fillPct}%` }} />
-                    {label && <span className="step-capacity-label">{label}</span>}
-                  </div>
+                    stepType={stepType}
+                    className={className}
+                    flexWeight={flexWeight}
+                    fillPct={fillPct}
+                    label={label}
+                    detail={detail}
+                    durS={durS ?? null}
+                    expectedS={expectedS}
+                    capMah={capMah ?? null}
+                    showDetail={showDetail}
+                    timedOut={timedOut}
+                    suspect={suspect}
+                  />
                 );
               })}
             </div>
