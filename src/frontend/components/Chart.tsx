@@ -319,6 +319,10 @@ export function Chart({
   // with different data extents fight over the synced x window every packet.
   const autoscalingRef = useRef(false);
 
+  // Run whose trace is emphasized from the timeline. Read by the overlay draw
+  // hook; changing it triggers a redraw (see effect below).
+  const highlightRunIdRef = useRef<number | null>(focusRunId);
+
   const refreshLiveMarkers = useCallback((u: uPlot) => {
     const container = containerRef.current;
     if (!container) return;
@@ -554,6 +558,50 @@ export function Chart({
               ctx.restore();
             }
           },
+          // Highlight overlay: redraw the emphasized run's traces at full
+          // brightness on top of everything else (see highlightRunIdRef).
+          (u: uPlot) => {
+            const hr = highlightRunIdRef.current;
+            if (hr == null) return;
+            const info = seriesInfoRef.current;
+            const xs = u.data[0] as number[] | undefined;
+            if (!xs || xs.length === 0) return;
+
+            const ctx = u.ctx;
+            const { left, top, width, height } = u.bbox;
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(left, top, width, height);
+            ctx.clip();
+            ctx.lineJoin = 'round';
+
+            for (let si = 0; si < info.length; si++) {
+              const s = info[si];
+              if (s.runId !== hr || !s.label || s.color === 'transparent') continue;
+              const ys = u.data[si + 1] as (number | null | undefined)[] | undefined;
+              if (!ys) continue;
+              const scale = METRIC_SCALE[s.metric];
+
+              ctx.beginPath();
+              ctx.strokeStyle = s.baseColor ?? s.color;
+              ctx.lineWidth = 3 * devicePixelRatio;
+              let started = false;
+              for (let i = 0; i < xs.length; i++) {
+                const y = ys[i];
+                if (y == null) continue; // spanGaps: skip nulls, keep the line going
+                const px = u.valToPos(xs[i], 'x', true);
+                const py = u.valToPos(y, scale, true);
+                if (started) ctx.lineTo(px, py);
+                else {
+                  ctx.moveTo(px, py);
+                  started = true;
+                }
+              }
+              if (started) ctx.stroke();
+            }
+            ctx.restore();
+          },
         ],
         setCursor: [
           (u: uPlot) => {
@@ -717,18 +765,14 @@ export function Chart({
     refreshLiveMarkers(u);
   }, [data, refreshLiveMarkers]);
 
-  // Externally-driven focus (timeline step hover/select): emphasize the run's
-  // trace. Cursor movement over the chart overrides this via the setCursor hook.
+  // Externally-driven highlight (timeline step hover/select): the overlay draw
+  // hook redraws the matching run's traces at full brightness on top of the
+  // (possibly dimmed) chart. A single-series uPlot focus can't do this — it
+  // can't brighten an alpha-dimmed historic trace, and only emphasizes one
+  // series, not all of a run's metrics. Just trigger a redraw here.
   useEffect(() => {
-    const u = uplotRef.current;
-    if (!u) return;
-    if (focusRunId == null) {
-      setFocusedSeries(u, -1);
-      return;
-    }
-    const info = seriesInfoRef.current;
-    const si = info.findIndex(s => s.runId === focusRunId && s.label && s.color !== 'transparent');
-    setFocusedSeries(u, si);
+    highlightRunIdRef.current = focusRunId;
+    uplotRef.current?.redraw();
   }, [focusRunId]);
 
   // Handle container resize

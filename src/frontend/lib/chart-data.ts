@@ -49,6 +49,9 @@ export interface ChartSeriesInfo {
   label: string;
   /** CSS color */
   color: string;
+  /** Undimmed (vivid) color — used to brighten this trace when its step is
+   *  highlighted from the timeline, even when `color` is alpha-dimmed. */
+  baseColor?: string;
   /** Whether this is the live run */
   isLive: boolean;
   /** Temperature channel ID (only for temperature series) */
@@ -472,6 +475,7 @@ export function mergeRunsForChart(
         metric,
         label: `${run.label} ${metric}`,
         color: colorWithAlpha(baseColor, alpha),
+        baseColor: colorWithAlpha(baseColor, METRIC_ALPHA[metric]),
         isLive: false,
       });
 
@@ -501,6 +505,7 @@ export function mergeRunsForChart(
         metric,
         label: `Live ${metric}`,
         color: colorWithAlpha(LIVE_COLORS[metric], alpha),
+        baseColor: colorWithAlpha(LIVE_COLORS[metric], alpha),
         isLive: true,
       });
     }
@@ -658,6 +663,7 @@ export function buildTempChartData(
       metric: 'temperature',
       label: multiRun ? `${channelLabel} · ${b.runLabel}` : channelLabel,
       color: colorWithAlpha(baseColor, alpha),
+      baseColor: colorWithAlpha(baseColor, 0.9),
       isLive: b.isLive,
       channelId: b.channelKey,
     });

@@ -623,7 +623,7 @@ export function TopBar({ activeCellIrMohm = null, onHighlightRun }: TopBarProps)
                     showDetail={showDetail}
                     timedOut={timedOut}
                     suspect={suspect}
-                    runId={cycleState.stepRunIds?.[i] ?? null}
+                    runId={isDone ? (cycleState.stepRunIds?.[i] ?? null) : null}
                     onHighlight={onHighlightRun ?? noop}
                   />
                 );
