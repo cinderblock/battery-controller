@@ -8,6 +8,7 @@
 import { useCallback, useRef } from 'react';
 import type { SequenceStep, SequenceVariable, StepPath } from '../lib/sequence-types.ts';
 import {
+  defaultProbe,
   estimateDurationH,
   formatMinutes,
   parseDurationInput,
@@ -364,6 +365,50 @@ export function StepProperties({
                 max={40}
                 onChange={v => onUpdate(path, { ...step, backoff: { minA: v } })}
               />
+            )}
+            <label className="sp-exclude">
+              <input
+                type="checkbox"
+                checked={!!step.probe}
+                onChange={e => onUpdate(path, { ...step, probe: e.target.checked ? defaultProbe() : undefined })}
+              />
+              <span>IR probe: periodically dip the current to measure internal resistance</span>
+            </label>
+            {step.probe && (
+              <>
+                <ParamRow
+                  label="Probe every"
+                  value={step.probe.periodS / 60}
+                  unit="min"
+                  step={1}
+                  min={1}
+                  max={120}
+                  onChange={v => onUpdate(path, { ...step, probe: { ...step.probe!, periodS: v * 60 } })}
+                />
+                <ParamRow
+                  label="Dip to"
+                  value={step.probe.lowA}
+                  unit="A"
+                  step={1}
+                  min={1}
+                  max={40}
+                  onChange={v => onUpdate(path, { ...step, probe: { ...step.probe!, lowA: v } })}
+                />
+                <ParamRow
+                  label="Hold"
+                  value={step.probe.holdS}
+                  unit="s"
+                  step={1}
+                  min={6}
+                  max={30}
+                  onChange={v => onUpdate(path, { ...step, probe: { ...step.probe!, holdS: v } })}
+                />
+                {resolveCurrentA(step, capacityAh) - step.probe.lowA < 5 && (
+                  <div className="sp-hint sp-hint-warn">
+                    Needs a ≥5 A drop from the step current — probe will not run at these settings
+                  </div>
+                )}
+              </>
             )}
           </>
         )}

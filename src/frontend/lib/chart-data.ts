@@ -10,13 +10,14 @@
  * and undefined elsewhere. uPlot skips undefined gaps in series.
  */
 
+import type { IrSample } from '../../shared/ir-estimate.ts';
 import type { DataPoint, TestRun } from '../api-client.ts';
 import type { LivePoint, LiveTempPoint } from '../hooks/useDeviceSession.ts';
 import { ocvToSoc, type ReferenceCurve } from './lfp-reference-curves.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
 
-export type MetricKey = 'voltage' | 'current' | 'power' | 'capacity' | 'temperature';
+export type MetricKey = 'voltage' | 'current' | 'power' | 'capacity' | 'temperature' | 'ir';
 
 export interface ChartRun {
   id: number;
@@ -166,6 +167,7 @@ const LIVE_COLORS: Record<MetricKey, string> = {
   power: '#ffab40', // bright amber
   capacity: '#e040fb', // bright purple
   temperature: '#ff5252', // bright red (unused — temp chart colors per channel)
+  ir: '#26c6da', // cyan (unused — IR series built in buildTempChartData)
 };
 
 const METRIC_ALPHA: Record<MetricKey, number> = {
@@ -174,7 +176,11 @@ const METRIC_ALPHA: Record<MetricKey, number> = {
   power: 0.5,
   capacity: 0.6,
   temperature: 0.9,
+  ir: 0.9,
 };
+
+/** DC-IR trace color — cyan, distinct from the warm temperature palette */
+const IR_COLOR = '#26c6da';
 
 function colorWithAlpha(hex: string, alpha: number): string {
   // Convert hex to rgba
@@ -441,8 +447,10 @@ export function mergeRunsForChart(
   const data: (number | null | undefined)[][] = [xValues];
   const seriesInfo: ChartSeriesInfo[] = [];
   const bands: BandDef[] = [];
-  // Temperature is handled separately by addTemperatureSeries — exclude here
-  const metricsArr = Array.from(visibleMetrics).filter(m => m !== 'temperature');
+  // Temperature and IR live on their own chart (buildTempChartData) — exclude here
+  const metricsArr = Array.from(visibleMetrics).filter(
+    (m): m is 'voltage' | 'current' | 'power' | 'capacity' => m !== 'temperature' && m !== 'ir'
+  );
   const desatAlpha = isTestActive ? 0.2 : 1.0;
 
   // Min/max range arrays for downsampled runs — only V and I (power/capacity don't need bands)
@@ -548,7 +556,9 @@ export function buildTempChartData(
   tempDataByRun: Map<number, TempDataPoint[]>,
   liveTempPoints: LiveTempPoint[],
   activeRunId: number | null | undefined,
-  isTestActive: boolean
+  isTestActive: boolean,
+  /** Per-run DC-IR samples — rendered on the right-hand mΩ scale of this chart */
+  irSamplesByRun?: Map<number, IrSample[]>
 ): MergedChartData {
   // Collect per-(run, channel) point lists
   interface SeriesBucket {
@@ -616,13 +626,39 @@ export function buildTempChartData(
     }
   }
 
-  if (buckets.size === 0) {
+  // IR sample series — one per run with usable current steps. They share
+  // this chart's x axis but render on the right-hand mΩ scale.
+  interface IrBucket {
+    runId: number;
+    runLabel: string;
+    isLive: boolean;
+    points: { t: number; v: number }[];
+  }
+  const irBuckets: IrBucket[] = [];
+  if (irSamplesByRun) {
+    for (const run of runs) {
+      if (visibleRuns && !visibleRuns.has(run.id)) continue;
+      const samples = irSamplesByRun.get(run.id);
+      if (!samples || samples.length === 0) continue;
+      irBuckets.push({
+        runId: run.id,
+        runLabel: run.label,
+        isLive: isTestActive && run.id === activeRunId,
+        points: samples.map(s => ({ t: s.t, v: s.mohm })),
+      });
+    }
+  }
+
+  if (buckets.size === 0 && irBuckets.length === 0) {
     return { data: [[]], seriesInfo: [] };
   }
 
   // Union time axis
   const timeSet = new Set<number>();
   for (const b of buckets.values()) {
+    for (const p of b.points) timeSet.add(p.t);
+  }
+  for (const b of irBuckets) {
     for (const p of b.points) timeSet.add(p.t);
   }
   const xValues = Array.from(timeSet).sort((a, b) => a - b);
@@ -666,6 +702,25 @@ export function buildTempChartData(
       baseColor: colorWithAlpha(baseColor, 0.9),
       isLive: b.isLive,
       channelId: b.channelKey,
+    });
+  }
+
+  for (const b of irBuckets) {
+    const values = new Array<number | null | undefined>(xValues.length).fill(undefined);
+    for (const p of b.points) {
+      const idx = timeIndex.get(p.t);
+      if (idx !== undefined) values[idx] = p.v;
+    }
+    data.push(values);
+
+    const alpha = isTestActive && !b.isLive ? 0.15 : 0.9;
+    seriesInfo.push({
+      runId: b.runId,
+      metric: 'ir',
+      label: irBuckets.length > 1 ? `IR · ${b.runLabel}` : 'IR',
+      color: colorWithAlpha(IR_COLOR, alpha),
+      baseColor: colorWithAlpha(IR_COLOR, 0.9),
+      isLive: b.isLive,
     });
   }
 

@@ -25,6 +25,21 @@ export {
 
 // ── Step definitions ───────────────────────────────────────────────
 
+/** Periodic in-run IR probe: dip the current to lowA for holdS every periodS (see server cycle-runner) */
+export interface IrProbeConfig {
+  /** Seconds between probes */
+  periodS: number;
+  /** Reduced current during the dip (A) — non-zero keeps the cell loaded */
+  lowA: number;
+  /** How long to hold the reduced current (s) */
+  holdS: number;
+}
+
+/** Default probe when toggled on: 10 min period, dip to 10 A for 8 s */
+export function defaultProbe(): IrProbeConfig {
+  return { periodS: 600, lowA: 10, holdS: 8 };
+}
+
 export interface StepDCC {
   type: 'd-cc';
   currentA: number;
@@ -38,6 +53,8 @@ export interface StepDCC {
   bind?: FieldBindings;
   /** Retry at half current (down to minA) when the cutoff trips instantly (IR sag) */
   backoff?: { minA: number };
+  /** Periodic IR probe — measures internal resistance repeatedly during the discharge */
+  probe?: IrProbeConfig;
 }
 
 export interface StepDCP {

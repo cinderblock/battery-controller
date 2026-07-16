@@ -2720,6 +2720,11 @@ body {
   opacity: 0.7;
 }
 
+.sp-hint-warn {
+  color: var(--warning, #ffb74d);
+  opacity: 1;
+}
+
 /* ── Setpoint bar (visual indicator) ────────────────────────────── */
 
 .sp-bar {

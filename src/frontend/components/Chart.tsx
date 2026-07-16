@@ -248,6 +248,7 @@ const METRIC_SCALE: Record<MetricKey, string> = {
   power: 'W',
   capacity: 'Ah',
   temperature: '°C',
+  ir: 'mΩ',
 };
 
 const METRIC_UNIT: Record<MetricKey, string> = {
@@ -256,6 +257,7 @@ const METRIC_UNIT: Record<MetricKey, string> = {
   power: 'W',
   capacity: 'Ah',
   temperature: '°C',
+  ir: 'mΩ',
 };
 
 // ── Component ──────────────────────────────────────────────────────
@@ -413,6 +415,19 @@ export function Chart({
       });
     }
 
+    // DC internal resistance — right side of the temperature chart
+    if (usedScales.has('mΩ')) {
+      axes.push({
+        scale: 'mΩ',
+        side: 1,
+        values: (_u: uPlot, vals: number[]) => vals.map(v => v.toFixed(1) + ' mΩ'),
+        stroke: '#26c6da',
+        grid: { show: false },
+        ticks: { show: false },
+        size: 55,
+      });
+    }
+
     // Temperature axis — left side, and it's the only y-axis on the
     // standalone temperature chart, so it owns the horizontal grid
     if (usedScales.has('°C')) {
@@ -440,7 +455,8 @@ export function Chart({
         stroke: isBandBound ? 'transparent' : info.color,
         width: isBandBound ? 0 : info.isLive ? 2.5 : 1,
         spanGaps: true,
-        points: { show: false },
+        // IR samples are sparse (a few per run) — dots make them legible
+        points: { show: info.metric === 'ir', size: 6 },
       });
     }
 
@@ -504,6 +520,11 @@ export function Chart({
         },
         Ah: { auto: true, range: (_u: uPlot, min: number, max: number) => [0, max * 1.05] as [number, number] },
         '°C': { auto: true },
+        // Zero-floored so the magnitude reads honestly (2 vs 20 mΩ), not zoomed to noise
+        mΩ: {
+          auto: true,
+          range: (_u: uPlot, _min: number, max: number) => [0, Math.max(max * 1.15, 1)] as [number, number],
+        },
       },
       axes,
       series,

@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { estimateIrSamples, type IrSample, modeSupportsIr } from '../../shared/ir-estimate.ts';
 import {
   api,
   type Cell,
@@ -422,11 +423,53 @@ export function ChartView() {
     );
   }, [runs, state.livePoints, visibleRuns, visibleMetrics, isTestActive, state.activeRunId, runColorMap]);
 
+  // Merge live points into the active run (shared by the IR trace and the
+  // capacity chart below)
+  const runsWithLive = useMemo(
+    () => mergeActiveRunWithLive(runs, state.activeRunId, state.livePoints),
+    [runs, state.activeRunId, state.livePoints]
+  );
+
+  // ── Running DC-IR estimate per run — plotted on the temp chart's mΩ axis.
+  //    Steady runs yield only their start/stop current steps; runs with the
+  //    IR probe enabled yield a sample per dip. ─────────────────────────
+  const irSamplesByRun = useMemo(() => {
+    const map = new Map<number, IrSample[]>();
+    for (const run of runsWithLive) {
+      if (!modeSupportsIr(run.meta.mode)) continue;
+      const pts = run.elapsed.map((t, i) => ({
+        elapsed_s: t,
+        voltage_v: run.voltage[i],
+        current_a: run.current[i],
+      }));
+      const samples = estimateIrSamples(pts, run.meta.mode);
+      if (samples.length > 0) map.set(run.id, samples);
+    }
+    return map;
+  }, [runsWithLive]);
+
   // ── Temperature chart (separate, x-synced below the main chart) ──
   const tempChartData = useMemo((): MergedChartData => {
     if (!visibleMetrics.has('temperature')) return { data: [[]], seriesInfo: [] };
-    return buildTempChartData(runs, visibleRuns, tempDataByRun, state.liveTempPoints, state.activeRunId, isTestActive);
-  }, [runs, visibleRuns, visibleMetrics, tempDataByRun, state.liveTempPoints, state.activeRunId, isTestActive]);
+    return buildTempChartData(
+      runs,
+      visibleRuns,
+      tempDataByRun,
+      state.liveTempPoints,
+      state.activeRunId,
+      isTestActive,
+      irSamplesByRun
+    );
+  }, [
+    runs,
+    visibleRuns,
+    visibleMetrics,
+    tempDataByRun,
+    state.liveTempPoints,
+    state.activeRunId,
+    isTestActive,
+    irSamplesByRun,
+  ]);
 
   const showTempChart = tempChartData.seriesInfo.length > 0 && (tempChartData.data[0]?.length ?? 0) > 0;
 
@@ -468,23 +511,20 @@ export function ChartView() {
 
   // Align the stacked charts' plot areas: pad each side to the wider of the
   // two charts' axis gutters (axis sizes mirror Chart.tsx's axis configs)
+  const tempHasIr = tempChartData.seriesInfo.some(s => s.metric === 'ir');
+  const tempHasTemps = tempChartData.seriesInfo.some(s => s.metric === 'temperature');
   const mainLeftPx = (visibleMetrics.has('voltage') ? 65 : 0) + (visibleMetrics.has('current') ? 55 : 0);
   const mainRightPx = (visibleMetrics.has('power') ? 50 : 0) + (visibleMetrics.has('capacity') ? 55 : 0);
-  const tempLeftPx = 55; // °C axis (left side)
+  const tempLeftPx = tempHasTemps ? 55 : 0; // °C axis (left side)
+  const tempRightPx = tempHasIr ? 55 : 0; // mΩ axis (right side)
   const mainPadLeft = tempChartVisible ? Math.max(0, tempLeftPx - mainLeftPx) : 0;
-  const mainPadRight = 0; // temp chart has no right axis
+  const mainPadRight = tempChartVisible ? Math.max(0, tempRightPx - mainRightPx) : 0;
   const tempPadLeft = Math.max(0, mainLeftPx - tempLeftPx);
-  const tempPadRight = mainRightPx;
+  const tempPadRight = Math.max(0, mainRightPx - tempRightPx);
 
   // ── Capacity chart data ───────────────────────────────────────
   const nominalMah = selectedGroup?.nominal_capacity_mah ?? 200000;
   const nominalAh = nominalMah / 1000;
-
-  // Merge live points into the active run so the capacity chart stays current
-  const runsWithLive = useMemo(
-    () => mergeActiveRunWithLive(runs, state.activeRunId, state.livePoints),
-    [runs, state.activeRunId, state.livePoints]
-  );
 
   const capacityRuns = useMemo(
     () => runsWithLive.map(run => runToCapacityDomain(run, nominalMah)),
@@ -636,7 +676,11 @@ export function ChartView() {
                   <>
                     <button type="button" className="chart-temps-toggle" onClick={toggleTempsCollapsed}>
                       <span className={`chart-temps-chevron${tempsCollapsed ? '' : ' open'}`}>{'▸'}</span>
-                      Temperatures
+                      {tempHasTemps && tempHasIr
+                        ? 'Temperatures · IR'
+                        : tempHasIr
+                          ? 'Internal Resistance'
+                          : 'Temperatures'}
                     </button>
                     {tempChartVisible && (
                       <div className="chart-stack-temps">

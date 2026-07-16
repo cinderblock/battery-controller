@@ -95,13 +95,17 @@ canvas are other suspects) — a heap snapshot would confirm.
 ## Staged plan
 
 1. [x] `estimateIrSamples()` time series + refactor median to use it + tests. (pure, safe)
-2. [ ] `probe?` field on StepDCC (shared server type + frontend sequence-types) + validation.
-3. [ ] Fake device: model `0x08` continue (elapsed/capacity behavior we decide is correct).
-4. [ ] CycleRunner probe scheduler (arm/fire/disarm) + tests, validated vs fake device.
-5. [ ] Chart: right mΩ axis on temp chart + running-estimate trace.
-6. [ ] StepProperties UI toggle + fields.
+2. [x] `probe?` field on StepDCC (server cycle-runner + frontend sequence-types) + `sanitizeProbe` validation.
+3. [x] Fake device: verified — its `0x08` handler already preserves capacity/setpoints mid-run
+       (device.ts ACTION_CONTINUE shares the ACTION_START case, only updates setpoints). No change needed.
+4. [x] CycleRunner probe scheduler (arm/fire/disarm) + sanitizeProbe tests. NOT yet exercised
+       end-to-end against the running fake device — do that before prod (see verification note below).
+5. [x] Chart: right mΩ axis on temp chart + IR sample trace (computed client-side from run points).
+6. [x] StepProperties UI toggle + period/dip/hold fields + ΔI<5A warning hint.
 7. [x] Browser RAM fix in useDeviceSession live buffers. (pulled forward at user request)
-8. [ ] Capture real-hardware `0x08` behavior; only then enable probe on prod.
+8. [ ] Verify probe end-to-end against fake device (start a probing d-cc, watch dips + IR samples).
+9. [ ] Capture real-hardware `0x08` behavior (elapsed timer? capacity accumulator?); only then
+       enable probe on prod.
 
 ## Progress log
 
@@ -121,4 +125,25 @@ canvas are other suspects) — a heap snapshot would confirm.
   aligned). Lossless for the live chart — full data is server-side in `data_points`. Chart
   layer itself (uPlot, canvas) was already leak-clean. NOTE: not yet confirmed on-device to be
   the _whole_ RAM story; if OOM persists, take a heap snapshot (CameraView/RTSP is next suspect).
-  Next feature step: `probe?` field on StepDCC, then fake-device `0x08` modeling.
+- **De-risking finding**: `elapsedS` is HOST-computed (`Date.now() - testStartTime`,
+  `device-session.ts:275`), and `testStartTime` is only set on an idle→running transition
+  (`:500`) — a mid-run `0x08` never resets it, so probes CANNOT defeat the host max-time
+  watchdog no matter what the device's internal timer does. The only remaining hardware
+  unknown is the device-side **capacity accumulator** (capacityMah IS device-reported).
+- Stages 2–6 done (one session): pure estimator moved to `src/shared/ir-estimate.ts`
+  (frontend + server import it; server file keeps backfills + re-exports). `probe?` on StepDCC
+  both sides; `sanitizeProbe()` clamps hold to [6,30]s, period ≥ max(60s, 4×hold), rejects
+  ΔI < 5 A (estimator threshold, single-sourced via exported `MIN_STEP_A`). CycleRunner:
+  `armProbe` on step start, `setInterval` dip → `holdS` → restore via `continueDCC`;
+  `canTwiddle()` guards BOTH sends (status running, no advancePending, session mode 'd-cc',
+  no pending command) because a `0x08` to an idle/charging device would START/redirect a test;
+  timers cleared on step-complete, advance, abort, stop, reset, and re-armed per step (backoff
+  retry re-arms with the reduced current — probe auto-disables if backed off under lowA+5A).
+  Restore failure = run continues at lowA until the next probe cycle recovers it (logged).
+  Chart: `ir` metric on the temp chart, right-side zero-floored mΩ axis, dots for sparse
+  samples; IR samples computed client-side (`estimateIrSamples` over loaded/live run points);
+  stacked-chart gutter math updated for the new right axis. StepProperties: probe checkbox +
+  every/dip/hold fields + warning when ΔI < 5 A. All checks green (48 server tests, tsc, biome).
+- Known gaps: probe is NOT re-armed after a service restart mid-step (resume path never calls
+  executeCurrentStep for an in-flight step) — self-heals on the next step, same accepted quirk
+  as backoff. Probe end-to-end vs the fake device still to do (stage 8) before any deploy.

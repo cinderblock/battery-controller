@@ -9,6 +9,7 @@
  * Cycle state persists to SQLite so it can resume after Pi reboots.
  */
 
+import { MIN_STEP_A } from '../shared/ir-estimate.ts';
 import { type FieldBindings, resolveSteps, type SequenceVariable } from '../shared/sequence-vars.ts';
 import { logger } from '../utils/logger.ts';
 import {
@@ -28,6 +29,16 @@ import type { TestRecorder } from './test-recorder.ts';
 
 // ── Step types (mirror frontend sequence-types.ts) ─────────────────
 
+/** Periodic in-run IR probe: dip the current to lowA for holdS every periodS */
+export interface IrProbeConfig {
+  /** Seconds between probes */
+  periodS: number;
+  /** Reduced current during the dip (A) — non-zero keeps the cell loaded */
+  lowA: number;
+  /** How long to hold the reduced current (s) — needs ≥2–3 readings at ~2s cadence */
+  holdS: number;
+}
+
 export interface StepDCC {
   type: 'd-cc';
   currentA: number;
@@ -38,6 +49,8 @@ export interface StepDCC {
   bind?: FieldBindings;
   /** Retry at half current (down to minA) when the cutoff trips instantly */
   backoff?: { minA: number };
+  /** Periodic IR probe — gives the estimator a clean large-ΔI step every periodS */
+  probe?: IrProbeConfig;
 }
 
 export interface StepDCP {
@@ -104,6 +117,32 @@ export function nextBackoffCurrentA(
   if ((run.final_capacity_mah ?? Number.POSITIVE_INFINITY) >= BACKOFF_TRIP_MAX_MAH) return null;
   if (!(minA > 0) || currentA <= minA + 1e-9) return null;
   return Math.max(minA, currentA / 2);
+}
+
+// ── In-run IR probe ────────────────────────────────────────────────
+
+/** Floor on probe period — probing more often than this adds noise, not signal */
+const PROBE_MIN_PERIOD_S = 60;
+/** Hold bounds: long enough for ≥2–3 readings at ~2s cadence, short enough to stay a "dip" */
+const PROBE_MIN_HOLD_S = 6;
+const PROBE_MAX_HOLD_S = 30;
+
+/**
+ * Validate and clamp a step's probe config against its resolved current.
+ * Returns the sanitized config, or null when probing can't produce a usable
+ * sample (ΔI below the estimator's acceptance threshold, or nonsense values).
+ */
+export function sanitizeProbe(probe: IrProbeConfig | undefined, setpointA: number): IrProbeConfig | null {
+  if (!probe) return null;
+  if (!(probe.lowA > 0)) return null;
+  // The estimator rejects steps under MIN_STEP_A — a smaller dip is pure disturbance
+  if (setpointA - probe.lowA < MIN_STEP_A) return null;
+  if (!(probe.periodS > 0) || !(probe.holdS > 0)) return null;
+
+  const holdS = Math.min(Math.max(probe.holdS, PROBE_MIN_HOLD_S), PROBE_MAX_HOLD_S);
+  // Keep the dip a small fraction of the period so the run stays a discharge
+  const periodS = Math.max(probe.periodS, PROBE_MIN_PERIOD_S, holdS * 4);
+  return { periodS, lowA: probe.lowA, holdS };
 }
 
 /** Short parameter summary for a step, for timeline labels */
@@ -288,6 +327,10 @@ export class CycleRunner {
   // True between a step completing and the deferred advance/backoff decision
   private advancePending = false;
 
+  // In-run IR probe: periodic dip timer + the pending restore for an in-flight dip
+  private probeTimer: Timer | null = null;
+  private probeRestoreTimer: Timer | null = null;
+
   // Cached per-step metadata (updated as steps complete)
   private stepCapacities: (number | null)[] = [];
   private stepDurations: (number | null)[] = [];
@@ -340,6 +383,7 @@ export class CycleRunner {
   stop(): void {
     this.unsubSession?.();
     this.clearWaitTimer();
+    this.clearProbeTimers();
   }
 
   /** Subscribe to cycle state changes */
@@ -462,6 +506,7 @@ export class CycleRunner {
     this.status = 'aborted';
 
     this.clearWaitTimer();
+    this.clearProbeTimers();
     this.recorder.stopWaitRun(); // no-op if no wait run active
 
     if (this.session.isRunning()) {
@@ -589,6 +634,9 @@ export class CycleRunner {
   }
 
   private async executeCurrentStep(cellId: number | null = null): Promise<void> {
+    // Never let a previous step's probe timers fire into this one
+    this.clearProbeTimers();
+
     if (this.execIndex >= this.execPlan.length) {
       this.completeProgram();
       return;
@@ -670,6 +718,8 @@ export class CycleRunner {
         break;
       }
     }
+
+    this.armProbe(step);
   }
 
   private onSessionEvent(event: SessionEvent): void {
@@ -683,6 +733,7 @@ export class CycleRunner {
       const currentStep = this.execPlan[this.execIndex].step;
       if (currentStep.type !== 'wait' && !this.advancePending) {
         this.advancePending = true;
+        this.clearProbeTimers(); // step is over — no dip/restore may fire into the gap
 
         // Capture final capacity and duration from device before advancing
         const reading = this.session.getReading();
@@ -758,6 +809,85 @@ export class CycleRunner {
     this.emit();
     this.executeCurrentStep();
     return true;
+  }
+
+  // ── In-run IR probe ───────────────────────────────────────────
+
+  /**
+   * Arm the periodic IR probe for a just-started step. d-cc only: direct
+   * current control gives a clean, known ΔI. No-op (after clearing any
+   * previous timers) for other step types or unusable probe configs.
+   */
+  private armProbe(step: StepDCC | StepDCP | StepCCV | StepWait): void {
+    this.clearProbeTimers();
+    if (step.type !== 'd-cc') return;
+    const setpointA = this.resolveCurrentA(step);
+    const probe = sanitizeProbe(step.probe, setpointA);
+    if (!probe) return;
+
+    this.probeTimer = setInterval(() => void this.fireProbe(step, probe, setpointA), probe.periodS * 1000);
+    logger.info(
+      `IR probe armed: ${setpointA}A → ${probe.lowA}A for ${probe.holdS}s every ${Math.round(probe.periodS / 60)}min`
+    );
+  }
+
+  private clearProbeTimers(): void {
+    if (this.probeTimer) {
+      clearInterval(this.probeTimer);
+      this.probeTimer = null;
+    }
+    if (this.probeRestoreTimer) {
+      clearTimeout(this.probeRestoreTimer);
+      this.probeRestoreTimer = null;
+    }
+  }
+
+  /**
+   * True only while it's safe to send a d-cc continue. A 0x08 sent to an
+   * idle or charging device would START or redirect a test, so both the
+   * dip and the restore must re-check right before sending: the device can
+   * hit its cutoff (or the user can stop it) at any moment, including
+   * mid-dip.
+   */
+  private canTwiddle(): boolean {
+    return (
+      this.status === 'running' &&
+      !this.advancePending &&
+      this.session.getMode() === 'd-cc' &&
+      this.session.getPendingCommand() === null
+    );
+  }
+
+  /** One probe cycle: dip to lowA, hold, restore the step's setpoint. */
+  private async fireProbe(step: StepDCC, probe: IrProbeConfig, setpointA: number): Promise<void> {
+    if (this.probeRestoreTimer) return; // previous dip still in flight
+    if (!this.canTwiddle()) return;
+
+    try {
+      await this.session.continueDCC(probe.lowA, step.cutoffV, step.maxTimeMin ?? 0);
+      logger.info(`IR probe: dip ${setpointA}A → ${probe.lowA}A (${probe.holdS}s)`);
+    } catch (e) {
+      logger.error('IR probe dip failed:', e);
+      return;
+    }
+
+    this.probeRestoreTimer = setTimeout(async () => {
+      this.probeRestoreTimer = null;
+      if (!this.canTwiddle()) {
+        // Step ended mid-dip (cutoff/stop) — the next step starts fresh via
+        // startDCC, so there is nothing to restore.
+        logger.info('IR probe: step ended during dip — skipping restore');
+        return;
+      }
+      try {
+        await this.session.continueDCC(setpointA, step.cutoffV, step.maxTimeMin ?? 0);
+        logger.info(`IR probe: restore ${probe.lowA}A → ${setpointA}A`);
+      } catch (e) {
+        // Discharge continues at lowA — still a valid (slower) run, and the
+        // next probe period's restore path recovers the setpoint.
+        logger.error('IR probe restore failed — run continues at reduced current until next probe:', e);
+      }
+    }, probe.holdS * 1000);
   }
 
   private completeProgram(): void {
@@ -914,5 +1044,6 @@ export class CycleRunner {
     this.stepRunIds = [];
     this.stepExpectedS = [];
     this.clearWaitTimer();
+    this.clearProbeTimers();
   }
 }
