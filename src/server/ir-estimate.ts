@@ -38,6 +38,14 @@ export interface IrEstimate {
   samples: number;
 }
 
+/** A single DC-IR sample from one current step, timestamped at the step's end. */
+export interface IrSample {
+  /** elapsed_s of the second point of the step (when the sample resolves) */
+  t: number;
+  /** DC internal resistance for this step, milliohms */
+  mohm: number;
+}
+
 interface IrPoint {
   elapsed_s: number;
   voltage_v: number;
@@ -50,21 +58,23 @@ export function modeSupportsIr(mode: string): boolean {
 }
 
 /**
- * Estimate DC internal resistance from a run's data points.
+ * Extract per-current-step DC-IR samples from a run's data points, as a time
+ * series (each sample timestamped at the step's end). This is the raw signal
+ * behind both the whole-run median (`estimateIrMohm`) and the live running-mΩ
+ * trace: a steady CC/CV run yields only the start/stop steps, but an
+ * actively-probed run (periodic current twiddles) yields one sample per dip.
  *
  * `mode` determines the expected sign: current_a is an unsigned magnitude,
  * so on a charge step voltage rises with current (ΔV/ΔI > 0) while on a
  * discharge step it falls (ΔV/ΔI < 0). Steps with the wrong sign are
  * rejected rather than folded in with abs() — a wrong-signed "step" means
  * the voltage moved for some other reason (e.g. mode transition glitch).
- *
- * Returns null when the run has no usable current step.
  */
-export function estimateIrMohm(points: IrPoint[], mode: string): IrEstimate | null {
-  if (!modeSupportsIr(mode)) return null;
+export function estimateIrSamples(points: IrPoint[], mode: string): IrSample[] {
+  if (!modeSupportsIr(mode)) return [];
 
   const sign = mode.startsWith('c-') ? 1 : -1;
-  const samples: number[] = [];
+  const samples: IrSample[] = [];
 
   for (let i = 1; i < points.length; i++) {
     const prev = points[i - 1];
@@ -79,16 +89,27 @@ export function estimateIrMohm(points: IrPoint[], mode: string): IrEstimate | nu
     const rMohm = (sign * (curr.voltage_v - prev.voltage_v) * 1000) / dI;
     if (rMohm <= 0 || rMohm > MAX_PLAUSIBLE_MOHM) continue;
 
-    samples.push(rMohm);
+    samples.push({ t: curr.elapsed_s, mohm: Math.round(rMohm * 100) / 100 });
   }
 
-  if (samples.length === 0) return null;
+  return samples;
+}
 
-  samples.sort((a, b) => a - b);
-  const mid = Math.floor(samples.length / 2);
-  const median = samples.length % 2 !== 0 ? samples[mid] : (samples[mid - 1] + samples[mid]) / 2;
+/**
+ * Estimate DC internal resistance from a run's data points — the median of the
+ * per-step samples (see `estimateIrSamples`).
+ *
+ * Returns null when the run has no usable current step.
+ */
+export function estimateIrMohm(points: IrPoint[], mode: string): IrEstimate | null {
+  const values = estimateIrSamples(points, mode).map(s => s.mohm);
+  if (values.length === 0) return null;
 
-  return { mohm: Math.round(median * 100) / 100, samples: samples.length };
+  values.sort((a, b) => a - b);
+  const mid = Math.floor(values.length / 2);
+  const median = values.length % 2 !== 0 ? values[mid] : (values[mid - 1] + values[mid]) / 2;
+
+  return { mohm: Math.round(median * 100) / 100, samples: values.length };
 }
 
 // ── Ohmic heat estimation ───────────────────────────────────────────

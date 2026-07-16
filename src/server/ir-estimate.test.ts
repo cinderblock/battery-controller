@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { estimateHeatMwh, estimateIrMohm, modeSupportsIr } from './ir-estimate.ts';
+import { estimateHeatMwh, estimateIrMohm, estimateIrSamples, modeSupportsIr } from './ir-estimate.ts';
 
 /**
  * Reference values from real runs on coulomb (2026-07-12, cell 5 / F02729):
@@ -64,6 +64,48 @@ describe('estimateIrMohm', () => {
   test('returns null for empty or single-point runs', () => {
     expect(estimateIrMohm([], 'c-cv')).toBeNull();
     expect(estimateIrMohm([pt(0, 3.2, 0)], 'c-cv')).toBeNull();
+  });
+});
+
+describe('estimateIrSamples', () => {
+  test('one sample per current step, timestamped at the step end', () => {
+    // Discharge with an active-probe twiddle: start step, a mid-run dip and
+    // recovery (down to 10A, back to 40A), each a resolvable step.
+    // Readings arrive ~2s apart, so an 8s probe hold still resolves both the
+    // down-step and the restore-step (each spans one 2s sample gap).
+    const est = estimateIrSamples(
+      [
+        pt(0, 3.3, 0), // rest
+        pt(2, 2.9, 40), // start step → ~10 mΩ
+        pt(600, 2.88, 40), // steady (no step)
+        pt(602, 3.02, 10), // probe down → sign-corrected (3.02-2.88)/(40-10) ≈ 4.67 mΩ
+        pt(604, 3.02, 10), // hold (no step)
+        pt(606, 3.02, 10), // hold
+        pt(608, 3.02, 10), // hold
+        pt(610, 2.9, 40), // probe restore → (3.02-2.9)/(40-10) ≈ 4 mΩ
+      ],
+      'd-cc'
+    );
+    expect(est.map(s => s.t)).toEqual([2, 602, 610]);
+    expect(est[0].mohm).toBeCloseTo(10, 1);
+    expect(est.length).toBe(3);
+  });
+
+  test('steady run yields only the start step (why we need active probing)', () => {
+    const points = [pt(0, 3.3, 0), pt(2, 2.9, 40)];
+    for (let i = 2; i < 100; i++) points.push(pt(i * 2, 2.9 - i * 0.001, 40));
+    expect(estimateIrSamples(points, 'd-cc').length).toBe(1);
+  });
+
+  test('empty for unsupported mode', () => {
+    expect(estimateIrSamples([pt(0, 3.2, 0), pt(2, 3.0, 20)], 'wait')).toEqual([]);
+  });
+
+  test('median matches estimateIrMohm over the same samples', () => {
+    const points = [pt(0, 3.2, 0), pt(2, 3.6, 20), pt(8, 3.18, 0.4)];
+    const samples = estimateIrSamples(points, 'c-cv');
+    const est = estimateIrMohm(points, 'c-cv');
+    expect(est?.samples).toBe(samples.length);
   });
 });
 
