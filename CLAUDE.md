@@ -63,14 +63,17 @@ recordings/          # JSONL serial captures from proxy sessions
 - Other charge chemistries (C-LiPo, C-NiMH, etc.)
 - Error/disconnect states
 - Step/cycle tests
-- CMD 0x08 resume shortly after a 0x02 pause (EB Tester's pause→Continue flow)
 
 ### Mid-run setpoint changes (captured 2026-07-16, real A40L)
 
 - **CMD 0x07 (Adjust) is the only working mechanism** — current follows within
-  ~1 frame, capacity accumulator keeps counting. The IR probe uses it.
-- CMD 0x08 (continue) and re-sent 0x01 (START) are **silently ignored** while a
-  test runs; 0x08 from long-stopped idle is inert. See protocol.md for details.
+  ~1 frame, capacity accumulator keeps counting. Confirmed for D-CC (~2.1 mΩ
+  measured via the adjustment steps) AND C-CV during the CC phase (~2.2 mΩ).
+  The IR probe uses it.
+- CMD 0x08/0x28 (continue) and re-sent 0x01 (START) are **silently ignored**
+  while a test runs; 0x08 from long-stopped idle is inert.
+- **Pause→resume works**: 0x02 then 0x28 a few seconds later resumes a charge
+  with the capacity accumulator preserved. See protocol.md for details.
 
 ### Open questions
 

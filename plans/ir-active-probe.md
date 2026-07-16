@@ -120,8 +120,28 @@ canvas are other suspects) — a heap snapshot would confirm.
         on cell 8 (F02735) — confirmed 20 A flowing. NOTE: cycle program 25 "Increasing
         Sequence" remains aborted at step 9/15; re-launch it when convenient if the
         remaining steps (40 A discharge cycles) are still wanted.
-11. [ ] First real probing discharge (enable the probe toggle on a d-cc step) — validates
-        the 0x07 dip/restore loop end to end on hardware under the full server stack.
+11. [~] First real probing discharge: the user already enabled the probe on their stored
+    "Increasing Sequence" d-cc step (10 A dipping to 2 A every 10 min) — it fires when
+    program #28 reaches step 3. Watch its first run.
+
+## C-CV / pause-resume captures (2026-07-16 evening, user-authorized)
+
+Second bench window (program aborted + relaunched cleanly as #28; whole capture ran dark
+inside a bridge session — recorder saw nothing, zero junk runs):
+
+- **`0x07` Adjust works mid-CHARGE too** (CC phase): 20→10→20 A followed within ~1 frame,
+  capacity counting throughout, ΔV/ΔI ≈ 2.2 mΩ (matches discharge-side 2.1 mΩ). Charge-side
+  IR probing is feasible in the CC phase — v2 candidate; needs CC/CV phase gating (state
+  0x0C vs 0x16) because the CV taper makes commanded ΔI ill-defined. NOT built (not asked).
+- **`0x28` continue mid-run: ignored** (matches D-CC behavior).
+- **Pause→resume confirmed**: `0x02` then `0x28` ~4 s later resumes the charge with the
+  capacity accumulator preserved. EB Tester "Cont." semantics captured; resume window
+  closes somewhere between seconds and ~10 min.
+- Why run #169 (my restarted charge) stopped at 9.9 Ah remains unknown — the Pi journal is
+  volatile and had rotated past 12:55. Clean stop, data intact, no reboot (7 days uptime).
+- Bridge cannot start while a test runs (server guard) — live-run raw captures require
+  aborting first; the in-bridge dark-capture pattern (own START/STOP inside the window)
+  avoids junk runs entirely.
 
 ## Real-hardware findings (2026-07-16 bench session — full detail in protocol.md)
 
