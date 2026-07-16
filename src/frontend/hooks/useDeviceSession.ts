@@ -42,6 +42,47 @@ export interface LiveTempPoint {
   v: number; // temp_c
 }
 
+// ── Live-buffer bounds ─────────────────────────────────────────────
+// A multi-hour run at ~2s/reading is tens of thousands of points; temps add
+// one sample per channel per packet. Left unbounded, these arrays (and the
+// full-array copy + whole-chart re-derive they drive every tick) grow without
+// limit and eventually starve the browser. Cap them and decimate the oldest
+// half when the cap is hit: recent detail stays at full resolution, older
+// history coarsens gracefully. The authoritative full-resolution data is
+// persisted server-side (data_points) and reloaded from the API when needed —
+// these buffers exist only for the live chart, so decimating them is lossless
+// for their purpose. uPlot renders to ~1500px, so the cap is well above what's
+// visible.
+
+/** Max live V/I/W/Ah points retained (~2.2h at full 2s resolution, coarser beyond) */
+const MAX_LIVE_POINTS = 4000;
+/** Max flat live temperature samples across all channels */
+const MAX_TEMP_POINTS = 6000;
+
+/** Keep every other point — halves a single series, preserving the newest end. */
+function decimateSeries<T>(points: T[]): T[] {
+  const out: T[] = [];
+  for (let i = 0; i < points.length; i += 2) out.push(points[i]);
+  return out;
+}
+
+/**
+ * Halve each channel's series independently. The flat buffer interleaves
+ * channels (one push per channel per packet), so a naive every-other stride
+ * would drop channels unevenly; count per channel instead so every series
+ * keeps its 0th, 2nd, 4th… sample and stays time-aligned.
+ */
+function decimateTempByChannel(points: LiveTempPoint[]): LiveTempPoint[] {
+  const seen = new Map<string, number>();
+  const out: LiveTempPoint[] = [];
+  for (const p of points) {
+    const n = seen.get(p.channelId) ?? 0;
+    seen.set(p.channelId, n + 1);
+    if (n % 2 === 0) out.push(p);
+  }
+  return out;
+}
+
 // ── Session state ─────────────────────────────────────────────────
 
 export interface SessionState {
@@ -227,6 +268,9 @@ export function useDeviceSessionManager(): SessionContextValue {
           ah: r.capacityMah,
           wh: r.energyMwh,
         });
+        if (livePointsRef.current.length > MAX_LIVE_POINTS) {
+          livePointsRef.current = decimateSeries(livePointsRef.current);
+        }
       }
       setState(s => ({
         ...s,
@@ -364,6 +408,9 @@ export function useDeviceSessionManager(): SessionContextValue {
         const t = cur.reading.elapsedS;
         for (const r of readings) {
           liveTempPointsRef.current.push({ channelId: r.channelId, name: r.name, t, v: r.tempC });
+        }
+        if (liveTempPointsRef.current.length > MAX_TEMP_POINTS) {
+          liveTempPointsRef.current = decimateTempByChannel(liveTempPointsRef.current);
         }
         setState(s => ({ ...s, tempReadings: readings, liveTempPoints: [...liveTempPointsRef.current] }));
         return;

@@ -100,7 +100,7 @@ canvas are other suspects) — a heap snapshot would confirm.
 4. [ ] CycleRunner probe scheduler (arm/fire/disarm) + tests, validated vs fake device.
 5. [ ] Chart: right mΩ axis on temp chart + running-estimate trace.
 6. [ ] StepProperties UI toggle + fields.
-7. [ ] Browser RAM fix in useDeviceSession live buffers.
+7. [x] Browser RAM fix in useDeviceSession live buffers. (pulled forward at user request)
 8. [ ] Capture real-hardware `0x08` behavior; only then enable probe on prod.
 
 ## Progress log
@@ -111,4 +111,14 @@ canvas are other suspects) — a heap snapshot would confirm.
 - Stage 1 done: `estimateIrSamples(points, mode)` extracts the per-step DC-IR time series;
   `estimateIrMohm` now wraps it (median). 17 tests pass. Encoded the design constraint that
   probe-hold points must be ~2 s apart or the restore step exceeds `MAX_STEP_DT_S` (5 s).
-  Next: `probe?` field on StepDCC, then fake-device `0x08` modeling before any scheduler.
+- Decisions (user): `0x08` semantics unknown → build fake-device-first, capture real behavior
+  later, don't twiddle real hardware yet. Browser RAM: fix now (pulled ahead of the feature).
+- Stage 7 done (early): bounded the live chart buffers in `useDeviceSession.ts`. Root cause —
+  `livePoints`/`liveTempPoints` grew unbounded per run (temps: one push per channel per packet)
+  and every SSE tick did a full-array copy + whole-chart re-derive → unbounded retained + O(n²)
+  churn on multi-hour runs. Now capped (`MAX_LIVE_POINTS` 4000, `MAX_TEMP_POINTS` 6000) with
+  graceful decimation (recent full-res, older halved; temps decimated per-channel to stay
+  aligned). Lossless for the live chart — full data is server-side in `data_points`. Chart
+  layer itself (uPlot, canvas) was already leak-clean. NOTE: not yet confirmed on-device to be
+  the _whole_ RAM story; if OOM persists, take a heap snapshot (CameraView/RTSP is next suspect).
+  Next feature step: `probe?` field on StepDCC, then fake-device `0x08` modeling.
