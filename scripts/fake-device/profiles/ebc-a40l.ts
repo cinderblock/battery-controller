@@ -48,6 +48,9 @@ export const ebcA40LProfile: Profile = {
     capacity: 1, // raw base-240 value = mAh
   },
 
+  // Real A40L resistance tests measured 2.5–3.0 mΩ (protocol.md) — model 3.
+  irMohm: 3,
+
   responseCadenceMs: 500,
 
   defaults: {

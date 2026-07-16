@@ -102,23 +102,39 @@ bun run fake-device [--com N] [--profile NAME] [--api-port N] [--log-dir DIR] [-
   --quiet           Don't print TX/RX frames to stdout
 ```
 
+Profiles model the cell's DC internal resistance (`irMohm`, ebc-a40l: 3 mΩ,
+matching the real A40L's resistance-test readings): emitted terminal voltage
+sags by I·R on discharge and rises on charge, so host-side ΔV/ΔI estimation
+behaves realistically against the fake device.
+
+## verify-ir-probe.ts — server-stack e2e vs the fake device
+
+`bun run scripts/verify-ir-probe.ts` (~2.5 min) wires the real server stack
+(DeviceSession → TestRecorder → CycleRunner, in-memory SQLite) to an
+in-process FakeDevice through a byte-level frame adapter, runs a d-cc step
+with the periodic IR probe enabled, and asserts: dips + restores happen, all
+points land in one run, capacity stays monotonic across `0x08` continues, and
+the estimator recovers the profile's simulated mΩ. Validates the host side
+only — real-device `0x08` semantics still need hardware capture
+(see `plans/ir-active-probe.md`).
+
 ## HTTP control API
 
 All responses are JSON. POST/PATCH bodies are JSON.
 
-| Method | Path                      | Purpose                                                      |
-|--------|---------------------------|--------------------------------------------------------------|
-| GET    | `/`                       | Summary: profile, com port, api port, uptime, frame counts. |
-| GET    | `/state`                  | Full device state.                                           |
-| PATCH  | `/state`                  | Merge partial updates into device state.                    |
-| POST   | `/reset`                  | Reset device state to profile defaults (idle).              |
-| GET    | `/log?limit=N`            | Last N frame log entries (default 50).                      |
-| GET    | `/log/stream`             | Server-sent events: one JSON entry per frame / state change. |
-| POST   | `/inject`                 | `{hex}` — send one raw RX frame to the app right now.        |
-| POST   | `/respond/to/:cmd`        | `{hex}` — when app sends TX with command byte `:cmd`, reply with this frame instead of the default. `:cmd` is decimal or 0x-prefixed hex. |
-| DELETE | `/respond/to/:cmd`        | Clear an override.                                           |
-| GET    | `/respond/overrides`      | List current overrides.                                      |
-| POST   | `/note`                   | `{text}` — append a timestamped note to the log.            |
+| Method | Path                 | Purpose                                                                                                                                   |
+| ------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/`                  | Summary: profile, com port, api port, uptime, frame counts.                                                                               |
+| GET    | `/state`             | Full device state.                                                                                                                        |
+| PATCH  | `/state`             | Merge partial updates into device state.                                                                                                  |
+| POST   | `/reset`             | Reset device state to profile defaults (idle).                                                                                            |
+| GET    | `/log?limit=N`       | Last N frame log entries (default 50).                                                                                                    |
+| GET    | `/log/stream`        | Server-sent events: one JSON entry per frame / state change.                                                                              |
+| POST   | `/inject`            | `{hex}` — send one raw RX frame to the app right now.                                                                                     |
+| POST   | `/respond/to/:cmd`   | `{hex}` — when app sends TX with command byte `:cmd`, reply with this frame instead of the default. `:cmd` is decimal or 0x-prefixed hex. |
+| DELETE | `/respond/to/:cmd`   | Clear an override.                                                                                                                        |
+| GET    | `/respond/overrides` | List current overrides.                                                                                                                   |
+| POST   | `/note`              | `{text}` — append a timestamped note to the log.                                                                                          |
 
 ### State shape
 

@@ -65,6 +65,15 @@ export interface Profile {
   // ── Divisors ──────────────────────────────────────────────────────
   divisors: Divisors;
 
+  // ── Electrical model ─────────────────────────────────────────────
+  /**
+   * Simulated cell DC internal resistance (mΩ). The emitted terminal
+   * voltage sags by I·R while discharging and rises by I·R while
+   * charging, so host-side IR estimation (R = ΔV/ΔI at current steps)
+   * sees realistic behavior. 0/undefined = ideal cell, no sag.
+   */
+  irMohm?: number;
+
   // ── Timing ────────────────────────────────────────────────────────
   /** How often to emit a periodic RX packet (ms). Real devices: ~500ms. */
   responseCadenceMs: number;

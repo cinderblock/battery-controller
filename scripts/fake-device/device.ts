@@ -510,13 +510,28 @@ export class FakeDevice {
 
   // ── Frame generation ────────────────────────────────────────────────
 
+  /**
+   * Terminal voltage seen on the wire: the open-circuit-ish state voltage
+   * plus/minus the I·R drop across the profile's simulated internal
+   * resistance. Discharge sags, charge rises — matching a real cell so
+   * host-side ΔV/ΔI estimation works against the fake device.
+   */
+  private terminalVoltage(): number {
+    const r = (this.profile.irMohm ?? 0) / 1000;
+    const drop = this.state.current * r;
+    if (drop === 0) return this.state.voltage;
+    if (this.state.mode === 'discharging') return Math.max(0, this.state.voltage - drop);
+    if (this.state.mode === 'charging') return this.state.voltage + drop;
+    return this.state.voltage;
+  }
+
   /** Build the normal periodic RX frame from current state. */
   private buildCurrentFrame(): Uint8Array {
     const stateByte = this.stateByteForMode(this.state.mode);
     return this.buildRxFrame({
       stateByte,
       current: this.state.current,
-      voltage: this.state.voltage,
+      voltage: this.terminalVoltage(),
       field6_7: this.state.capacity, // capacity on EBC family
       field8_9: 0, // unknown slot — always 0 on A40L captures
       field10_11: this.state.currentSetpoint,

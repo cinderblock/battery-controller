@@ -103,9 +103,34 @@ canvas are other suspects) — a heap snapshot would confirm.
 5. [x] Chart: right mΩ axis on temp chart + IR sample trace (computed client-side from run points).
 6. [x] StepProperties UI toggle + period/dip/hold fields + ΔI<5A warning hint.
 7. [x] Browser RAM fix in useDeviceSession live buffers. (pulled forward at user request)
-8. [ ] Verify probe end-to-end against fake device (start a probing d-cc, watch dips + IR samples).
-9. [ ] Capture real-hardware `0x08` behavior (elapsed timer? capacity accumulator?); only then
-       enable probe on prod.
+8. [x] Verify probe end-to-end against fake device — `scripts/verify-ir-probe.ts`: real
+       DeviceSession→TestRecorder→CycleRunner stack, in-memory DB, byte-level frame adapter to an
+       in-process FakeDevice. Fake device now models cell IR (`irMohm: 3` on ebc-a40l, matching the
+       real A40L's 2.5–3.0 mΩ resistance-test readings) so the estimator has real signal.
+       **PASSED 2026-07-16, all 8 checks**: dips at exactly 60/120 s, +90 mV during dips
+       (= released 30 A × 3 mΩ), single run (273 points), capacity monotonic through 0x08
+       continues, 4 IR samples all 3.00 mΩ (dip + restore per probe), finalized ir_mohm = 3.00.
+9. [ ] Capture real-hardware `0x08` behavior (capacity accumulator is the ONLY remaining
+       unknown — elapsed time proven host-side); only then enable probe on prod.
+
+## Scope of the fake-device e2e (user asked: is it a valid test?)
+
+It validates OUR half — scheduler timing, canTwiddle guards, frame encoding, run recording,
+capacity pipeline, estimator recovery of a known mΩ. It is NOT evidence about the real
+device's `0x08` semantics: the fake's continue handler implements the behavior we designed
+for (counters preserved), so it cannot catch the real device diverging from that assumption.
+Host-side elapsed time is already proven safe by code inspection; the capacity accumulator
+(device-reported) is the one assumption only real hardware can confirm → stage 9.
+
+## Working-tree cleanup (2026-07-16, "no other agents" per user)
+
+- serial.ts/tcp-bridge.ts uncommitted changes were the MISSING HALF of commit 004c5c2 (its
+  index.ts side called takeHandle/resumeWithHandle/startTcpBridge(handle) — HEAD didn't
+  compile without them). Committed as ea88b21 after a safety-stash snapshot.
+- cycle-test-log.jsonl → recordings/2026-05-06-cycle-test-log.jsonl (capture data, kept).
+- eb-tester-step\*.png + screenshots/ → discovery/eb-tester-sessions/ (gitignored; findings
+  already distilled into protocol.md/plans).
+- frontend/index.html (stale build artifact, hashed bundle refs) → deleted. Tree now clean.
 
 ## Progress log
 
