@@ -68,13 +68,11 @@ async function configureSerialPort(portPath: string): Promise<void> {
 export interface BridgeOptions {
   /** Called when a complete frame is detected in either direction */
   onFrame?: (direction: 'tx' | 'rx', frame: Uint8Array) => void;
-  /** Skip stty configuration (port already configured by SerialManager) */
-  skipPortConfig?: boolean;
 }
 
 export interface TcpBridge {
-  /** Stop the bridge, close serial port and TCP listener */
-  stop(): Promise<void>;
+  /** Stop the bridge and return the serial file handle (caller decides whether to close it) */
+  stop(): Promise<FileHandle>;
   /** Whether a TCP client is currently connected */
   hasClient(): boolean;
 }
@@ -82,23 +80,15 @@ export interface TcpBridge {
 /**
  * Start the TCP-serial bridge and return a handle to stop it.
  *
- * - Opens the serial port as a raw file
+ * @param serialHandle - An already-open serial port file handle (caller is responsible for
+ *   opening it; stop() returns it so the caller can reuse or close it).
  * - Listens for a single TCP client on the bridge port
  * - Forwards bytes bidirectionally with no parsing or buffering
  */
-export async function startTcpBridge(options: BridgeOptions = {}): Promise<TcpBridge> {
+export function startTcpBridge(serialHandle: FileHandle, options: BridgeOptions = {}): TcpBridge {
   logger.info(`[bridge] Starting TCP-serial bridge`);
-  logger.info(`[bridge] Serial port: ${SERIAL_PORT}`);
+  logger.info(`[bridge] Serial port fd passed in`);
   logger.info(`[bridge] TCP port: ${TCP_PORT}`);
-
-  // Configure serial port (skip if caller already configured it)
-  if (!options.skipPortConfig) {
-    await configureSerialPort(SERIAL_PORT);
-  }
-
-  // Open serial port for read/write
-  const serialHandle: FileHandle = await open(SERIAL_PORT, 'r+');
-  logger.info('[bridge] Serial port opened');
 
   // Track active client
   let activeClient: Socket<unknown> | null = null;
@@ -207,7 +197,7 @@ export async function startTcpBridge(options: BridgeOptions = {}): Promise<TcpBr
 
   return {
     async stop() {
-      if (stopped) return;
+      if (stopped) return serialHandle; // already stopped, but still return handle
       stopped = true;
       logger.info('[bridge] Stopping bridge...');
       if (activeClient) {
@@ -215,8 +205,8 @@ export async function startTcpBridge(options: BridgeOptions = {}): Promise<TcpBr
         activeClient = null;
       }
       tcpServer.stop(true);
-      await serialHandle.close();
       logger.info('[bridge] Bridge stopped');
+      return serialHandle;
     },
     hasClient() {
       return activeClient !== null;
@@ -229,17 +219,26 @@ export async function startTcpBridge(options: BridgeOptions = {}): Promise<TcpBr
  * Used when the server is started with `--bridge`.
  */
 export async function startTcpBridgeStandalone(): Promise<void> {
-  const bridge = await startTcpBridge();
+  // Standalone mode: configure and open the serial port ourselves
+  await configureSerialPort(SERIAL_PORT);
+  const serialHandle = await open(SERIAL_PORT, 'r+');
+  logger.info('[bridge] Serial port opened');
+
+  const bridge = startTcpBridge(serialHandle);
+
+  async function shutdown() {
+    const handle = await bridge.stop();
+    await handle.close();
+    process.exit(0);
+  }
 
   process.on('SIGINT', async () => {
     logger.info('\n[bridge] Shutting down...');
-    await bridge.stop();
-    process.exit(0);
+    await shutdown();
   });
 
   process.on('SIGTERM', async () => {
     logger.info('[bridge] SIGTERM received, shutting down...');
-    await bridge.stop();
-    process.exit(0);
+    await shutdown();
   });
 }

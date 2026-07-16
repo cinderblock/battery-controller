@@ -57,14 +57,11 @@ export class SerialManager {
     private baudRate: number = 9600
   ) {}
 
-  async connect(options?: { skipPortConfig?: boolean }) {
+  async connect() {
     logger.info(`📟 Connecting to serial port: ${this.portPath} @ ${this.baudRate} baud`);
 
     try {
-      // Configure serial port using stty (skip if caller knows settings are already correct)
-      if (!options?.skipPortConfig) {
-        await this.configurePort();
-      }
+      await this.configurePort();
 
       // Open the serial device file for reading and writing
       this.fileHandle = await open(this.portPath, 'r+');
@@ -82,6 +79,43 @@ export class SerialManager {
       logger.error('❌ Failed to connect to serial port:', error);
       throw error;
     }
+  }
+
+  /**
+   * Resume reading on a file handle obtained from takeHandle().
+   * Skips stty configuration — the handle is already configured.
+   */
+  resumeWithHandle(handle: FileHandle) {
+    this.fileHandle = handle;
+    this.readBufferOffset = 0; // Clear stale partial frames
+
+    logger.info('✅ Serial port resumed (existing handle)');
+
+    for (const listener of this.connectionListener) listener(true);
+
+    this.doReading().catch(error => {
+      logger.error('❌ Error reading from serial port:', error);
+      this.disconnect();
+    });
+  }
+
+  /**
+   * Yield the serial port file handle without closing it.
+   * Stops the read loop and clears internal state so the handle
+   * can be used by another consumer (e.g. the TCP bridge).
+   * Call resumeWithHandle() to take it back.
+   */
+  takeHandle(): FileHandle {
+    if (!this.fileHandle) throw new Error('No serial handle to take');
+
+    const handle = this.fileHandle;
+    this.fileHandle = null; // Stops the read loop (checked each iteration)
+    this.readBufferOffset = 0; // Clear stale partial frames for next resume
+
+    logger.info('📴 Serial port handle released');
+
+    for (const listener of this.connectionListener) listener(false);
+    return handle;
   }
 
   async disconnect() {
