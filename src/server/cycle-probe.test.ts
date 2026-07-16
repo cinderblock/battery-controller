@@ -45,11 +45,13 @@ describe('sanitizeProbe', () => {
 
 // ── fireProbe dip/restore guards ────────────────────────────────────
 // Exercises the private dip→hold→restore path against a stubbed session.
-// These guards are the hardware-safety core: a 0x08 continue sent to an
-// idle or charging device would START or redirect a test.
+// These guards are the hardware-safety core: 0x07 adjust is only
+// characterized while the device is actively in d-cc — sending it from
+// any other state is uncharted territory on real hardware.
 
 interface StubSession {
   mode: string;
+  /** adjustDCC calls observed (the probe's dips and restores) */
   continues: { currentA: number; cutoffV: number; maxTimeMin: number }[];
   session: DeviceSession;
 }
@@ -63,7 +65,7 @@ function stubSession(initialMode = 'd-cc'): StubSession {
   stub.session = {
     getMode: () => stub.mode,
     getPendingCommand: () => null,
-    continueDCC: async (currentA: number, cutoffV: number, maxTimeMin: number) => {
+    adjustDCC: async (currentA: number, cutoffV: number, maxTimeMin: number) => {
       stub.continues.push({ currentA, cutoffV, maxTimeMin });
     },
   } as unknown as DeviceSession;

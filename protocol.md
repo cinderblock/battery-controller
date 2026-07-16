@@ -2,16 +2,16 @@
 
 Reverse-engineered from `eb_setup_v1.8.9en_202507.exe` (VB6 application by ZKETech, www.zketech.com) via Ghidra decompilation, cross-referenced with the sigrok project's libsigrok driver and community documentation.
 
-> **Note:** The sigrok documentation covers only the **EBD-USB+** electronic load. This software supports a much larger family of **58 devices** including battery charger/dischargers (EBC-*) and higher-power loads (EBD-*). The frame format and base-240 encoding are shared across the family, but the **operating modes, command payloads, and response field mappings differ by device type**. Details below.
+> **Note:** The sigrok documentation covers only the **EBD-USB+** electronic load. This software supports a much larger family of **58 devices** including battery charger/dischargers (EBC-_) and higher-power loads (EBD-_). The frame format and base-240 encoding are shared across the family, but the **operating modes, command payloads, and response field mappings differ by device type**. Details below.
 
 ## Serial Port Settings
 
-| Parameter  | Value    |
-| ---------- | -------- |
-| Baud rate  | 9600     |
-| Data bits  | 8        |
-| Parity     | **Even** |
-| Stop bits  | 1        |
+| Parameter  | Value                          |
+| ---------- | ------------------------------ |
+| Baud rate  | 9600                           |
+| Data bits  | 8                              |
+| Parity     | **Even**                       |
+| Stop bits  | 1                              |
 | USB-serial | CH341 (some models use PL2303) |
 
 ## Frame Format
@@ -66,27 +66,27 @@ Divisors are **model-dependent**. The EBD-USB+ divisors come from the sigrok dri
 
 #### EBD-USB+ (from sigrok)
 
-| Measurement    | Divisor | Float in binary | Resolution | Unit | Display format |
-| -------------- | ------- | --------------- | ---------- | ---- | -------------- |
-| Current        | 10,000  | `10.0` @ 0x1564 | 0.1 mA    | A    | `0.0000` (4 dp) |
-| Voltage        | 1,000   | `1000.0` @ 0x1464 | 1 mV    | V    | `00.000` (3 dp) |
-| UVC cutoff     | 100     | `100.0` @ 0x1638 | 10 mV    | V    | `00.00` (2 dp)  |
-| D+/D- voltage  | 1,000   | —               | 1 mV       | V    | `0.000` (3 dp)  |
-| Time           | —       | `3600.0` @ 0x1468 | 1 sec   | S/H  | —              |
+| Measurement   | Divisor | Float in binary   | Resolution | Unit | Display format  |
+| ------------- | ------- | ----------------- | ---------- | ---- | --------------- |
+| Current       | 10,000  | `10.0` @ 0x1564   | 0.1 mA     | A    | `0.0000` (4 dp) |
+| Voltage       | 1,000   | `1000.0` @ 0x1464 | 1 mV       | V    | `00.000` (3 dp) |
+| UVC cutoff    | 100     | `100.0` @ 0x1638  | 10 mV      | V    | `00.00` (2 dp)  |
+| D+/D- voltage | 1,000   | —                 | 1 mV       | V    | `0.000` (3 dp)  |
+| Time          | —       | `3600.0` @ 0x1468 | 1 sec      | S/H  | —               |
 
 #### EBC Charger/Discharger (confirmed on EBC-A40L)
 
-| Measurement    | Divisor | Resolution | Unit | Display format |
-| -------------- | ------- | ---------- | ---- | -------------- |
-| Current        | **100** | 10 mA      | A    | `00.00` (2 dp) |
-| Voltage        | 1,000   | 1 mV       | V    | `00.000` (3 dp) |
-| Voltage setpoint | 100   | 10 mV      | V    | `00.00` (2 dp) |
-| Cutoff current | 100     | 10 mA      | A    | `0.00` (2 dp) |
-| Capacity       | 1 (raw) | 1 mAh      | mAh  | `0000` (integer) |
+| Measurement      | Divisor | Resolution | Unit | Display format   |
+| ---------------- | ------- | ---------- | ---- | ---------------- |
+| Current          | **100** | 10 mA      | A    | `00.00` (2 dp)   |
+| Voltage          | 1,000   | 1 mV       | V    | `00.000` (3 dp)  |
+| Voltage setpoint | 100     | 10 mV      | V    | `00.00` (2 dp)   |
+| Cutoff current   | 100     | 10 mA      | A    | `0.00` (2 dp)    |
+| Capacity         | 1 (raw) | 1 mAh      | mAh  | `0000` (integer) |
 
 > **Confirmed:** GUI shows `04.00A` when the raw base-240 value is 400 (400 ÷ 100 = 4.00). The EBD-USB+ current divisor of 10,000 gives the wrong value (0.04A) for EBC models. Further confirmed by power calculation: 4.00A × 3.145V = 12.58W, matching the GUI power reading exactly.
 
-> **Important:** D+/D- voltage fields are **only present on EBD-USB/EBD-USB+ models** (the USB power monitors). Charger/discharger models (EBC-*, EBD-A*, EBD-B*) use those response bytes for **other data** — see "EBC Response Layout" below.
+> **Important:** D+/D- voltage fields are **only present on EBD-USB/EBD-USB+ models** (the USB power monitors). Charger/discharger models (EBC-_, EBD-A_, EBD-B\*) use those response bytes for **other data** — see "EBC Response Layout" below.
 
 ## Host → Device Commands (10 bytes)
 
@@ -111,26 +111,26 @@ Mode offsets:              Actions:
 
 ### Command Table
 
-| CMD (byte 1) | Name              | Payload                                                                          |
-| ------------ | ----------------- | -------------------------------------------------------------------------------- |
-| `0x01`       | **D-CC start**    | bytes 2-3 = current (base-240), bytes 4-5 = UVC cutoff (base-240, div 100) |
-| `0x02`       | **Load toggle**   | All zeros — toggles load on/off (also stops charging)                            |
-| `0x04`       | **Calibrate**     | byte 2 = cal point (0x00=Low Volt, 0x01=High Volt, 0x02=Low Curr, 0x03=High Curr), bytes 3-4 = reference value (base-240, ÷1000 → V or A), bytes 5-7 = zeros |
-| `0x05`       | **Init / Start**  | All zeros — starts measurement stream, also serves as handshake                  |
-| `0x06`       | **Stop**          | All zeros — stops measurement stream                                             |
-| `0x07`       | **Configure/QC**  | byte 7 = mode selector (see QC/PD table below)                                  |
-| `0x08`       | **D-CC continue** | Same format as D-CC start — updates setpoints during active test                 |
-| `0x09`       | **Resistance test** | bytes 2-3 = test current (base-240, ÷100 → A). No special response — device applies a brief current pulse; VB6 app computes R = ΔV/I client-side from the voltage dip in subsequent RX frames. |
-| `0x0A`       | **Heartbeat**     | byte 3 = sequence counter (increments 1, 2, ...) — keepalive                    |
-| `0x11`       | **D-CP start**    | bytes 2-3 = power (base-240, raw = W), bytes 4-5 = cutoff voltage (base-240, ÷100 → V), bytes 6-7 = max time (raw = minutes) |
-| `0x18`       | **D-CP continue** | Same format as D-CP start                                                        |
-| `0x21`       | **C-CV start**    | bytes 2-3 = max current (div 100), bytes 4-5 = target voltage (div 100), bytes 6-7 = cutoff current (div 100) |
-| `0x28`       | **C-CV continue** | Same format as C-CV start                                                        |
-| `0x31`       | **C-NiMh start**  | bytes 2-3 = current, bytes 4-5 = cutoff                                         |
-| `0x41`       | **C-NiCD start**  | bytes 2-3 = current, bytes 4-5 = cutoff                                         |
-| `0x51`       | **C-LiPo start**  | bytes 2-3 = current, bytes 4-5 = cutoff                                         |
-| `0x61`       | **C-LiFe start**  | bytes 2-3 = current, bytes 4-5 = cutoff                                         |
-| `0x71`       | **C-VRLA start**  | bytes 2-3 = current, bytes 4-5 = cutoff                                         |
+| CMD (byte 1) | Name                      | Payload                                                                                                                                                                                                                                                         |
+| ------------ | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0x01`       | **D-CC start**            | bytes 2-3 = current (base-240), bytes 4-5 = UVC cutoff (base-240, div 100)                                                                                                                                                                                      |
+| `0x02`       | **Load toggle**           | All zeros — toggles load on/off (also stops charging)                                                                                                                                                                                                           |
+| `0x04`       | **Calibrate**             | byte 2 = cal point (0x00=Low Volt, 0x01=High Volt, 0x02=Low Curr, 0x03=High Curr), bytes 3-4 = reference value (base-240, ÷1000 → V or A), bytes 5-7 = zeros                                                                                                    |
+| `0x05`       | **Init / Start**          | All zeros — starts measurement stream, also serves as handshake                                                                                                                                                                                                 |
+| `0x06`       | **Stop**                  | All zeros — stops measurement stream                                                                                                                                                                                                                            |
+| `0x07`       | **Configure/QC / Adjust** | EBD: byte 7 = mode selector (see QC/PD table below). EBC: mid-run **Adjust** — same payload layout as the running mode's start frame; new setpoints take effect within ~1 frame, capacity accumulator keeps counting (confirmed on real A40L 2026-07-16, D-CC). |
+| `0x08`       | **D-CC continue**         | Same format as D-CC start. **Ignored while a test is running** — does NOT update setpoints (confirmed 2026-07-16). EB Tester sends it to resume after pausing; sent from long-stopped idle it is also inert. Mid-run setpoint changes use `0x07` Adjust.        |
+| `0x09`       | **Resistance test**       | bytes 2-3 = test current (base-240, ÷100 → A). No special response — device applies a brief current pulse; VB6 app computes R = ΔV/I client-side from the voltage dip in subsequent RX frames.                                                                  |
+| `0x0A`       | **Heartbeat**             | byte 3 = sequence counter (increments 1, 2, ...) — keepalive                                                                                                                                                                                                    |
+| `0x11`       | **D-CP start**            | bytes 2-3 = power (base-240, raw = W), bytes 4-5 = cutoff voltage (base-240, ÷100 → V), bytes 6-7 = max time (raw = minutes)                                                                                                                                    |
+| `0x18`       | **D-CP continue**         | Same format as D-CP start                                                                                                                                                                                                                                       |
+| `0x21`       | **C-CV start**            | bytes 2-3 = max current (div 100), bytes 4-5 = target voltage (div 100), bytes 6-7 = cutoff current (div 100)                                                                                                                                                   |
+| `0x28`       | **C-CV continue**         | Same format as C-CV start                                                                                                                                                                                                                                       |
+| `0x31`       | **C-NiMh start**          | bytes 2-3 = current, bytes 4-5 = cutoff                                                                                                                                                                                                                         |
+| `0x41`       | **C-NiCD start**          | bytes 2-3 = current, bytes 4-5 = cutoff                                                                                                                                                                                                                         |
+| `0x51`       | **C-LiPo start**          | bytes 2-3 = current, bytes 4-5 = cutoff                                                                                                                                                                                                                         |
+| `0x61`       | **C-LiFe start**          | bytes 2-3 = current, bytes 4-5 = cutoff                                                                                                                                                                                                                         |
+| `0x71`       | **C-VRLA start**          | bytes 2-3 = current, bytes 4-5 = cutoff                                                                                                                                                                                                                         |
 
 ### Example: Init
 
@@ -232,17 +232,17 @@ The EB Tester sends heartbeats approximately every 60 seconds during active test
 
 ### QC/PD Mode Commands (CMD `0x07`)
 
-| Byte 7 | Function       | Full Packet                          |
-| ------ | -------------- | ------------------------------------ |
-| `0x0A` | QC2.0 5V       | `FA 07 00 00 00 00 00 0A 0D F8`     |
-| `0x0B` | QC2.0 9V       | `FA 07 00 00 00 00 00 0B 0C F8`     |
-| `0x0C` | QC2.0 12V      | `FA 07 00 00 00 00 00 0C 0B F8`     |
-| `0x0D` | QC2.0 20V      | `FA 07 00 00 00 00 00 0D 0A F8`     |
-| `0x0E` | QC3.0 enter    | `FA 07 00 00 00 00 00 0E 09 F8`     |
-| `0x0F` | QC3.0 +0.2V    | `FA 07 00 00 00 00 00 0F 08 F8`     |
-| `0x10` | QC3.0 -0.2V    | `FA 07 00 00 00 00 00 10 17 F8`     |
-| `0x14` | MTK-PE minus   | `FA 07 00 00 00 00 00 14 13 F8`     |
-| `0x15` | MTK-PE plus    | `FA 07 00 00 00 00 00 15 12 F8`     |
+| Byte 7 | Function     | Full Packet                     |
+| ------ | ------------ | ------------------------------- |
+| `0x0A` | QC2.0 5V     | `FA 07 00 00 00 00 00 0A 0D F8` |
+| `0x0B` | QC2.0 9V     | `FA 07 00 00 00 00 00 0B 0C F8` |
+| `0x0C` | QC2.0 12V    | `FA 07 00 00 00 00 00 0C 0B F8` |
+| `0x0D` | QC2.0 20V    | `FA 07 00 00 00 00 00 0D 0A F8` |
+| `0x0E` | QC3.0 enter  | `FA 07 00 00 00 00 00 0E 09 F8` |
+| `0x0F` | QC3.0 +0.2V  | `FA 07 00 00 00 00 00 0F 08 F8` |
+| `0x10` | QC3.0 -0.2V  | `FA 07 00 00 00 00 00 10 17 F8` |
+| `0x14` | MTK-PE minus | `FA 07 00 00 00 00 00 14 13 F8` |
+| `0x15` | MTK-PE plus  | `FA 07 00 00 00 00 00 15 12 F8` |
 
 QC/MTK commands produce no device response — success is indicated by a voltage change in subsequent measurement frames. These QC/PD commands only apply to the **EBD-USB+** model.
 
@@ -320,7 +320,7 @@ The EB Tester v1.8.9 software supports **58 device models** (22 EBC chargers, 36
 
 ## Device Identification
 
-The EB Tester identifies the connected device by reading **byte 16 of every RX frame** — called the *device ID byte* throughout this doc (equivalent to `frame[16]` or `payload[15]` depending on where you count from). The UI uses this single byte to look up the displayed device name and the set of available operating modes from an internal table.
+The EB Tester identifies the connected device by reading **byte 16 of every RX frame** — called the _device ID byte_ throughout this doc (equivalent to `frame[16]` or `payload[15]` depending on where you count from). The UI uses this single byte to look up the displayed device name and the set of available operating modes from an internal table.
 
 Two clarifications versus earlier hypotheses:
 
@@ -333,49 +333,49 @@ Established via fake-device probing in April 2026. The probe script (`scripts/pr
 
 **The primary byte16 range 0x01–0x2A covers 42 distinct devices:**
 
-| byte 16 | Device         | byte 16 | Device         | byte 16 | Device          |
-| ------- | -------------- | ------- | -------------- | ------- | --------------- |
-| `0x00`  | "No Device"    | `0x0F`  | EBD-A10        | `0x1E`  | EBD-B40H        |
-| `0x01`  | EBC-A          | `0x10`  | EBD-A15        | `0x1F`  | EBD-A50H        |
-| `0x02`  | EBC-AH         | `0x11`  | EBD-A2S        | `0x20`  | EBD-A40L        |
-| `0x03`  | EBC-B          | `0x12`  | EBD-A5S        | `0x21`  | EBD-A30H        |
-| `0x04`  | EBC-BH         | `0x13`  | EBD-A20H       | `0x22`  | EBD-P30H        |
-| `0x05`  | EBC-A05        | `0x14`  | EBD-A10H       | `0x23`  | EBD-A01         |
-| `0x06`  | EBC-A10H       | `0x15`  | EBD-P10        | `0x24`  | EBC-A01         |
-| `0x07`  | EBC-A10        | `0x16`  | EBD-P15        | `0x25`  | EBC-A100L       |
-| `0x08`  | EBC-B10        | `0x17`  | EBD-B10H       | `0x26`  | EBD-A100        |
-| `0x09`  | EBC-A20        | `0x18`  | EBD-M02        | `0x27`  | EBD-B30H        |
-| `0x0A`  | **EBC-A40L** ★ | `0x19`  | EBD-M03        | `0x28`  | EBC-A5M         |
-| `0x0B`  | EBD-A          | `0x1A`  | EBD-USB        | `0x29`  | EBD-A5D         |
-| `0x0C`  | EBD-AH         | `0x1B`  | EBD-B20H       | `0x2A`  | EBD-M           |
-| `0x0D`  | EBD-B          | `0x1C`  | EBC-B20H       |         |                 |
-| `0x0E`  | EBD-BH         | `0x1D`  | EBC-B50        |         |                 |
+| byte 16 | Device         | byte 16 | Device   | byte 16 | Device    |
+| ------- | -------------- | ------- | -------- | ------- | --------- |
+| `0x00`  | "No Device"    | `0x0F`  | EBD-A10  | `0x1E`  | EBD-B40H  |
+| `0x01`  | EBC-A          | `0x10`  | EBD-A15  | `0x1F`  | EBD-A50H  |
+| `0x02`  | EBC-AH         | `0x11`  | EBD-A2S  | `0x20`  | EBD-A40L  |
+| `0x03`  | EBC-B          | `0x12`  | EBD-A5S  | `0x21`  | EBD-A30H  |
+| `0x04`  | EBC-BH         | `0x13`  | EBD-A20H | `0x22`  | EBD-P30H  |
+| `0x05`  | EBC-A05        | `0x14`  | EBD-A10H | `0x23`  | EBD-A01   |
+| `0x06`  | EBC-A10H       | `0x15`  | EBD-P10  | `0x24`  | EBC-A01   |
+| `0x07`  | EBC-A10        | `0x16`  | EBD-P15  | `0x25`  | EBC-A100L |
+| `0x08`  | EBC-B10        | `0x17`  | EBD-B10H | `0x26`  | EBD-A100  |
+| `0x09`  | EBC-A20        | `0x18`  | EBD-M02  | `0x27`  | EBD-B30H  |
+| `0x0A`  | **EBC-A40L** ★ | `0x19`  | EBD-M03  | `0x28`  | EBC-A5M   |
+| `0x0B`  | EBD-A          | `0x1A`  | EBD-USB  | `0x29`  | EBD-A5D   |
+| `0x0C`  | EBD-AH         | `0x1B`  | EBD-B20H | `0x2A`  | EBD-M     |
+| `0x0D`  | EBD-B          | `0x1C`  | EBC-B20H |         |           |
+| `0x0E`  | EBD-BH         | `0x1D`  | EBC-B50  |         |           |
 
 ★ Reference device — cross-validated against the physical EBC-A40L.
 
 **The rest of the 0x00–0xEF space:**
 
-| Range           | Behaviour                                                                                                                                                                                                                                                                                                                                        |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `0x2B`–`0x64`   | All 58 values display **"No Device"**. Verified directly via OCR of each probe screenshot.                                                                                                                                                                                                                                                      |
-| `0x65`–`0x8E`   | **Mirror** of `0x01`–`0x2A` — byte `N+0x64` produces the same device name as byte `N`. Confirmed for every pair where both probes captured cleanly; no mirror mismatches found.                                                                                                                                                                 |
-| `0x8F`–`0xEF`   | All 97 values display **"No Device"**. OCR row 1 reads "No Device" on every probe. (Some of the screenshots still show a device name in row 2 from UI display latching — that's a VB6 grid artefact, not a real mapping.) Provenance: `0x8F`–`0xB8` from the original 2026-04-22 sweep; `0xB9`–`0xDC` from the 2026-04-22T18:00Z re-sweep; `0xDD`–`0xEF` from the 2026-04-22T22:30Z third re-sweep (run in two short bursts after a fresh session unlock, screenshots at 1.5× DPI merged in via OCR with scaled row regions). |
+| Range         | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0x2B`–`0x64` | All 58 values display **"No Device"**. Verified directly via OCR of each probe screenshot.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `0x65`–`0x8E` | **Mirror** of `0x01`–`0x2A` — byte `N+0x64` produces the same device name as byte `N`. Confirmed for every pair where both probes captured cleanly; no mirror mismatches found.                                                                                                                                                                                                                                                                                                                                               |
+| `0x8F`–`0xEF` | All 97 values display **"No Device"**. OCR row 1 reads "No Device" on every probe. (Some of the screenshots still show a device name in row 2 from UI display latching — that's a VB6 grid artefact, not a real mapping.) Provenance: `0x8F`–`0xB8` from the original 2026-04-22 sweep; `0xB9`–`0xDC` from the 2026-04-22T18:00Z re-sweep; `0xDD`–`0xEF` from the 2026-04-22T22:30Z third re-sweep (run in two short bursts after a fresh session unlock, screenshots at 1.5× DPI merged in via OCR with scaled row regions). |
 
 ### Mode information
 
 Modes are known only for a handful of bytes (0x01–0x0B), from earlier sweeps that recorded mode-set patterns. The 2026-04-22 sweep captured device names only; modes will be re-captured in a follow-up sweep. See `PLAN-protocol-exercise.md`.
 
-| byte 16 | Available modes                                     |
-| ------- | --------------------------------------------------- |
-| `0x01`  | D-CC, D-CP, C-CV, C-NiMh, C-LiPo, C-NiCD, C-LiFe    |
-| `0x02`–`0x04` | (same 7 modes)                                |
-| `0x05`  | D-CC, D-CP, C-CV, C-NiMh, C-LiPo, C-NiCD, C-LiFe, DC5V |
-| `0x06`  | 8 modes (specifics not re-captured)                 |
-| `0x07`  | D-CC, D-CP, C-CV                                    |
-| `0x08`  | D-CC, C-CV                                          |
-| `0x09`  | D-CC, D-CP, C-CV                                    |
-| `0x0A`  | D-CC, D-CP, C-CV                                    |
-| `0x0B`  | D-CC, D-CP, C-CV, Meter, D-CV                       |
+| byte 16       | Available modes                                        |
+| ------------- | ------------------------------------------------------ |
+| `0x01`        | D-CC, D-CP, C-CV, C-NiMh, C-LiPo, C-NiCD, C-LiFe       |
+| `0x02`–`0x04` | (same 7 modes)                                         |
+| `0x05`        | D-CC, D-CP, C-CV, C-NiMh, C-LiPo, C-NiCD, C-LiFe, DC5V |
+| `0x06`        | 8 modes (specifics not re-captured)                    |
+| `0x07`        | D-CC, D-CP, C-CV                                       |
+| `0x08`        | D-CC, C-CV                                             |
+| `0x09`        | D-CC, D-CP, C-CV                                       |
+| `0x0A`        | D-CC, D-CP, C-CV                                       |
+| `0x0B`        | D-CC, D-CP, C-CV, Meter, D-CV                          |
 
 ### Canonical devices not yet mapped to byte16
 
@@ -395,31 +395,32 @@ Because every byte16 value is now accounted for, these 16 devices must be select
 
 ## Operating Modes
 
-The software defines distinct operating modes for discharge (D-*) and charge (C-*):
+The software defines distinct operating modes for discharge (D-_) and charge (C-_):
 
 ### Discharge Modes
 
-| Mode   | Description              |
-| ------ | ------------------------ |
+| Mode   | Description                |
+| ------ | -------------------------- |
 | `D-CC` | Constant Current discharge |
 | `D-CP` | Constant Power discharge   |
 | `D-CV` | Constant Voltage discharge |
 
 ### Charge Modes
 
-| Mode      | Description              | Per-cell voltage constant |
-| --------- | ------------------------ | ------------------------- |
-| `C-NiMh`  | Nickel-Metal Hydride     | 1.450 V (@ 0x158C)       |
-| `C-NiCD`  | Nickel-Cadmium           | — (likely similar)        |
-| `C-Liion`  | Lithium-Ion              | 4.477 V (@ 0x1474)      |
-| `C-LiPo`  | Lithium Polymer          | (shares Li-ion profile)   |
-| `C-LiFe`  | Lithium Iron Phosphate   | 3.793 V (@ 0x168C)       |
-| `C-VRLA`  | Valve-Regulated Lead-Acid | 2.125 V (@ 0x1684)      |
-| `C-PB`    | Lead-acid (flooded)      | 2.062 V (@ 0x1694)       |
-| `C-CV`    | Constant Voltage charge  | —                         |
-| `C-CC`    | Constant Current charge (implied by "Please select CC mode") | — |
+| Mode      | Description                                                  | Per-cell voltage constant |
+| --------- | ------------------------------------------------------------ | ------------------------- |
+| `C-NiMh`  | Nickel-Metal Hydride                                         | 1.450 V (@ 0x158C)        |
+| `C-NiCD`  | Nickel-Cadmium                                               | — (likely similar)        |
+| `C-Liion` | Lithium-Ion                                                  | 4.477 V (@ 0x1474)        |
+| `C-LiPo`  | Lithium Polymer                                              | (shares Li-ion profile)   |
+| `C-LiFe`  | Lithium Iron Phosphate                                       | 3.793 V (@ 0x168C)        |
+| `C-VRLA`  | Valve-Regulated Lead-Acid                                    | 2.125 V (@ 0x1684)        |
+| `C-PB`    | Lead-acid (flooded)                                          | 2.062 V (@ 0x1694)        |
+| `C-CV`    | Constant Voltage charge                                      | —                         |
+| `C-CC`    | Constant Current charge (implied by "Please select CC mode") | —                         |
 
 Additional float constants in the VB6 binary suggest device-specific limits:
+
 - `2800.0` (@ 0x16A0) — likely max capacity in mAh
 - `150.0` (@ 0x16A4) — likely max current in 100mA units (15.0A)
 - `500.0` (@ 0x16A8) — likely max power in 100mW units (50W)
@@ -429,6 +430,7 @@ Additional float constants in the VB6 binary suggest device-specific limits:
 ### Step Test
 
 The software supports programmable step sequences (`frmCtrlPrg` / `frmRunPrg`):
+
 - Each step can be: **D-CC**, **D-CP**, **D-CV**, **C-NiMh**, **C-NiCD**, **C-LiPo**, **C-LiFe**, **C-VRLA**, **C-PB**, **C-CV**, **Wait**, or **Cycle**
 - Step files saved as `.stp` format
 - Step 1 cannot be "Wait" or "Cycle"
@@ -437,6 +439,7 @@ The software supports programmable step sequences (`frmCtrlPrg` / `frmRunPrg`):
 ### Cycle Test
 
 Automated charge/discharge cycling with cutoff conditions:
+
 - Cutoff by voltage (`Cutoff Volt`, `Cutoff V`)
 - Cutoff by current (`Cutoff Curr`)
 - Cutoff by time (`Max Time`)
@@ -458,29 +461,29 @@ Automated charge/discharge cycling with cutoff conditions:
 
 Verified via pywinauto driving the EB Tester GUI while the fake-device captured TX frames:
 
-| UI element (tab)          | On click                                      | TX command |
-| ------------------------- | --------------------------------------------- | ---------- |
-| `Connect`                 | initial handshake                             | `0x05` init |
-| `Disconn` (+ Yes on prompt) | two frames: halt then stop                  | `0x02` load toggle, then `0x06` stop |
-| Single Test `Start` (C-CV) | current-V-cutoff payload                     | `0x21` |
-| Single Test `Start` (D-CC) | current / cutoff-V / time payload            | `0x01` |
-| Single Test `Start` (D-CP) | power / cutoff-V / time payload              | `0x11` |
-| Single Test `Continue` (D-CC) | same payload format as Start              | `0x08` |
-| Single Test `Continue` (D-CP) | same payload format as Start              | `0x18` |
-| Single Test `Continue` (C-CV) | same payload format as Start              | `0x28` |
-| Single Test `Adjust`        | update setpoints mid-run                    | `0x07` (mode-independent configure; **distinct from** the QC/PD use of `0x07` on EBD-USB+) |
-| Single Test `Stop`          | pauses output; **no confirmation dialog**   | `0x02` load toggle |
-| Single Test `Monitor`       | UI-only (toggles chart y-autoscale)          | — (no TX) |
-| Cycle Test `Start`          | start first step                             | (first step's mode-appropriate start) |
-| Cycle Test `Stop`           | halt cycle                                   | `0x02` load toggle |
-| Setting dialog `OK`/`Cancel`/`Add`/`Clear` | client-side only                | — (no TX) |
-| Toolbar icon 1 (folder)     | opens Curve Data + Curve Type dialog         | — (no TX) |
-| Toolbar icon 2 (disk)       | Save (no-op when no run data)                | — (no TX) |
-| Toolbar icon 3 (image)      | opens "Save Picture" file dialog             | — (no TX) |
-| Toolbar icon 4 (wrench)     | opens "Display Setting" chart config         | — (no TX) |
-| Toolbar icon 5 (magnifier)  | no visible effect (zoom/query query?)        | — (no TX) |
-| Toolbar icon 6 (info)       | opens "About Software" dialog                | — (no TX) |
-| `Chn1`/`Chn2`/`All Channel` radios | hidden on single-channel devices; no effect on EBC-A40L | — (no TX) |
+| UI element (tab)                           | On click                                                | TX command                                                                                 |
+| ------------------------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `Connect`                                  | initial handshake                                       | `0x05` init                                                                                |
+| `Disconn` (+ Yes on prompt)                | two frames: halt then stop                              | `0x02` load toggle, then `0x06` stop                                                       |
+| Single Test `Start` (C-CV)                 | current-V-cutoff payload                                | `0x21`                                                                                     |
+| Single Test `Start` (D-CC)                 | current / cutoff-V / time payload                       | `0x01`                                                                                     |
+| Single Test `Start` (D-CP)                 | power / cutoff-V / time payload                         | `0x11`                                                                                     |
+| Single Test `Continue` (D-CC)              | same payload format as Start                            | `0x08`                                                                                     |
+| Single Test `Continue` (D-CP)              | same payload format as Start                            | `0x18`                                                                                     |
+| Single Test `Continue` (C-CV)              | same payload format as Start                            | `0x28`                                                                                     |
+| Single Test `Adjust`                       | update setpoints mid-run                                | `0x07` (mode-independent configure; **distinct from** the QC/PD use of `0x07` on EBD-USB+) |
+| Single Test `Stop`                         | pauses output; **no confirmation dialog**               | `0x02` load toggle                                                                         |
+| Single Test `Monitor`                      | UI-only (toggles chart y-autoscale)                     | — (no TX)                                                                                  |
+| Cycle Test `Start`                         | start first step                                        | (first step's mode-appropriate start)                                                      |
+| Cycle Test `Stop`                          | halt cycle                                              | `0x02` load toggle                                                                         |
+| Setting dialog `OK`/`Cancel`/`Add`/`Clear` | client-side only                                        | — (no TX)                                                                                  |
+| Toolbar icon 1 (folder)                    | opens Curve Data + Curve Type dialog                    | — (no TX)                                                                                  |
+| Toolbar icon 2 (disk)                      | Save (no-op when no run data)                           | — (no TX)                                                                                  |
+| Toolbar icon 3 (image)                     | opens "Save Picture" file dialog                        | — (no TX)                                                                                  |
+| Toolbar icon 4 (wrench)                    | opens "Display Setting" chart config                    | — (no TX)                                                                                  |
+| Toolbar icon 5 (magnifier)                 | no visible effect (zoom/query query?)                   | — (no TX)                                                                                  |
+| Toolbar icon 6 (info)                      | opens "About Software" dialog                           | — (no TX)                                                                                  |
+| `Chn1`/`Chn2`/`All Channel` radios         | hidden on single-channel devices; no effect on EBC-A40L | — (no TX)                                                                                  |
 
 > **Important clarification:** The `Stop` button in the UI sends `0x02` (load toggle), **not** `0x06`. The mode-independent `0x06` stop command is emitted only from the `Disconn` confirmation path. This matters for the server implementation — a client asking to "stop" a test should emit `0x02`; `0x06` is reserved for fully disconnecting the measurement stream.
 
@@ -528,6 +531,7 @@ Byte 18:     0xF8       — frame end
 > **⚠ High-capacity encoding transition (~10 Ah):** The EBC-A40L changes its capacity encoding when the accumulated capacity reaches approximately 10,000 mAh (10 Ah). Below 10 Ah, each base-240 unit = 1 mAh. Above 10 Ah, the hi byte jumps by exactly +99 and each base-240 unit = 10 mAh. The device's own display shows the correct value throughout, but hosts must detect and correct this transition. Confirmed on run #56 (2026-05-04): raw jumped from 9,991 to 33,769 (delta 23,778 ≈ 99×240) at the transition point. Post-transition rate dropped from +22/tick to +2–3/tick (exactly 1/10). Correction formula: `true_mAh = last_pre_transition_raw + (current_raw - first_post_transition_raw) × 10`. See `src/server/capacity-tracker.ts` for the implementation. Whether a second transition occurs at higher thresholds (100 Ah?) is unknown — bytes 8-9 (field7) remain 0 even after the 10 Ah transition.
 
 > **Setpoint echo (bytes 10-15):** During idle, these fields retain the last test's configured setpoints. During an active test, they echo the current test's parameters. The encoding of bytes 10-11 and 15 depends on the mode:
+>
 > - **D-CC:** bytes 10-11 = current setpoint (÷100 → A), byte 15 = max time (minutes)
 > - **D-CP:** bytes 10-11 = power setpoint (raw = W), byte 15 = max time (minutes)
 > - **C-CV:** bytes 10-11 = current limit (÷100 → A), byte 15 = cutoff current (÷100 → A)
@@ -554,26 +558,26 @@ Byte 16:     Device ID            (0x0A = 10, same as normal packets — see Dev
 
 #### EBD-USB+ States (from sigrok)
 
-| Value  | Meaning                  |
-| ------ | ------------------------ |
-| `0x00` | Measuring, load **OFF**  |
+| Value  | Meaning                                |
+| ------ | -------------------------------------- |
+| `0x00` | Measuring, load **OFF**                |
 | `0x64` | Load OFF — **info packet** (alternate) |
-| `0x0A` | Measuring, load **ON**   |
+| `0x0A` | Measuring, load **ON**                 |
 | `0x6E` | Load ON — **info packet** (alternate)  |
 
 #### EBC Charger States (confirmed on EBC-A40L)
 
-| Value  | Hex    | Info variant | Mode (EB Tester UI) | Meaning                  |
-| ------ | ------ | ------------ | ------------------- | ------------------------ |
-| `0`    | `0x00` | `0x64`       | idle (EBD / post-power-on)          | Idle — device just powered on, no test configured. Also seen on real EBC-A40L before first init. |
-| `1`    | `0x01` | `0x65`       | idle (post-test)                    | Idle — test completed or stopped. Device retains last test's setpoints and capacity. |
-| `2`    | `0x02` | `0x66`       | idle / C-CV ready                   | Idle / monitoring — test not running, connected |
-| `10`   | `0x0A` | `0x6E`       | **D-CC running (Adjust enabled)**   | Discharging, constant current — "phase 1" |
-| `11`   | `0x0B` | `0x6F`       | **D-CP running**                    | Discharging, constant power — "phase 1" |
-| `12`   | `0x0C` | `0x70`       | **C-CV running**                    | Charging, constant-voltage mode — "phase 1" |
-| `20`   | `0x14` | `0x78`       | **D-CC running (Adjust enabled)**   | Discharging, constant current — "phase 2" |
-| `21`   | `0x15` | `0x79`       | **D-CP time-complete** (transitional) | Discharging constant power — max time reached. Appears for one frame before transitioning to 0x01 (idle). |
-| `22`   | `0x16` | `0x7A`       | **C-CV running / charge complete**  | Charging CV / terminal phase — "phase 2" |
+| Value | Hex    | Info variant | Mode (EB Tester UI)                   | Meaning                                                                                                   |
+| ----- | ------ | ------------ | ------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `0`   | `0x00` | `0x64`       | idle (EBD / post-power-on)            | Idle — device just powered on, no test configured. Also seen on real EBC-A40L before first init.          |
+| `1`   | `0x01` | `0x65`       | idle (post-test)                      | Idle — test completed or stopped. Device retains last test's setpoints and capacity.                      |
+| `2`   | `0x02` | `0x66`       | idle / C-CV ready                     | Idle / monitoring — test not running, connected                                                           |
+| `10`  | `0x0A` | `0x6E`       | **D-CC running (Adjust enabled)**     | Discharging, constant current — "phase 1"                                                                 |
+| `11`  | `0x0B` | `0x6F`       | **D-CP running**                      | Discharging, constant power — "phase 1"                                                                   |
+| `12`  | `0x0C` | `0x70`       | **C-CV running**                      | Charging, constant-voltage mode — "phase 1"                                                               |
+| `20`  | `0x14` | `0x78`       | **D-CC running (Adjust enabled)**     | Discharging, constant current — "phase 2"                                                                 |
+| `21`  | `0x15` | `0x79`       | **D-CP time-complete** (transitional) | Discharging constant power — max time reached. Appears for one frame before transitioning to 0x01 (idle). |
+| `22`  | `0x16` | `0x7A`       | **C-CV running / charge complete**    | Charging CV / terminal phase — "phase 2"                                                                  |
 
 > **Verified April 2026 by fake-device injection + UI observation.** Each mode emits one of two state bytes (X or X+10 decimal); the EB Tester GUI treats both the same — it only cares about whether the test is running and which mode. The second variant is likely the device's "CC → CV transition" (for charge) or "CP → terminal" (for discharge); real-hardware captures will pin down the exact semantics. `0x16` was previously documented as "charge complete" but behaves identically to `0x0C` in the UI, so it's better characterized as "CV / final phase".
 >
@@ -591,35 +595,35 @@ Byte 16:     Device ID            (0x0A = 10, same as normal packets — see Dev
 - **All payload values must be < 0xF0 (240)** to avoid colliding with the frame markers 0xFA and 0xF8.
 - **Parse the incoming stream continuously** — do not assume fixed-length alignment. Scan for 0xFA, validate length and checksum.
 - **Resend commands** if no expected response arrives within a reasonable timeout.
-- **The device UART can lock up** if it receives malformed or unexpected bytes (e.g. partial frames, manufactured commands from a misbehaving host). When stuck, the device ignores all serial input — including valid init commands — but **continues running any active test autonomously** (discharge/charge continues uninterrupted). Recovery does *not* require a USB replug: sending flush sequences (bursts of `0x00`, `0xF8`, other token bytes) followed by the standard init command (`0x05`) can break the parser out of its stuck state, but the device may need **10–30+ minutes** of silence or repeated attempts before it responds again. Confirmed May 2026 on EBC-A40L — UART recovered without power cycle after ~30 minutes of flush attempts.
+- **The device UART can lock up** if it receives malformed or unexpected bytes (e.g. partial frames, manufactured commands from a misbehaving host). When stuck, the device ignores all serial input — including valid init commands — but **continues running any active test autonomously** (discharge/charge continues uninterrupted). Recovery does _not_ require a USB replug: sending flush sequences (bursts of `0x00`, `0xF8`, other token bytes) followed by the standard init command (`0x05`) can break the parser out of its stuck state, but the device may need **10–30+ minutes** of silence or repeated attempts before it responds again. Confirmed May 2026 on EBC-A40L — UART recovered without power cycle after ~30 minutes of flush attempts.
 - The VB6 application uses `MSComm1` (Microsoft Communications Control 6.0) with `InputMode = comInputModeBinary`.
 
 ## UI Measurements (from VB6 application)
 
 The EB Tester software displays these values, derived from the response frames:
 
-| UI Label     | Display Format | Source                    | Unit |
-| ------------ | -------------- | ------------------------- | ---- |
-| Voltage      | `00.000`       | Response bytes 4-5        | V    |
-| Volt/Cells   | —              | Voltage / cell count      | V    |
-| Current      | `0.0000`       | Response bytes 2-3        | A    |
-| Cur(mA)      | `[mA]`         | Current × 1000            | mA   |
-| Capacity     | —              | Accumulated (host-side)   | mAh  |
-| Energy       | —              | Accumulated (host-side)   | mWh  |
-| Temperature  | `000.0`        | Response bytes 6-7 (EBC)  | C    |
-| D+ Voltage   | `0.000`        | Response bytes 6-7 (USB+) | V    |
-| D- Voltage   | `0.000`        | Response bytes 8-9 (USB+) | V    |
-| Resistance   | —              | Computed (V/I)            | ohm  |
-| Power        | —              | Computed (V*I)            | W    |
-| Avg Volt     | —              | Running average           | V    |
-| Begin Volt   | —              | First reading             | V    |
-| Cutoff Volt  | `00.00`        | User setting              | V    |
-| Cutoff Curr  | —              | User setting              | A    |
-| Max Time     | —              | User setting              | S    |
-| Time         | —              | Elapsed test time         | S    |
-| Cells        | —              | User setting              | count |
-| Step         | —              | Current step number       | —    |
-| Cycle        | —              | Current cycle number      | —    |
+| UI Label    | Display Format | Source                    | Unit  |
+| ----------- | -------------- | ------------------------- | ----- |
+| Voltage     | `00.000`       | Response bytes 4-5        | V     |
+| Volt/Cells  | —              | Voltage / cell count      | V     |
+| Current     | `0.0000`       | Response bytes 2-3        | A     |
+| Cur(mA)     | `[mA]`         | Current × 1000            | mA    |
+| Capacity    | —              | Accumulated (host-side)   | mAh   |
+| Energy      | —              | Accumulated (host-side)   | mWh   |
+| Temperature | `000.0`        | Response bytes 6-7 (EBC)  | C     |
+| D+ Voltage  | `0.000`        | Response bytes 6-7 (USB+) | V     |
+| D- Voltage  | `0.000`        | Response bytes 8-9 (USB+) | V     |
+| Resistance  | —              | Computed (V/I)            | ohm   |
+| Power       | —              | Computed (V\*I)           | W     |
+| Avg Volt    | —              | Running average           | V     |
+| Begin Volt  | —              | First reading             | V     |
+| Cutoff Volt | `00.00`        | User setting              | V     |
+| Cutoff Curr | —              | User setting              | A     |
+| Max Time    | —              | User setting              | S     |
+| Time        | —              | Elapsed test time         | S     |
+| Cells       | —              | User setting              | count |
+| Step        | —              | Current step number       | —     |
+| Cycle       | —              | Current cycle number      | —     |
 
 **Idle/error display:** `-.---` is shown when no device is connected or readings are invalid. Initial values are `00.000` for voltage, `0.0000` for current.
 
@@ -631,38 +635,38 @@ Capacity (mAh) and Energy (mWh) are **not transmitted by the device** — they a
 
 The original application (`eb_setup_v1.8.9en_202507.exe`, extracted from Setup Factory installer) is a VB6 (Visual Basic 6) compiled executable with these forms:
 
-| Form           | Purpose                           |
-| -------------- | --------------------------------- |
-| `frmMain`      | Main window                       |
-| `frmCom`       | COM port settings                 |
-| `frmUSB`       | USB Quick Charge control          |
-| `frmCtrl`      | Manual control (CC mode)          |
-| `frmCtrlAuto`  | Auto control                      |
-| `frmCtrlPrg`   | Programmatic/step control         |
-| `frmCtrl2S`    | 2-channel control                 |
-| `frmRun`       | Test run display                  |
-| `frmRunAuto`   | Auto test run display             |
-| `frmRunPrg`    | Programmatic test run             |
-| `frmRun2S`     | 2-channel test run                |
-| `frmCurve`     | Curve/graph display               |
-| `frmCurve2`    | Secondary curve display           |
-| `frmData`      | Data logging view                 |
-| `frmSet`       | Settings                          |
-| `frmRes`       | Resistance test                   |
-| `frmMeter`     | Meter/gauge display               |
-| `frmVol`       | Voltage display                   |
-| `frmCur`       | Current display                   |
-| `frmType`      | Device type selection             |
-| `frmDev`       | Device info                       |
-| `frmAdj`       | Calibration adjustment            |
-| `frmColor`     | Color settings                    |
-| `frmDisp`      | Display settings                  |
-| `frmAbout`     | About dialog                      |
-| `frmMsg`       | Message dialog                    |
-| `frmShow`      | Show/display window               |
-| `frmBanner`    | Banner/splash                     |
-| `frmLogo`      | Logo display                      |
-| `frmUpdate`    | Software update                   |
+| Form              | Purpose                              |
+| ----------------- | ------------------------------------ |
+| `frmMain`         | Main window                          |
+| `frmCom`          | COM port settings                    |
+| `frmUSB`          | USB Quick Charge control             |
+| `frmCtrl`         | Manual control (CC mode)             |
+| `frmCtrlAuto`     | Auto control                         |
+| `frmCtrlPrg`      | Programmatic/step control            |
+| `frmCtrl2S`       | 2-channel control                    |
+| `frmRun`          | Test run display                     |
+| `frmRunAuto`      | Auto test run display                |
+| `frmRunPrg`       | Programmatic test run                |
+| `frmRun2S`        | 2-channel test run                   |
+| `frmCurve`        | Curve/graph display                  |
+| `frmCurve2`       | Secondary curve display              |
+| `frmData`         | Data logging view                    |
+| `frmSet`          | Settings                             |
+| `frmRes`          | Resistance test                      |
+| `frmMeter`        | Meter/gauge display                  |
+| `frmVol`          | Voltage display                      |
+| `frmCur`          | Current display                      |
+| `frmType`         | Device type selection                |
+| `frmDev`          | Device info                          |
+| `frmAdj`          | Calibration adjustment               |
+| `frmColor`        | Color settings                       |
+| `frmDisp`         | Display settings                     |
+| `frmAbout`        | About dialog                         |
+| `frmMsg`          | Message dialog                       |
+| `frmShow`         | Show/display window                  |
+| `frmBanner`       | Banner/splash                        |
+| `frmLogo`         | Logo display                         |
+| `frmUpdate`       | Software update                      |
 | `modSocketMaster` | TCP/IP socket module (CSocketMaster) |
 
 Key controls: `MSComm1` (serial port), `tmrComm` (polling timer), `cmSocket` (network socket for remote mode).
@@ -719,6 +723,13 @@ Key controls: `MSComm1` (serial port), `tmrComm` (polling timer), `cmSocket` (ne
 - **CMD `0x07` also serves as mode-independent "Adjust" on EBC** — the UI's "Adjust" button on Single Test (mid-run setpoint change) emits `0x07` with the new setpoints in bytes 2-7, distinct from the QC/PD use of `0x07` documented for EBD-USB+.
 - **Cycle Test sequencing is 100% host-driven** — see Cycle Test section. `Wait` and `Cycle` modes emit no serial traffic; time cutoffs translate to `0x02` load-toggle frames.
 - **D-CC continue = `0x08`, D-CP continue = `0x18`, C-CV continue = `0x28`** — all three verified by clicking Continue on the Single Test tab after pausing each mode.
+- **Mid-run setpoint changes: only CMD `0x07` (Adjust) works** — confirmed on real A40L (2026-07-16, D-CC via TCP bridge raw frames):
+  - `0x07` with D-CC start payload layout mid-run: current follows within ~1 frame (10→15→5→10 A tested), the **capacity accumulator keeps counting** across every change, voltage steps match the cell's DC-IR (ΔV/ΔI ≈ 2.1 mΩ at ~50% SOC).
+  - `0x08` (continue) sent mid-run: **silently ignored**, both raising and lowering current — no setpoint change, no stop, no fault.
+  - Re-sent `0x01` (START) mid-run: **also silently ignored** — current unchanged, capacity keeps counting.
+  - `0x08` sent from idle (~10 min after a `0x02` stop): inert — no test starts, capacity untouched. Each `0x08` did produce a single anomalous state-byte frame (`0x0A` first send, `0x14` second) that looks like an ack/echo, then back to idle. Whether `0x08` resumes when sent _shortly_ after a `0x02` pause (the EB Tester pause→Continue flow) remains untested.
+- **Capacity accumulator semantics** (real A40L, 2026-07-16): freezes on `0x02` stop, persists in idle RX frames indefinitely, resets to 0 on a fresh `0x01` START, survives `0x07` adjusts.
+- **Idle-after-discharge state is `0x00` on the EBC-A40L** (observed via bridge after a D-CC stop) — not `0x02`. Caveat for the "first RX state byte: 0x00 = EBD, 0x02 = EBC" family auto-detect heuristic: an EBC connected right after a discharge can present `0x00`.
 
 ### Still unknown / needs more captures
 
@@ -739,7 +750,7 @@ Key controls: `MSComm1` (serial port), `tmrComm` (polling timer), `cmSocket` (ne
 2. ~~**D-CP discharge (constant power)**~~ → **done (Apr 2026):** CMD 0x11 payload confirmed: power (raw W, no divisor), cutoff voltage (÷100), max time (raw minutes). State 0x0B = running, 0x15 = time-complete (transitional), 0x01 = post-test idle.
 3. **C-LiPo or C-NiMh charge** → verify command format matches C-CV (CMD 0x51/0x31)
 4. ~~**Step test with 2-3 steps**~~ → **done (May 2026):** 3-step D-CC→Wait→C-CV captured via fake device. Host-driven, byte 14 stayed 0.
-5. **Change setpoints mid-test** → capture CMD 0x08 (continue) behavior
+5. ~~**Change setpoints mid-test**~~ → **done (2026-07-16):** mid-run changes go through CMD `0x07` (Adjust) — confirmed current follows with capacity preserved. `0x08` and re-sent `0x01` are ignored mid-run. Remaining sliver: `0x08` resume shortly after a `0x02` pause.
 6. **Different device model** → confirm what info-packet bytes 14-15 encode (they are capability fields, not the device ID — see Device Identification) and record the real byte-16 value to validate the fake-device sweep
 
 ## References

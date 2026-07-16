@@ -465,6 +465,15 @@ export class FakeDevice {
 
       case ACTION_START:
       case ACTION_CONTINUE:
+        // Real-hardware capture (2026-07-16, EBC-A40L): setpoint changes are
+        // IGNORED while a test runs — a mid-run 0x08 continue and a re-sent
+        // 0x01 START are both silent no-ops; 0x08 from idle is also inert
+        // (one ack-ish state-byte blip, no test starts, capacity untouched).
+        // Only a START from a non-running state changes anything, and it
+        // resets the capacity accumulator (also observed).
+        if (this.state.mode === 'charging' || this.state.mode === 'discharging') break;
+        if (action === ACTION_CONTINUE) break;
+
         if (decoded.currentSetpoint !== undefined) this.state.currentSetpoint = decoded.currentSetpoint;
         if (decoded.cutoffVoltage !== undefined) this.state.voltageSetpoint = decoded.cutoffVoltage;
         if (decoded.cutoffCurrent !== undefined) this.state.cutoffCurrent = decoded.cutoffCurrent;
@@ -472,9 +481,11 @@ export class FakeDevice {
         if (CHARGE_MODES.has(modeOffset)) {
           this.state.mode = 'charging';
           this.state.current = this.state.currentSetpoint;
+          this.state.capacity = 0;
         } else if (DISCHARGE_MODES.has(modeOffset)) {
           this.state.mode = 'discharging';
           this.state.current = this.state.currentSetpoint;
+          this.state.capacity = 0;
         }
         break;
 
@@ -486,8 +497,21 @@ export class FakeDevice {
         if (this.state.mode === 'idle') this.state.current = 0;
         break;
 
-      case ACTION_HEARTBEAT:
       case ACTION_CONFIGURE:
+        // 0x07 doubles as EB Tester's mid-run "Adjust" — confirmed on real
+        // hardware (2026-07-16, EBC-A40L): during an active test the new
+        // setpoints take effect within ~1 frame and the capacity
+        // accumulator keeps counting. Effect from idle is uncharacterized;
+        // model it as a no-op there.
+        if (this.state.mode === 'charging' || this.state.mode === 'discharging') {
+          if (decoded.currentSetpoint !== undefined) this.state.currentSetpoint = decoded.currentSetpoint;
+          if (decoded.cutoffVoltage !== undefined) this.state.voltageSetpoint = decoded.cutoffVoltage;
+          if (decoded.maxTime !== undefined) this.state.maxTime = decoded.maxTime;
+          this.state.current = this.state.currentSetpoint;
+        }
+        break;
+
+      case ACTION_HEARTBEAT:
       case ACTION_CALIBRATE:
       case ACTION_RESISTANCE:
         // No confirmed state change for these yet. Keep a placeholder so

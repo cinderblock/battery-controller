@@ -110,17 +110,58 @@ canvas are other suspects) — a heap snapshot would confirm.
        **PASSED 2026-07-16, all 8 checks**: dips at exactly 60/120 s, +90 mV during dips
        (= released 30 A × 3 mΩ), single run (273 points), capacity monotonic through 0x08
        continues, 4 IR samples all 3.00 mΩ (dip + restore per probe), finalized ir_mohm = 3.00.
-9. [ ] Capture real-hardware `0x08` behavior (capacity accumulator is the ONLY remaining
-       unknown — elapsed time proven host-side); only then enable probe on prod.
+9. [x] **Real-hardware capture done 2026-07-16 (user authorized interrupting the running
+       charge).** Result: the `0x08` design assumption was WRONG — and the fix was found.
+       See "Real-hardware findings" below. Probe now uses **CMD `0x07` (Adjust)**, which is
+       confirmed working on the real device.
+10. [x] Deployed 2026-07-16 ~12:24 PT in the idle window (ships the 0x07 probe, chart mΩ
+        trace, and browser RAM fix). Run #168 (the bench discharge) marked
+        exclude_from_capacity. Charge restarted as a MANUAL c-cv 20A/3.7V/2A cutoff/600min
+        on cell 8 (F02735) — confirmed 20 A flowing. NOTE: cycle program 25 "Increasing
+        Sequence" remains aborted at step 9/15; re-launch it when convenient if the
+        remaining steps (40 A discharge cycles) are still wanted.
+11. [ ] First real probing discharge (enable the probe toggle on a d-cc step) — validates
+        the 0x07 dip/restore loop end to end on hardware under the full server stack.
+
+## Real-hardware findings (2026-07-16 bench session — full detail in protocol.md)
+
+Captured via API polls on the live charge/discharge plus raw frames through the TCP bridge:
+
+- **Mid-run `0x08` continue is silently IGNORED** (tested both raising and lowering current
+  during a real 15 A discharge). The protocol.md command table's "updates setpoints during
+  active test" was wrong. Re-sent `0x01` START mid-run: also ignored. `0x08` from
+  long-stopped idle: inert (one ack-ish state-byte blip: `0x0A` then `0x14`, no test starts).
+- **CMD `0x07` (Adjust) IS the mid-run setpoint mechanism** — it was in protocol.md all
+  along ("UI Adjust button emits 0x07", D-CC only) but only TX-captured, never verified
+  device-side. Verified live: 10→15→5→10 A all followed within ~1 frame, **capacity
+  accumulator kept counting through every change**, and the voltage steps gave a clean
+  ΔV/ΔI ≈ 2.1 mΩ — the probe measurement demonstrated end-to-end on the real cell (F02735).
+- Capacity semantics: freezes on `0x02` stop, persists in idle frames, resets on `0x01`
+  START, survives `0x07` adjusts.
+- Idle-after-discharge state is `0x00` on the A40L (not `0x02`) — family auto-detect caveat.
+- Phase A confound (educational): my first live test sent continueCCV with maxTimeMin=200
+  while host elapsed was 224 min → the HOST watchdog instantly stopped the charge (recorded
+  `time_limit`). Not device behavior — but it proved the watchdog re-arm works as designed.
+- Found + fixed: `CycleRunner.abort()` didn't clear the recorder's cycle context, so the next
+  manual run inherited `start_reason='cycle'` (run #168).
+
+## Implementation switch to 0x07 (same session)
+
+The 0x08-based scheduler was torn down, then resurrected from git with a one-command swap:
+`DeviceSession.adjustDCC()` (0x07, D-CC payload layout) replaces `continueDCC` in
+`fireProbe`; all canTwiddle guards unchanged (0x07 from non-d-cc states is uncharacterized —
+guards stay mandatory). Fake device corrected to match reality: mid-run 0x08/0x01 ignored,
+START resets capacity, **0x07 adjusts setpoints mid-run with capacity preserved**. The e2e
+(`verify-ir-probe.ts`) re-run against the honest fake.
 
 ## Scope of the fake-device e2e (user asked: is it a valid test?)
 
 It validates OUR half — scheduler timing, canTwiddle guards, frame encoding, run recording,
 capacity pipeline, estimator recovery of a known mΩ. It is NOT evidence about the real
-device's `0x08` semantics: the fake's continue handler implements the behavior we designed
-for (counters preserved), so it cannot catch the real device diverging from that assumption.
-Host-side elapsed time is already proven safe by code inspection; the capacity accumulator
-(device-reported) is the one assumption only real hardware can confirm → stage 9.
+device's semantics — proven emphatically by this session: the original fake modeled `0x08`
+continues as we designed them, the e2e passed all 8 checks, and the real device then ignored
+the command entirely. The fake now models captured behavior instead of design assumptions,
+and the `0x07` mechanism itself is real-hardware confirmed.
 
 ## Working-tree cleanup (2026-07-16, "no other agents" per user)
 

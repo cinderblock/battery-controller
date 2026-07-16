@@ -507,6 +507,9 @@ export class CycleRunner {
 
     this.clearWaitTimer();
     this.clearProbeTimers();
+    // Without this, the next manual run inherits this program's cycle
+    // context (run #168 was mislabeled start_reason='cycle' this way)
+    this.recorder.clearCycleContext();
     this.recorder.stopWaitRun(); // no-op if no wait run active
 
     if (this.session.isRunning()) {
@@ -843,11 +846,12 @@ export class CycleRunner {
   }
 
   /**
-   * True only while it's safe to send a d-cc continue. A 0x08 sent to an
-   * idle or charging device would START or redirect a test, so both the
-   * dip and the restore must re-check right before sending: the device can
-   * hit its cutoff (or the user can stop it) at any moment, including
-   * mid-dip.
+   * True only while it's safe to send a d-cc adjust (0x07). Adjust is only
+   * characterized while the device is actively in d-cc (EB Tester gates its
+   * Adjust button the same way); its effect from idle/charging states is
+   * unknown, so both the dip and the restore re-check right before sending —
+   * the device can hit its cutoff (or the user can stop it) at any moment,
+   * including mid-dip.
    */
   private canTwiddle(): boolean {
     return (
@@ -864,7 +868,7 @@ export class CycleRunner {
     if (!this.canTwiddle()) return;
 
     try {
-      await this.session.continueDCC(probe.lowA, step.cutoffV, step.maxTimeMin ?? 0);
+      await this.session.adjustDCC(probe.lowA, step.cutoffV, step.maxTimeMin ?? 0);
       logger.info(`IR probe: dip ${setpointA}A → ${probe.lowA}A (${probe.holdS}s)`);
     } catch (e) {
       logger.error('IR probe dip failed:', e);
@@ -880,7 +884,7 @@ export class CycleRunner {
         return;
       }
       try {
-        await this.session.continueDCC(setpointA, step.cutoffV, step.maxTimeMin ?? 0);
+        await this.session.adjustDCC(setpointA, step.cutoffV, step.maxTimeMin ?? 0);
         logger.info(`IR probe: restore ${probe.lowA}A → ${setpointA}A`);
       } catch (e) {
         // Discharge continues at lowA — still a valid (slower) run, and the

@@ -606,7 +606,12 @@ export class DeviceSession {
   }
 
   /**
-   * Continue D-CC discharge with (optionally updated) setpoints
+   * Continue D-CC discharge with (optionally updated) setpoints.
+   *
+   * CAUTION (real-hardware capture 2026-07-16, EBC-A40L): a 0x08 sent
+   * while a test is RUNNING is silently ignored — it does NOT update
+   * setpoints. EB Tester uses it to resume after pausing. For mid-run
+   * setpoint changes use adjustDCC (CMD 0x07) instead.
    */
   async continueDCC(currentA: number, cutoffV: number, maxTimeMin: number = 0): Promise<void> {
     const [iHi, iLo] = encodeBase240(currentA, EbcDivisors.current);
@@ -615,6 +620,23 @@ export class DeviceSession {
     this.armTimeLimit(maxTimeMin, true);
     await this.sendPayload([0x08, iHi, iLo, vHi, vLo, tHi, tLo]);
     logger.info(`Sent D-CC continue: ${currentA}A, cutoff ${cutoffV}V, max ${maxTimeMin}min`);
+  }
+
+  /**
+   * Adjust D-CC setpoints MID-RUN via CMD 0x07 (EB Tester's "Adjust"
+   * button, enabled only during D-CC). Confirmed on real hardware
+   * (2026-07-16, EBC-A40L): current follows within ~1 frame and the
+   * device's capacity accumulator keeps counting — unlike 0x08/0x01,
+   * which are ignored while a test runs. Only send while the device is
+   * actually in d-cc; the effect from other states is uncharacterized.
+   */
+  async adjustDCC(currentA: number, cutoffV: number, maxTimeMin: number = 0): Promise<void> {
+    const [iHi, iLo] = encodeBase240(currentA, EbcDivisors.current);
+    const [vHi, vLo] = encodeBase240(cutoffV, EbcDivisors.setpointVoltage);
+    const [tHi, tLo] = encodeBase240(maxTimeMin, 1);
+    this.armTimeLimit(maxTimeMin, true);
+    await this.sendPayload([0x07, iHi, iLo, vHi, vLo, tHi, tLo]);
+    logger.info(`Sent D-CC adjust (0x07): ${currentA}A, cutoff ${cutoffV}V, max ${maxTimeMin}min`);
   }
 
   /**
