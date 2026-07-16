@@ -197,6 +197,24 @@ function TimeRow({ label, minutes, onChange }: { label: string; minutes: number;
 
 // ── C-rate toggle ─────────────���────────────────────────────────────
 
+/**
+ * Ah ceiling implied by the step's time limit (amps × hours) — makes a
+ * too-tight max time that would clip a full charge/discharge visible at a
+ * glance. For C-CV the CV taper means less than this actually flows, so
+ * it reads as an upper bound either way.
+ */
+function MaxAhHint({ amps, maxTimeMin }: { amps: number; maxTimeMin?: number }) {
+  if (!maxTimeMin || maxTimeMin <= 0 || !(amps > 0)) return null;
+  const ah = amps * (maxTimeMin / 60);
+  const ahText = ah >= 100 ? `${Math.round(ah)}` : ah.toFixed(1);
+  const ampsText = amps < 10 ? amps.toFixed(1) : `${Math.round(amps)}`;
+  return (
+    <div className="sp-hint">
+      ≤ {ahText} Ah possible ({ampsText} A × {formatMinutes(maxTimeMin)})
+    </div>
+  );
+}
+
 function CRateToggle({ useCRate, onToggle }: { useCRate: boolean; onToggle: () => void }) {
   return (
     <button className={`crate-step-toggle ${useCRate ? 'crate-active' : ''}`} onClick={onToggle} type="button">
@@ -347,6 +365,10 @@ export function StepProperties({
               minutes={step.maxTimeMin ?? 0}
               onChange={v => handleFieldChange('maxTimeMin', v || (undefined as any))}
             />
+            <MaxAhHint
+              amps={fieldValue('currentA', step.currentA) * (step.useCRate ? capacityAh : 1)}
+              maxTimeMin={step.maxTimeMin}
+            />
             <label className="sp-exclude">
               <input
                 type="checkbox"
@@ -493,6 +515,10 @@ export function StepProperties({
               label="Max time"
               minutes={step.maxTimeMin ?? 0}
               onChange={v => handleFieldChange('maxTimeMin', v || (undefined as any))}
+            />
+            <MaxAhHint
+              amps={fieldValue('currentA', step.currentA) * (step.useCRate ? capacityAh : 1)}
+              maxTimeMin={step.maxTimeMin}
             />
           </>
         )}
