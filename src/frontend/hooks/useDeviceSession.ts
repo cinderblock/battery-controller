@@ -11,6 +11,7 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { estimateIrSamples, type IrPoint, type IrSample } from '../../shared/ir-estimate.ts';
 import type {
   CycleState,
   DecodedReading,
@@ -59,26 +60,37 @@ const MAX_LIVE_POINTS = 4000;
 /** Max flat live temperature samples across all channels */
 const MAX_TEMP_POINTS = 6000;
 
-/** Keep every other point — halves a single series, preserving the newest end. */
+/**
+ * Halve the OLDER half of the buffer, keeping the newest half at full
+ * resolution. (A uniform every-other stride would degrade recent points
+ * too — after a few halvings the spacing exceeds the IR estimator's 5 s
+ * step window and live current steps stop being resolvable.)
+ */
 function decimateSeries<T>(points: T[]): T[] {
+  const mid = Math.floor(points.length / 2);
   const out: T[] = [];
-  for (let i = 0; i < points.length; i += 2) out.push(points[i]);
+  for (let i = 0; i < mid; i += 2) out.push(points[i]);
+  for (let i = mid; i < points.length; i++) out.push(points[i]);
   return out;
 }
 
 /**
- * Halve each channel's series independently. The flat buffer interleaves
- * channels (one push per channel per packet), so a naive every-other stride
- * would drop channels unevenly; count per channel instead so every series
- * keeps its 0th, 2nd, 4th… sample and stays time-aligned.
+ * Same idea per temperature channel. The flat buffer interleaves channels
+ * (one push per channel per packet), so decimate by each channel's own
+ * sample count — every series keeps its recent half intact and thins its
+ * older half — and stays time-aligned across channels.
  */
 function decimateTempByChannel(points: LiveTempPoint[]): LiveTempPoint[] {
+  const totals = new Map<string, number>();
+  for (const p of points) totals.set(p.channelId, (totals.get(p.channelId) ?? 0) + 1);
+
   const seen = new Map<string, number>();
   const out: LiveTempPoint[] = [];
   for (const p of points) {
     const n = seen.get(p.channelId) ?? 0;
     seen.set(p.channelId, n + 1);
-    if (n % 2 === 0) out.push(p);
+    const mid = Math.floor((totals.get(p.channelId) ?? 0) / 2);
+    if (n >= mid || n % 2 === 0) out.push(p);
   }
   return out;
 }
@@ -102,6 +114,14 @@ export interface SessionState {
   livePoints: LivePoint[];
   /** Live temperature samples accumulated during the active test */
   liveTempPoints: LiveTempPoint[];
+  /**
+   * Live DC-IR samples for the active test, computed incrementally as
+   * readings arrive (consecutive-pair current steps). Kept separately from
+   * livePoints because the point buffer decimates on overflow — after a few
+   * halvings the point spacing exceeds the estimator's step window and
+   * samples could no longer be recovered from the buffer.
+   */
+  liveIrSamples: IrSample[];
   stopping: boolean;
   tempChannels: TempChannelConfig[];
   tempReadings: TempChannelReading[];
@@ -123,6 +143,7 @@ const INITIAL_STATE: SessionState = {
   cycleState: null,
   livePoints: [],
   liveTempPoints: [],
+  liveIrSamples: [],
   stopping: false,
   tempChannels: [],
   tempReadings: [],
@@ -180,6 +201,10 @@ export function useDeviceSessionManager(): SessionContextValue {
   const esRef = useRef<EventSource | null>(null);
   const livePointsRef = useRef<LivePoint[]>([]);
   const liveTempPointsRef = useRef<LiveTempPoint[]>([]);
+  // IR accumulation: samples extracted pair-by-pair as readings arrive, at
+  // full resolution (see SessionState.liveIrSamples for why not livePoints)
+  const liveIrSamplesRef = useRef<IrSample[]>([]);
+  const prevIrPointRef = useRef<IrPoint | null>(null);
   const serverBuildIdRef = useRef<string | null>(null);
 
   // Track whether we were running before the last state change,
@@ -228,6 +253,8 @@ export function useDeviceSessionManager(): SessionContextValue {
 
       livePointsRef.current = [];
       liveTempPointsRef.current = [];
+      liveIrSamplesRef.current = [];
+      prevIrPointRef.current = null;
       setState(s => ({
         ...s,
         mode: data.mode,
@@ -243,6 +270,7 @@ export function useDeviceSessionManager(): SessionContextValue {
         cycleState: data.cycleState ?? null,
         livePoints: [],
         liveTempPoints: [],
+        liveIrSamples: [],
         tempChannels: data.temperature?.channels ?? [],
         tempReadings: data.temperature?.readings ?? [],
       }));
@@ -271,12 +299,21 @@ export function useDeviceSessionManager(): SessionContextValue {
         if (livePointsRef.current.length > MAX_LIVE_POINTS) {
           livePointsRef.current = decimateSeries(livePointsRef.current);
         }
+
+        // IR: check this reading against the previous one for a current step
+        const irPoint: IrPoint = { elapsed_s: r.elapsedS, voltage_v: r.voltage, current_a: r.current };
+        if (prevIrPointRef.current) {
+          const sample = estimateIrSamples([prevIrPointRef.current, irPoint], r.mode)[0];
+          if (sample) liveIrSamplesRef.current = [...liveIrSamplesRef.current, sample];
+        }
+        prevIrPointRef.current = irPoint;
       }
       setState(s => ({
         ...s,
         mode: r.mode,
         reading: r,
         livePoints: [...livePointsRef.current],
+        liveIrSamples: liveIrSamplesRef.current,
       }));
     });
 
@@ -294,6 +331,8 @@ export function useDeviceSessionManager(): SessionContextValue {
       if (nowRunning && !wasRunning) {
         livePointsRef.current = [];
         liveTempPointsRef.current = [];
+        liveIrSamplesRef.current = [];
+        prevIrPointRef.current = null;
       }
       prevModeRef.current = data.mode;
       setState(s => ({
@@ -302,6 +341,7 @@ export function useDeviceSessionManager(): SessionContextValue {
         activeRunId: data.activeRunId,
         livePoints: nowRunning && !wasRunning ? [] : s.livePoints,
         liveTempPoints: nowRunning && !wasRunning ? [] : s.liveTempPoints,
+        liveIrSamples: nowRunning && !wasRunning ? [] : s.liveIrSamples,
       }));
     });
 

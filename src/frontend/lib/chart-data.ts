@@ -647,6 +647,18 @@ export function buildTempChartData(
         points: samples.map(s => ({ t: s.t, v: s.mohm })),
       });
     }
+
+    // The active run may not be in the loaded run list (or visibility set)
+    // yet — its live samples must still plot, same as live temp points do.
+    const activeSamples = activeRunId != null ? irSamplesByRun.get(activeRunId) : undefined;
+    if (isTestActive && activeSamples && activeSamples.length > 0 && !irBuckets.some(b => b.runId === activeRunId)) {
+      irBuckets.push({
+        runId: activeRunId as number,
+        runLabel: 'Live',
+        isLive: true,
+        points: activeSamples.map(s => ({ t: s.t, v: s.mohm })),
+      });
+    }
   }
 
   if (buckets.size === 0 && irBuckets.length === 0) {

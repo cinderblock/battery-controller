@@ -53,6 +53,10 @@ interface StubSession {
   mode: string;
   /** adjustDCC calls observed (the probe's dips and restores) */
   continues: { currentA: number; cutoffV: number; maxTimeMin: number }[];
+  /** Device-reported current — adjusts apply here unless dropped */
+  deviceCurrent: number;
+  /** Number of upcoming adjust frames the "device" silently drops */
+  dropNext: number;
   session: DeviceSession;
 }
 
@@ -60,13 +64,21 @@ function stubSession(initialMode = 'd-cc'): StubSession {
   const stub: StubSession = {
     mode: initialMode,
     continues: [],
+    deviceCurrent: 40,
+    dropNext: 0,
     session: null as unknown as DeviceSession,
   };
   stub.session = {
     getMode: () => stub.mode,
     getPendingCommand: () => null,
+    getReading: () => ({ current: stub.deviceCurrent }),
     adjustDCC: async (currentA: number, cutoffV: number, maxTimeMin: number) => {
       stub.continues.push({ currentA, cutoffV, maxTimeMin });
+      if (stub.dropNext > 0) {
+        stub.dropNext--;
+      } else {
+        stub.deviceCurrent = currentA;
+      }
     },
   } as unknown as DeviceSession;
   return stub;
@@ -140,5 +152,34 @@ describe('fireProbe', () => {
     await settle(60);
 
     expect(stub.continues).toEqual([{ currentA: 10, cutoffV: 2.5, maxTimeMin: 600 }]);
+  });
+
+  test('retries the restore when the device drops the adjust frame', async () => {
+    // Observed live (2026-07-16): a dip occasionally stays stuck at lowA
+    // because the restore 0x07 doesn't take. Verify triggers a resend.
+    const stub = stubSession();
+    const runner = probeRunner(stub);
+    stub.dropNext = 0; // dip applies…
+    await (runner as any).fireProbe(PROBE_STEP, FAST_PROBE, 40);
+    stub.dropNext = 1; // …but the device ignores the first restore
+
+    await settle(150); // hold (20ms) + verify (20ms) + retry + verify again
+
+    // dip, dropped restore, retried restore — and the device ends at 40A
+    expect(stub.continues.map(c => c.currentA)).toEqual([10, 40, 40]);
+    expect(stub.deviceCurrent).toBe(40);
+  });
+
+  test('gives up after max attempts instead of retrying forever', async () => {
+    const stub = stubSession();
+    const runner = probeRunner(stub);
+    await (runner as any).fireProbe(PROBE_STEP, FAST_PROBE, 40);
+    stub.dropNext = 99; // device ignores every restore
+
+    await settle(300);
+
+    // dip + exactly PROBE_RESTORE_MAX_ATTEMPTS restore attempts
+    expect(stub.continues.map(c => c.currentA)).toEqual([10, 40, 40, 40]);
+    expect(stub.deviceCurrent).toBe(10); // stuck — next probe period recovers
   });
 });

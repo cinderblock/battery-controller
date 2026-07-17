@@ -120,9 +120,19 @@ canvas are other suspects) — a heap snapshot would confirm.
         on cell 8 (F02735) — confirmed 20 A flowing. NOTE: cycle program 25 "Increasing
         Sequence" remains aborted at step 9/15; re-launch it when convenient if the
         remaining steps (40 A discharge cycles) are still wanted.
-11. [~] First real probing discharge: the user already enabled the probe on their stored
-    "Increasing Sequence" d-cc step (10 A dipping to 2 A every 10 min) — it fires when
-    program #28 reaches step 3. Watch its first run.
+11. [x] First real probing discharge ran (user's sequence, 10 A dipping to 2 A). Three field
+        issues found and fixed (commit pending deploy):
+    - **Stuck at low current**: the device occasionally drops a 0x07 adjust frame; the
+      restore now VERIFIES (reading ≈ setpoint a few seconds later) and retries up to 3×.
+      Before, a dropped restore left the run at lowA until the next probe period.
+    - **Missing live mΩ trace**: the RAM-fix decimation halved the live buffer UNIFORMLY
+      (comment claimed old-half only) — after ~4 h point spacing exceeded the estimator's
+      5 s window and samples vanished. Fixed decimation to preserve the newest half, AND
+      made live IR samples accumulate incrementally at arrival time (immune to decimation).
+      Historic runs (downsampled loads had the same blind spot) now fetch their IR series
+      from GET /api/runs/:id/ir-samples, computed server-side from full-res points.
+    - **mΩ axis moved to the LEFT** (outside the °C axis), per the original request;
+      stacked-chart gutters updated.
 
 ## C-CV / pause-resume captures (2026-07-16 evening, user-authorized)
 

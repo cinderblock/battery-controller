@@ -61,7 +61,7 @@ import {
   stateByteToMode,
 } from './device-session.ts';
 import { fetchHaTemperatureEntities, testHaConnection } from './ha-adapter.ts';
-import { backfillIrEstimates } from './ir-estimate.ts';
+import { backfillIrEstimates, estimateIrSamples } from './ir-estimate.ts';
 import { SerialManager } from './serial.ts';
 import { SettingsLock } from './settings-lock.ts';
 import { startTcpBridge, startTcpBridgeStandalone, type TcpBridge } from './tcp-bridge.ts';
@@ -1119,6 +1119,19 @@ async function main() {
     if (runTempMatch && method === 'GET') {
       const runId = parseInt(runTempMatch[1], 10);
       return jsonResponse(getTempReadingsForRun(runId));
+    }
+
+    // /api/runs/:id/ir-samples — per-step DC-IR time series computed from the
+    // run's FULL-resolution stored points. The frontend can't recover these
+    // from its own run data: chart loads are downsampled and the live buffer
+    // decimates, both of which stretch point spacing past the estimator's
+    // step window.
+    const runIrMatch = pathname.match(/^\/api\/runs\/(\d+)\/ir-samples$/);
+    if (runIrMatch && method === 'GET') {
+      const runId = parseInt(runIrMatch[1], 10);
+      const run = getTestRun(runId);
+      if (!run) return errorResponse('Run not found', 404);
+      return jsonResponse(estimateIrSamples(getDataPointsForRun(runId), run.mode));
     }
 
     // ── Bridge mode ──────────────────────────────────────────

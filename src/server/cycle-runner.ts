@@ -126,6 +126,8 @@ const PROBE_MIN_PERIOD_S = 60;
 /** Hold bounds: long enough for ≥2–3 readings at ~2s cadence, short enough to stay a "dip" */
 const PROBE_MIN_HOLD_S = 6;
 const PROBE_MAX_HOLD_S = 30;
+/** Restore attempts per dip — the device occasionally drops an adjust frame */
+const PROBE_RESTORE_MAX_ATTEMPTS = 3;
 
 /**
  * Validate and clamp a step's probe config against its resolved current.
@@ -875,23 +877,52 @@ export class CycleRunner {
       return;
     }
 
-    this.probeRestoreTimer = setTimeout(async () => {
+    this.probeRestoreTimer = setTimeout(() => void this.restoreProbe(step, probe, setpointA, 1), probe.holdS * 1000);
+  }
+
+  /**
+   * Restore the step's setpoint after a dip, then VERIFY the device took it
+   * and retry if not. The device occasionally drops an adjust frame
+   * (observed live 2026-07-16: dips that stayed stuck at lowA until the
+   * next probe period) — without the retry the run crawls at reduced
+   * current for up to a full probe period.
+   */
+  private async restoreProbe(step: StepDCC, probe: IrProbeConfig, setpointA: number, attempt: number): Promise<void> {
+    this.probeRestoreTimer = null;
+    if (!this.canTwiddle()) {
+      // Step ended mid-dip (cutoff/stop) — the next step starts fresh via
+      // startDCC, so there is nothing to restore.
+      logger.info('IR probe: step ended during dip — skipping restore');
+      return;
+    }
+
+    try {
+      await this.session.adjustDCC(setpointA, step.cutoffV, step.maxTimeMin ?? 0);
+      logger.info(`IR probe: restore ${probe.lowA}A → ${setpointA}A${attempt > 1 ? ` (attempt ${attempt})` : ''}`);
+    } catch (e) {
+      logger.error('IR probe restore send failed:', e);
+    }
+
+    if (attempt >= PROBE_RESTORE_MAX_ATTEMPTS) {
+      // Last try went unverified — next probe period's restore recovers it
+      return;
+    }
+
+    // Verify a couple of readings later; reuse probeRestoreTimer so
+    // clearProbeTimers() cancels the pending check and fireProbe won't
+    // overlap a verification in flight. Short-hold configs (tests) verify
+    // proportionally sooner.
+    const verifyMs = Math.min(4000, probe.holdS * 1000);
+    this.probeRestoreTimer = setTimeout(() => {
       this.probeRestoreTimer = null;
-      if (!this.canTwiddle()) {
-        // Step ended mid-dip (cutoff/stop) — the next step starts fresh via
-        // startDCC, so there is nothing to restore.
-        logger.info('IR probe: step ended during dip — skipping restore');
-        return;
-      }
-      try {
-        await this.session.adjustDCC(setpointA, step.cutoffV, step.maxTimeMin ?? 0);
-        logger.info(`IR probe: restore ${probe.lowA}A → ${setpointA}A`);
-      } catch (e) {
-        // Discharge continues at lowA — still a valid (slower) run, and the
-        // next probe period's restore path recovers the setpoint.
-        logger.error('IR probe restore failed — run continues at reduced current until next probe:', e);
-      }
-    }, probe.holdS * 1000);
+      if (!this.canTwiddle()) return;
+      const currentA = this.session.getReading().current;
+      if (Math.abs(currentA - setpointA) <= Math.max(0.5, setpointA * 0.1)) return; // took
+      logger.warn(
+        `IR probe: restore didn't take (I=${currentA.toFixed(1)}A, want ${setpointA}A) — retrying (${attempt + 1}/${PROBE_RESTORE_MAX_ATTEMPTS})`
+      );
+      void this.restoreProbe(step, probe, setpointA, attempt + 1);
+    }, verifyMs);
   }
 
   private completeProgram(): void {

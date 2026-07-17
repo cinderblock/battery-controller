@@ -415,20 +415,7 @@ export function Chart({
       });
     }
 
-    // DC internal resistance — right side of the temperature chart
-    if (usedScales.has('mΩ')) {
-      axes.push({
-        scale: 'mΩ',
-        side: 1,
-        values: (_u: uPlot, vals: number[]) => vals.map(v => v.toFixed(1) + ' mΩ'),
-        stroke: '#26c6da',
-        grid: { show: false },
-        ticks: { show: false },
-        size: 55,
-      });
-    }
-
-    // Temperature axis — left side, and it's the only y-axis on the
+    // Temperature axis — left side, and it's the innermost y-axis on the
     // standalone temperature chart, so it owns the horizontal grid
     if (usedScales.has('°C')) {
       axes.push({
@@ -438,6 +425,20 @@ export function Chart({
         stroke: '#f44336',
         grid: { stroke: 'rgba(255,255,255,0.06)', width: 1 },
         ticks: { stroke: 'rgba(255,255,255,0.1)', width: 1 },
+        size: 55,
+      });
+    }
+
+    // DC internal resistance — left side of the temperature chart, stacked
+    // outside the °C axis (same-side axes stack outward in array order)
+    if (usedScales.has('mΩ')) {
+      axes.push({
+        scale: 'mΩ',
+        side: 3,
+        values: (_u: uPlot, vals: number[]) => vals.map(v => v.toFixed(1) + ' mΩ'),
+        stroke: '#26c6da',
+        grid: { show: false },
+        ticks: { show: false },
         size: 55,
       });
     }

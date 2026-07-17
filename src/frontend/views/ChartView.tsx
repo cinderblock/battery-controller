@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { estimateIrSamples, type IrSample, modeSupportsIr } from '../../shared/ir-estimate.ts';
+import type { IrSample } from '../../shared/ir-estimate.ts';
 import {
   api,
   type Cell,
@@ -106,6 +106,9 @@ export function ChartView() {
 
   // ── Temperature data per run ────────────────────────────────
   const [tempDataByRun, setTempDataByRun] = useState<Map<number, TempDataPoint[]>>(new Map());
+
+  // ── DC-IR samples per run (server-computed from full-res points) ──
+  const [irSamplesByRunStored, setIrSamplesByRunStored] = useState<Map<number, IrSample[]>>(new Map());
 
   // ── Fleet summary ────────────────────────────────────────────
   const [fleetSummary, setFleetSummary] = useState<GroupFleetSummary | null>(null);
@@ -302,6 +305,26 @@ export function ChartView() {
     return tempMap;
   }, []);
 
+  /**
+   * Fetch each run's DC-IR sample series from the server, which computes it
+   * over the run's full-resolution stored points. The frontend cannot derive
+   * these itself: chart loads are downsampled and the live buffer decimates,
+   * both stretching point spacing past the estimator's 5 s step window.
+   */
+  const fetchIrSamples = useCallback(async (chartRuns: ChartRun[]): Promise<Map<number, IrSample[]>> => {
+    const irMap = new Map<number, IrSample[]>();
+    await Promise.all(
+      chartRuns.map(run =>
+        api<IrSample[]>(`/api/runs/${run.id}/ir-samples`)
+          .then(data => {
+            if (data.length > 0) irMap.set(run.id, data);
+          })
+          .catch(() => {})
+      )
+    );
+    return irMap;
+  }, []);
+
   const loadRuns = useCallback(() => {
     return api<TestRunWithData[]>('/api/runs/recent?limit=100&withData=1')
       .then(async runsWithData => {
@@ -313,15 +336,20 @@ export function ChartView() {
           const extras = prev.filter(r => !ids.has(r.id));
           return [...chartRuns, ...extras];
         });
-        const tempMap = await fetchTemps(chartRuns);
+        const [tempMap, irMap] = await Promise.all([fetchTemps(chartRuns), fetchIrSamples(chartRuns)]);
         setTempDataByRun(prev => {
           const merged = new Map(prev);
           for (const [id, points] of tempMap) merged.set(id, points);
           return merged;
         });
+        setIrSamplesByRunStored(prev => {
+          const merged = new Map(prev);
+          for (const [id, samples] of irMap) merged.set(id, samples);
+          return merged;
+        });
       })
       .catch(() => {});
-  }, [toChartRuns, fetchTemps]);
+  }, [toChartRuns, fetchTemps, fetchIrSamples]);
 
   /** Load an out-of-window cell's runs on demand (Cells modal check) */
   const loadRunsForCell = useCallback(
@@ -335,10 +363,15 @@ export function ChartView() {
           const fresh = chartRuns.filter(r => !existing.has(r.id));
           return fresh.length > 0 ? [...prev, ...fresh] : prev;
         });
-        const tempMap = await fetchTemps(chartRuns);
+        const [tempMap, irMap] = await Promise.all([fetchTemps(chartRuns), fetchIrSamples(chartRuns)]);
         setTempDataByRun(prev => {
           const merged = new Map(prev);
           for (const [id, points] of tempMap) merged.set(id, points);
+          return merged;
+        });
+        setIrSamplesByRunStored(prev => {
+          const merged = new Map(prev);
+          for (const [id, samples] of irMap) merged.set(id, samples);
           return merged;
         });
       } catch (err) {
@@ -347,7 +380,7 @@ export function ChartView() {
         setLoadingCellId(null);
       }
     },
-    [toChartRuns, fetchTemps]
+    [toChartRuns, fetchTemps, fetchIrSamples]
   );
 
   /** Toggle a cell's visibility; load its runs when first shown */
@@ -432,21 +465,24 @@ export function ChartView() {
 
   // ── Running DC-IR estimate per run — plotted on the temp chart's mΩ axis.
   //    Steady runs yield only their start/stop current steps; runs with the
-  //    IR probe enabled yield a sample per dip. ─────────────────────────
+  //    IR probe enabled yield a sample per dip. Historic runs use the
+  //    server-computed series (full-resolution points); the active run
+  //    appends the incrementally-accumulated live samples on top. ────────
   const irSamplesByRun = useMemo(() => {
-    const map = new Map<number, IrSample[]>();
-    for (const run of runsWithLive) {
-      if (!modeSupportsIr(run.meta.mode)) continue;
-      const pts = run.elapsed.map((t, i) => ({
-        elapsed_s: t,
-        voltage_v: run.voltage[i],
-        current_a: run.current[i],
-      }));
-      const samples = estimateIrSamples(pts, run.meta.mode);
-      if (samples.length > 0) map.set(run.id, samples);
+    const map = new Map(irSamplesByRunStored);
+    if (state.activeRunId != null && state.liveIrSamples.length > 0) {
+      const stored = map.get(state.activeRunId) ?? [];
+      // Live samples cover from page load onward; stored covers up to the
+      // last fetch. Union by timestamp so overlap doesn't double-plot.
+      const seen = new Set(stored.map(s => Math.round(s.t)));
+      const fresh = state.liveIrSamples.filter(s => !seen.has(Math.round(s.t)));
+      map.set(
+        state.activeRunId,
+        [...stored, ...fresh].sort((a, b) => a.t - b.t)
+      );
     }
     return map;
-  }, [runsWithLive]);
+  }, [irSamplesByRunStored, state.activeRunId, state.liveIrSamples]);
 
   // ── Temperature chart (separate, x-synced below the main chart) ──
   const tempChartData = useMemo((): MergedChartData => {
@@ -515,8 +551,8 @@ export function ChartView() {
   const tempHasTemps = tempChartData.seriesInfo.some(s => s.metric === 'temperature');
   const mainLeftPx = (visibleMetrics.has('voltage') ? 65 : 0) + (visibleMetrics.has('current') ? 55 : 0);
   const mainRightPx = (visibleMetrics.has('power') ? 50 : 0) + (visibleMetrics.has('capacity') ? 55 : 0);
-  const tempLeftPx = tempHasTemps ? 55 : 0; // °C axis (left side)
-  const tempRightPx = tempHasIr ? 55 : 0; // mΩ axis (right side)
+  const tempLeftPx = (tempHasTemps ? 55 : 0) + (tempHasIr ? 55 : 0); // °C + mΩ axes, both left
+  const tempRightPx = 0; // temp chart has no right axis
   const mainPadLeft = tempChartVisible ? Math.max(0, tempLeftPx - mainLeftPx) : 0;
   const mainPadRight = tempChartVisible ? Math.max(0, tempRightPx - mainRightPx) : 0;
   const tempPadLeft = Math.max(0, mainLeftPx - tempLeftPx);
