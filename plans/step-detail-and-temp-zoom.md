@@ -104,6 +104,20 @@ The `cycle-timeline-bar` in `TopBar.tsx` renders each step; `CycleState`
       `focusRunId`). Corrected end_reason label map (`manual_stop`, `fault`).
 - [ ] Await user's visual confirmation of popover placement + highlight.
 
+## Perf: chart sluggishness with many runs (fixed)
+Root cause was NOT the highlight overlay — it was the cursor tooltip's
+nearest-series search calling `seriesValueAt` over EVERY series on every mouse
+move. On the merged (union) time axis, each historic run's series is mostly
+null, so each probe scans long gaps to interpolate. N runs × gap-scan × every
+move = laggy. Fixes shipped:
+- Highlight overlay: `redraw(false)` (reuse cached paths) + precompute shared x
+  pixels once + early bail when no series matches.
+- Cursor probing scoped to the live run during a test (`liveOnly`); falls back
+  to all series when nothing is live. This was the big one.
+Deeper structural option if it's ever still slow: the merged single x-axis
+forces sparsity — per-run x-axes or an index-per-run lookup would avoid the
+gap scans entirely. Not done; current fix was sufficient.
+
 ## Possible follow-ups (not done)
 - Chart focus emphasizes only ONE series of the highlighted run (uPlot's
   single-series focus). If highlighting all of a run's metrics (V+I+W) is
