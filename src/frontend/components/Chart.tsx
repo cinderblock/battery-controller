@@ -663,9 +663,18 @@ export function Chart({
             const cursorY = u.cursor.top ?? 0;
             const nearest: Array<{ si: number; distance: number; val: number }> = [];
 
+            // During a live test, only probe the current run's series. Historic
+            // runs are sparse on the merged time axis, so seriesValueAt has to
+            // scan long null gaps to interpolate — doing that for every old run
+            // on every cursor move is what makes the tooltip sluggish. The live
+            // run is the one being watched; when none is live (browsing
+            // history) we fall back to probing everything.
+            const liveOnly = info.some(s => s.isLive);
+
             for (let si = 0; si < info.length; si++) {
               const s = info[si];
               if (!s.label || s.color === 'transparent') continue; // skip band bounds
+              if (liveOnly && !s.isLive) continue;
               const val = seriesValueAt(
                 xs as number[],
                 u.data[si + 1] as (number | null | undefined)[] | undefined,
