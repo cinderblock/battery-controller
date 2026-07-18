@@ -723,6 +723,39 @@ export function getRecentRunsWithData(limit: number = 50, cellId?: number | null
   });
 }
 
+/**
+ * Single-run compact data, downsampled past the threshold — the per-run
+ * piecewise variant of getRecentRunsWithData, so the chart can hydrate runs
+ * progressively instead of in one multi-megabyte response.
+ */
+export function getCompactDataForRun(runId: number): {
+  d: CompactDataRow[] | DownsampledDataRow[];
+  downsampled?: boolean;
+} {
+  const rows = getDb()
+    .query<
+      {
+        elapsed_s: number;
+        voltage_v: number;
+        current_a: number;
+        power_w: number;
+        capacity_mah: number;
+        energy_mwh: number;
+      },
+      [number]
+    >(
+      `SELECT elapsed_s, voltage_v, current_a, power_w, capacity_mah, energy_mwh
+     FROM data_points WHERE run_id = ? ORDER BY elapsed_s`
+    )
+    .all(runId)
+    .map(p => [p.elapsed_s, p.voltage_v, p.current_a, p.power_w, p.capacity_mah, p.energy_mwh] as CompactDataRow);
+
+  if (rows.length > DOWNSAMPLE_THRESHOLD) {
+    return { d: downsampleRun(rows, DOWNSAMPLE_THRESHOLD), downsampled: true };
+  }
+  return { d: rows };
+}
+
 export function getDataPointCount(runId: number): number {
   return (
     getDb().query<{ count: number }, [number]>('SELECT COUNT(*) as count FROM data_points WHERE run_id = ?').get(runId)
@@ -1098,4 +1131,46 @@ export function getTempReadingsForRun(
      ORDER BY tr.elapsed_s, tc.channel_key`
     )
     .all(runId);
+}
+
+/**
+ * Bucket-average each channel's series down to ≤ maxPerChannel points.
+ * A multi-hour run ships hundreds of KB of raw temperature rows otherwise
+ * (~740 KB observed for one 4 h run) — far past what a chart can display.
+ */
+export function downsampleTempReadings<T extends { channel_id: number; elapsed_s: number; temp_c: number }>(
+  rows: T[],
+  maxPerChannel = 400
+): T[] {
+  const byChannel = new Map<number, T[]>();
+  for (const r of rows) {
+    let arr = byChannel.get(r.channel_id);
+    if (!arr) {
+      arr = [];
+      byChannel.set(r.channel_id, arr);
+    }
+    arr.push(r);
+  }
+
+  const out: T[] = [];
+  for (const arr of byChannel.values()) {
+    if (arr.length <= maxPerChannel) {
+      out.push(...arr);
+      continue;
+    }
+    const bucketSize = Math.ceil(arr.length / maxPerChannel);
+    for (let i = 0; i < arr.length; i += bucketSize) {
+      const bucket = arr.slice(i, i + bucketSize);
+      let tSum = 0;
+      let cSum = 0;
+      for (const b of bucket) {
+        tSum += b.elapsed_s;
+        cSum += b.temp_c;
+      }
+      out.push({ ...bucket[0], elapsed_s: tSum / bucket.length, temp_c: cSum / bucket.length });
+    }
+  }
+  // Match the source query's ordering: elapsed, then channel
+  out.sort((a, b) => a.elapsed_s - b.elapsed_s || a.channel_id - b.channel_id);
+  return out;
 }

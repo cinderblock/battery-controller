@@ -9,14 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { IrSample } from '../../shared/ir-estimate.ts';
-import {
-  api,
-  type Cell,
-  type CellGroup,
-  type GroupFleetSummary,
-  type TestRun,
-  type TestRunWithData,
-} from '../api-client.ts';
+import { api, type Cell, type CellGroup, type GroupFleetSummary, type TestRun } from '../api-client.ts';
 import { CameraView } from '../components/CameraView.tsx';
 import { CapacityChart } from '../components/CapacityChart.tsx';
 import { CellSelectModal } from '../components/CellSelectModal.tsx';
@@ -127,7 +120,7 @@ export function ChartView() {
   const [showDischarge, setShowDischarge] = useState(true);
   const [showComplete, setShowComplete] = useState(true);
   const [showPartial, setShowPartial] = useState(true);
-  const [daysPast, setDaysPast] = useState(7); // Show runs from last N days (0 = all)
+  const [daysPast, setDaysPast] = useState(2); // Show runs from last N days (0 = all) — small default keeps first load light
   const [colorBy, setColorBy] = useState<ColorBy>('run');
 
   // ── Cell visibility (Cells modal) ─────────────────────────────
@@ -241,7 +234,13 @@ export function ChartView() {
 
   const selectedGroup = cellGroups.find(g => g.id === selectedGroupId) ?? null;
 
-  const runPassesFilter = useCallback(
+  /**
+   * Metadata-only filters (mode, date window, cell visibility) — safe to
+   * evaluate on un-hydrated run stubs. The hydration pump uses this: the
+   * complete/partial classification needs voltage data, so gating hydration
+   * on it would deadlock (stubs classify as partial and never load).
+   */
+  const runPassesMetaFilter = useCallback(
     (run: ChartRun) => {
       // Still-running runs always pass
       if (run.meta.ended_at == null) return true;
@@ -252,10 +251,6 @@ export function ChartView() {
       // Runs that are neither charge nor discharge (e.g. wait) always pass
       if (isCharge && !showCharge) return false;
       if (isDischarge && !showDischarge) return false;
-
-      const complete = isRunComplete(run, selectedGroup);
-      if (complete && !showComplete) return false;
-      if (!complete && !showPartial) return false;
 
       // Date range filter
       if (daysPast > 0 && run.meta.ended_at) {
@@ -269,7 +264,21 @@ export function ChartView() {
 
       return true;
     },
-    [showCharge, showDischarge, showComplete, showPartial, daysPast, hiddenCellIds, selectedGroup, isRunComplete]
+    [showCharge, showDischarge, daysPast, hiddenCellIds]
+  );
+
+  const runPassesFilter = useCallback(
+    (run: ChartRun) => {
+      if (!runPassesMetaFilter(run)) return false;
+      if (run.meta.ended_at == null) return true;
+
+      const complete = isRunComplete(run, selectedGroup);
+      if (complete && !showComplete) return false;
+      if (!complete && !showPartial) return false;
+
+      return true;
+    },
+    [runPassesMetaFilter, showComplete, showPartial, selectedGroup, isRunComplete]
   );
 
   // When filters or runs change, recompute visible runs
@@ -277,102 +286,107 @@ export function ChartView() {
     setVisibleRuns(new Set(runs.filter(runPassesFilter).map(r => r.id)));
   }, [runs, runPassesFilter]);
 
-  // ── Load historical runs ──────────────────────────────────────
+  // ── Load historical runs (progressively) ─────────────────────
+  //
+  // Phase 1: run METADATA only (fast, ~60 KB) → the UI renders immediately.
+  // Phase 2: a small pool hydrates each filter-visible run with chart data +
+  // temperatures + IR samples, newest first (active run first), so traces
+  // appear progressively instead of after one multi-megabyte response.
+  // Runs outside the filters (older than the day window, hidden cells) are
+  // never fetched until a filter change exposes them.
 
-  /** Convert API runs-with-data to ChartRuns */
-  const toChartRuns = useCallback((runsWithData: TestRunWithData[]): ChartRun[] => {
-    const chartRuns: ChartRun[] = [];
-    for (const rwd of runsWithData) {
-      if (rwd.d.length === 0) continue;
-      const label = rwd.cell_id ? `Cell #${rwd.cell_id}` : `Run #${rwd.id}`;
-      chartRuns.push(compactDataToChartRun(rwd, rwd.d, label, rwd.downsampled));
+  /** Metadata-only ChartRun stub — hydrated later by loadRunData */
+  const metaToStub = useCallback((meta: TestRun): ChartRun => {
+    const label = meta.cell_id ? `Cell #${meta.cell_id}` : `Run #${meta.id}`;
+    return compactDataToChartRun(meta, [], label);
+  }, []);
+
+  /** Run ids whose data has been fetched (or errored — reload retries) */
+  const hydratedRunIds = useRef(new Set<number>());
+  const hydratingRunIds = useRef(new Set<number>());
+
+  /** Fetch one run's chart data + temps + IR samples and patch state */
+  const loadRunData = useCallback(async (run: ChartRun) => {
+    try {
+      const [data, temps, ir] = await Promise.all([
+        api<{ d: number[][]; downsampled?: boolean }>(`/api/runs/${run.id}/data?compact=1`),
+        api<TempDataPoint[]>(`/api/runs/${run.id}/temperature`).catch(() => [] as TempDataPoint[]),
+        api<IrSample[]>(`/api/runs/${run.id}/ir-samples`).catch(() => [] as IrSample[]),
+      ]);
+      hydratedRunIds.current.add(run.id);
+      const label = run.meta.cell_id ? `Cell #${run.meta.cell_id}` : `Run #${run.id}`;
+      setRuns(prev =>
+        data.d.length === 0 && run.meta.ended_at != null
+          ? prev.filter(r => r.id !== run.id) // ended runs with no points (empty waits) drop out
+          : prev.map(r => (r.id === run.id ? compactDataToChartRun(run.meta, data.d, label, data.downsampled) : r))
+      );
+      if (temps.length > 0) setTempDataByRun(prev => new Map(prev).set(run.id, temps));
+      if (ir.length > 0) setIrSamplesByRunStored(prev => new Map(prev).set(run.id, ir));
+    } catch (err) {
+      hydratedRunIds.current.add(run.id); // don't hammer a failing endpoint
+      console.error(`Failed to load data for run #${run.id}:`, err);
+    } finally {
+      hydratingRunIds.current.delete(run.id);
     }
-    return chartRuns;
   }, []);
 
-  /** Fetch temperature data for the given runs into a map */
-  const fetchTemps = useCallback(async (chartRuns: ChartRun[]): Promise<Map<number, TempDataPoint[]>> => {
-    const tempMap = new Map<number, TempDataPoint[]>();
-    await Promise.all(
-      chartRuns.map(run =>
-        api<TempDataPoint[]>(`/api/runs/${run.id}/temperature`)
-          .then(data => {
-            if (data.length > 0) tempMap.set(run.id, data);
-          })
-          .catch(() => {})
-      )
+  // Hydration pump: start fetches for filter-visible runs lacking data.
+  // Each completion updates `runs`, re-running this effect for the next batch.
+  useEffect(() => {
+    const HYDRATE_POOL = 4;
+    const pending = runs.filter(
+      r => !hydratedRunIds.current.has(r.id) && !hydratingRunIds.current.has(r.id) && runPassesMetaFilter(r)
     );
-    return tempMap;
-  }, []);
-
-  /**
-   * Fetch each run's DC-IR sample series from the server, which computes it
-   * over the run's full-resolution stored points. The frontend cannot derive
-   * these itself: chart loads are downsampled and the live buffer decimates,
-   * both stretching point spacing past the estimator's 5 s step window.
-   */
-  const fetchIrSamples = useCallback(async (chartRuns: ChartRun[]): Promise<Map<number, IrSample[]>> => {
-    const irMap = new Map<number, IrSample[]>();
-    await Promise.all(
-      chartRuns.map(run =>
-        api<IrSample[]>(`/api/runs/${run.id}/ir-samples`)
-          .then(data => {
-            if (data.length > 0) irMap.set(run.id, data);
-          })
-          .catch(() => {})
-      )
-    );
-    return irMap;
-  }, []);
+    if (pending.length === 0) return;
+    pending.sort((a, b) => {
+      if (a.id === state.activeRunId) return -1;
+      if (b.id === state.activeRunId) return 1;
+      return b.id - a.id; // newest first
+    });
+    const slots = HYDRATE_POOL - hydratingRunIds.current.size;
+    for (const run of pending.slice(0, Math.max(0, slots))) {
+      hydratingRunIds.current.add(run.id);
+      void loadRunData(run);
+    }
+  }, [runs, runPassesMetaFilter, state.activeRunId, loadRunData]);
 
   const loadRuns = useCallback(() => {
-    return api<TestRunWithData[]>('/api/runs/recent?limit=100&withData=1')
-      .then(async runsWithData => {
-        const chartRuns = toChartRuns(runsWithData);
+    return api<TestRun[]>('/api/runs/recent?limit=100')
+      .then(metas => {
         setRuns(prev => {
-          // Keep any per-cell runs loaded on demand that fall outside the
-          // recent window (their cells are still checked in the modal)
-          const ids = new Set(chartRuns.map(r => r.id));
+          const byId = new Map(prev.map(r => [r.id, r]));
+          const ids = new Set(metas.map(m => m.id));
+          // Fresh metadata, but keep already-hydrated data arrays
+          const next = metas.map(m => {
+            const existing = byId.get(m.id);
+            // A run hydrated while it was still running has partial data —
+            // once it ends, let the pump fetch the finalized series
+            if (existing && existing.meta.ended_at == null && m.ended_at != null) {
+              hydratedRunIds.current.delete(m.id);
+            }
+            return existing && hydratedRunIds.current.has(m.id)
+              ? { ...existing, meta: m }
+              : (existing ?? metaToStub(m));
+          });
+          // Keep per-cell runs loaded on demand that fall outside the window
           const extras = prev.filter(r => !ids.has(r.id));
-          return [...chartRuns, ...extras];
-        });
-        const [tempMap, irMap] = await Promise.all([fetchTemps(chartRuns), fetchIrSamples(chartRuns)]);
-        setTempDataByRun(prev => {
-          const merged = new Map(prev);
-          for (const [id, points] of tempMap) merged.set(id, points);
-          return merged;
-        });
-        setIrSamplesByRunStored(prev => {
-          const merged = new Map(prev);
-          for (const [id, samples] of irMap) merged.set(id, samples);
-          return merged;
+          return [...next, ...extras];
         });
       })
       .catch(() => {});
-  }, [toChartRuns, fetchTemps, fetchIrSamples]);
+  }, [metaToStub]);
 
-  /** Load an out-of-window cell's runs on demand (Cells modal check) */
+  /** Load an out-of-window cell's run list on demand (Cells modal check);
+   *  the hydration pump fetches their data once they pass the filters. */
   const loadRunsForCell = useCallback(
     async (cellId: number) => {
       setLoadingCellId(cellId);
       try {
-        const runsWithData = await api<TestRunWithData[]>(`/api/runs/recent?limit=200&withData=1&cellId=${cellId}`);
-        const chartRuns = toChartRuns(runsWithData);
+        const metas = await api<TestRun[]>(`/api/runs/recent?limit=200&cellId=${cellId}`);
         setRuns(prev => {
           const existing = new Set(prev.map(r => r.id));
-          const fresh = chartRuns.filter(r => !existing.has(r.id));
+          const fresh = metas.filter(m => !existing.has(m.id)).map(metaToStub);
           return fresh.length > 0 ? [...prev, ...fresh] : prev;
-        });
-        const [tempMap, irMap] = await Promise.all([fetchTemps(chartRuns), fetchIrSamples(chartRuns)]);
-        setTempDataByRun(prev => {
-          const merged = new Map(prev);
-          for (const [id, points] of tempMap) merged.set(id, points);
-          return merged;
-        });
-        setIrSamplesByRunStored(prev => {
-          const merged = new Map(prev);
-          for (const [id, samples] of irMap) merged.set(id, samples);
-          return merged;
         });
       } catch (err) {
         console.error(`Failed to load runs for cell #${cellId}:`, err);
@@ -380,7 +394,7 @@ export function ChartView() {
         setLoadingCellId(null);
       }
     },
-    [toChartRuns, fetchTemps, fetchIrSamples]
+    [metaToStub]
   );
 
   /** Toggle a cell's visibility; load its runs when first shown */

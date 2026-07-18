@@ -134,6 +134,29 @@ canvas are other suspects) — a heap snapshot would confirm.
     - **mΩ axis moved to the LEFT** (outside the °C axis), per the original request;
       stacked-chart gutters updated.
 
+## Chart load performance (2026-07-18, user: "loading still takes a long time")
+
+Measured on coulomb: run metadata 0.17 s/60 KB; the old `withData=1` mega-request 5 s/2.3 MB
+(uncompressed; server gzips for browsers but the 5 s SQLite scan stands); ONE run's raw
+temperature series 743 KB; plus a 2-requests-per-run fan-out (temps + ir) through the
+browser's 6-connection limit. User confirmed the ir-samples addition didn't noticeably
+change it — the mega-request + raw temps were always the cost.
+
+Rework (commit pending deploy):
+
+- **Meta-first progressive loading**: `/api/runs/recent` (no data) renders the UI
+  immediately; a 4-wide hydration pump then fetches each run's compact data + temps + IR
+  via per-run requests (`/api/runs/:id/data?compact=1`), newest first, active run first.
+  Traces appear as they arrive.
+- **Only filter-visible runs hydrate** — runs outside the day window / hidden cells are
+  never fetched until a filter exposes them. Hydration gates on METADATA-only filters:
+  the complete/partial classification needs voltage data, so gating on the full filter
+  would deadlock (stubs classify as partial and would never load).
+- **Temps downsampled server-side** (bucket mean, ≤400/channel): 743 KB → ~30 KB.
+  `?full=1` keeps raw access.
+- **Default day window 7 → 2 days** ("default to fewer traces").
+- Runs hydrated while still running re-hydrate after they end (partial data refresh).
+
 ## C-CV / pause-resume captures (2026-07-16 evening, user-authorized)
 
 Second bench window (program aborted + relaunched cleanly as #28; whole capture ran dark

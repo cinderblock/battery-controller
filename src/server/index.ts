@@ -21,12 +21,14 @@ import {
   createSequence,
   deleteCell,
   deleteSequence,
+  downsampleTempReadings,
   ensureDefaultCellGroup,
   getCellByBarcode,
   getCellById,
   getCellGroups,
   getCells,
   getCellsInGroup,
+  getCompactDataForRun,
   getCycleProgram,
   getDataPointCount,
   getDataPointsForRun,
@@ -737,12 +739,16 @@ async function main() {
       return jsonResponse(getTestRun(runId));
     }
 
-    // /api/runs/:id/data
+    // /api/runs/:id/data — full rows, or ?compact=1 for the chart's
+    // downsampled column-array form (per-run piece of the old withData bundle)
     const runDataMatch = pathname.match(/^\/api\/runs\/(\d+)\/data$/);
     if (runDataMatch && method === 'GET') {
       const runId = parseInt(runDataMatch[1], 10);
       const run = getTestRun(runId);
       if (!run) return errorResponse('Run not found', 404);
+      if (new URL(req.url).searchParams.get('compact') === '1') {
+        return jsonResponse(getCompactDataForRun(runId), 200, req);
+      }
       return jsonResponse(getDataPointsForRun(runId));
     }
 
@@ -1114,11 +1120,14 @@ async function main() {
       return jsonResponse(tempManager.getLastReadings());
     }
 
-    // /api/runs/:id/temperature
+    // /api/runs/:id/temperature — downsampled per channel for the chart
+    // (raw rows for a multi-hour run are ~740 KB); ?full=1 for everything
     const runTempMatch = pathname.match(/^\/api\/runs\/(\d+)\/temperature$/);
     if (runTempMatch && method === 'GET') {
       const runId = parseInt(runTempMatch[1], 10);
-      return jsonResponse(getTempReadingsForRun(runId));
+      const rows = getTempReadingsForRun(runId);
+      if (new URL(req.url).searchParams.get('full') === '1') return jsonResponse(rows);
+      return jsonResponse(downsampleTempReadings(rows), 200, req);
     }
 
     // /api/runs/:id/ir-samples — per-step DC-IR time series computed from the
