@@ -529,17 +529,28 @@ export function ChartView() {
   // its own narrow window and — via the x-sync — snap the whole view in on
   // every temp packet. Union both charts' x extents and hand it to both.
   const sharedXExtent = useMemo((): [number, number] | undefined => {
-    const mins: number[] = [];
+    const mins: number[] = [0];
     const maxs: number[] = [];
+
+    // Anchor the extent on METADATA durations of the visible runs, so the
+    // time axis is stable from first paint instead of stretching run by run
+    // as hydration fills the data in (runs all share elapsed_s = 0 origin).
+    for (const r of runs) {
+      if (!visibleRuns.has(r.id)) continue;
+      if (r.meta.duration_s != null && r.meta.duration_s > 0) maxs.push(r.meta.duration_s);
+    }
+
+    // Union with the actual loaded data extents — covers the live run
+    // outgrowing its metadata and any duration/points mismatch.
     for (const xs of [chartData.data[0], tempChartData.data[0]]) {
       if (xs && xs.length > 0) {
         mins.push(xs[0] as number);
         maxs.push(xs[xs.length - 1] as number);
       }
     }
-    if (mins.length === 0) return undefined;
+    if (maxs.length === 0) return undefined;
     return [Math.min(...mins), Math.max(...maxs)];
-  }, [chartData, tempChartData]);
+  }, [runs, visibleRuns, chartData, tempChartData]);
 
   // Chart trace to emphasize, driven by hovering/selecting a timeline step.
   const [highlightedRunId, setHighlightedRunId] = useState<number | null>(null);
