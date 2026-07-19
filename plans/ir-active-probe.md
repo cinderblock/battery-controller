@@ -134,6 +134,22 @@ canvas are other suspects) — a heap snapshot would confirm.
     - **mΩ axis moved to the LEFT** (outside the °C axis), per the original request;
       stacked-chart gutters updated.
 
+## Charge-side probing (2026-07-19, user asked twice → built)
+
+The probe now also works on **c-cv steps, gated to the CC phase** (the 2026-07-16 capture
+proved 0x07 with the C-CV payload adjusts mid-charge with capacity preserved, ~2.2 mΩ):
+
+- `DeviceSession.adjustCCV()` — 0x07, C-CV layout (no time field; host-enforced limit).
+- Scheduler: dips only fire while state = 0x0C (CC phase) AND actual current ≥ lowA + 5 A
+  (late-CC taper yields no usable ΔI). The **restore fires even if the charger slips into
+  CV mid-dip** — the dip lowers the current LIMIT, and leaving it at lowA would cap the
+  whole CV tail. Retry signal is "current still stuck at the dip level", so normal CV
+  tapering below the setpoint never triggers resends.
+- `probe?` on StepCCV both sides; step editor shows the probe controls on charge steps
+  ("CC phase only"); shared ProbeControls component.
+- NOTE: the stored "Increasing Sequence" has probe only on its first d-cc step — charge
+  steps need the toggle added in the editor (and a program re-launch) to probe.
+
 ## Chart load performance (2026-07-18, user: "loading still takes a long time")
 
 Measured on coulomb: run metadata 0.17 s/60 KB; the old `withData=1` mega-request 5 s/2.3 MB

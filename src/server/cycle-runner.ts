@@ -9,6 +9,7 @@
  * Cycle state persists to SQLite so it can resume after Pi reboots.
  */
 
+import { RxState } from '../protocol/constants.ts';
 import { MIN_STEP_A } from '../shared/ir-estimate.ts';
 import { type FieldBindings, resolveSteps, type SequenceVariable } from '../shared/sequence-vars.ts';
 import { logger } from '../utils/logger.ts';
@@ -71,6 +72,8 @@ export interface StepCCV {
   useCRate?: boolean;
   excludeFromCount?: boolean;
   bind?: FieldBindings;
+  /** Periodic IR probe — fires only during the CC phase (CV taper owns the current) */
+  probe?: IrProbeConfig;
 }
 
 export interface StepWait {
@@ -819,20 +822,22 @@ export class CycleRunner {
   // ── In-run IR probe ───────────────────────────────────────────
 
   /**
-   * Arm the periodic IR probe for a just-started step. d-cc only: direct
-   * current control gives a clean, known ΔI. No-op (after clearing any
+   * Arm the periodic IR probe for a just-started step. d-cc and c-cv only —
+   * CMD 0x07 Adjust is real-hardware verified for both (c-cv during the CC
+   * phase; the dip guard handles phase gating). No-op (after clearing any
    * previous timers) for other step types or unusable probe configs.
    */
   private armProbe(step: StepDCC | StepDCP | StepCCV | StepWait): void {
     this.clearProbeTimers();
-    if (step.type !== 'd-cc') return;
+    if (step.type !== 'd-cc' && step.type !== 'c-cv') return;
+    if (!step.probe) return;
     const setpointA = this.resolveCurrentA(step);
     const probe = sanitizeProbe(step.probe, setpointA);
     if (!probe) return;
 
     this.probeTimer = setInterval(() => void this.fireProbe(step, probe, setpointA), probe.periodS * 1000);
     logger.info(
-      `IR probe armed: ${setpointA}A → ${probe.lowA}A for ${probe.holdS}s every ${Math.round(probe.periodS / 60)}min`
+      `IR probe armed (${step.type}): ${setpointA}A → ${probe.lowA}A for ${probe.holdS}s every ${Math.round(probe.periodS / 60)}min`
     );
   }
 
@@ -848,30 +853,47 @@ export class CycleRunner {
   }
 
   /**
-   * True only while it's safe to send a d-cc adjust (0x07). Adjust is only
-   * characterized while the device is actively in d-cc (EB Tester gates its
-   * Adjust button the same way); its effect from idle/charging states is
-   * unknown, so both the dip and the restore re-check right before sending —
+   * True only while it's safe to send a 0x07 adjust for this step: the
+   * cycle is mid-step and the device is in the step's own running mode.
+   * Adjust from any other state is uncharacterized on real hardware, and
    * the device can hit its cutoff (or the user can stop it) at any moment,
-   * including mid-dip.
+   * including mid-dip — so both the dip and the restore re-check this
+   * right before sending.
    */
-  private canTwiddle(): boolean {
+  private canAdjust(step: StepDCC | StepCCV): boolean {
     return (
       this.status === 'running' &&
       !this.advancePending &&
-      this.session.getMode() === 'd-cc' &&
+      this.session.getMode() === step.type &&
       this.session.getPendingCommand() === null
     );
   }
 
+  /** Send the mode-appropriate 0x07 adjust frame with a new current */
+  private async sendAdjust(step: StepDCC | StepCCV, currentA: number): Promise<void> {
+    if (step.type === 'd-cc') {
+      await this.session.adjustDCC(currentA, step.cutoffV, step.maxTimeMin ?? 0);
+    } else {
+      await this.session.adjustCCV(currentA, step.targetV, step.cutoffCurrentA, step.maxTimeMin ?? 0);
+    }
+  }
+
   /** One probe cycle: dip to lowA, hold, restore the step's setpoint. */
-  private async fireProbe(step: StepDCC, probe: IrProbeConfig, setpointA: number): Promise<void> {
+  private async fireProbe(step: StepDCC | StepCCV, probe: IrProbeConfig, setpointA: number): Promise<void> {
     if (this.probeRestoreTimer) return; // previous dip still in flight
-    if (!this.canTwiddle()) return;
+    if (!this.canAdjust(step)) return;
+
+    const reading = this.session.getReading();
+    // Charge probing is only meaningful during the CC phase — once the CV
+    // taper owns the current (state 0x16), a commanded ΔI is undefined.
+    if (step.type === 'c-cv' && reading.stateByte !== RxState.EBC_CCV_RUN) return;
+    // The dip must produce a step the estimator accepts from the ACTUAL
+    // current, which can sit below the setpoint (late CC phase, backoff)
+    if (reading.current - probe.lowA < MIN_STEP_A) return;
 
     try {
-      await this.session.adjustDCC(probe.lowA, step.cutoffV, step.maxTimeMin ?? 0);
-      logger.info(`IR probe: dip ${setpointA}A → ${probe.lowA}A (${probe.holdS}s)`);
+      await this.sendAdjust(step, probe.lowA);
+      logger.info(`IR probe: dip ${reading.current.toFixed(1)}A → ${probe.lowA}A (${probe.holdS}s)`);
     } catch (e) {
       logger.error('IR probe dip failed:', e);
       return;
@@ -886,18 +908,27 @@ export class CycleRunner {
    * (observed live 2026-07-16: dips that stayed stuck at lowA until the
    * next probe period) — without the retry the run crawls at reduced
    * current for up to a full probe period.
+   *
+   * For c-cv this restore intentionally fires even if the charger slipped
+   * into the CV phase mid-dip: the dip lowered the current LIMIT, and
+   * leaving it at lowA would cap the entire CV tail.
    */
-  private async restoreProbe(step: StepDCC, probe: IrProbeConfig, setpointA: number, attempt: number): Promise<void> {
+  private async restoreProbe(
+    step: StepDCC | StepCCV,
+    probe: IrProbeConfig,
+    setpointA: number,
+    attempt: number
+  ): Promise<void> {
     this.probeRestoreTimer = null;
-    if (!this.canTwiddle()) {
+    if (!this.canAdjust(step)) {
       // Step ended mid-dip (cutoff/stop) — the next step starts fresh via
-      // startDCC, so there is nothing to restore.
+      // its own start command, so there is nothing to restore.
       logger.info('IR probe: step ended during dip — skipping restore');
       return;
     }
 
     try {
-      await this.session.adjustDCC(setpointA, step.cutoffV, step.maxTimeMin ?? 0);
+      await this.sendAdjust(step, setpointA);
       logger.info(`IR probe: restore ${probe.lowA}A → ${setpointA}A${attempt > 1 ? ` (attempt ${attempt})` : ''}`);
     } catch (e) {
       logger.error('IR probe restore send failed:', e);
@@ -911,13 +942,15 @@ export class CycleRunner {
     // Verify a couple of readings later; reuse probeRestoreTimer so
     // clearProbeTimers() cancels the pending check and fireProbe won't
     // overlap a verification in flight. Short-hold configs (tests) verify
-    // proportionally sooner.
+    // proportionally sooner. "Still stuck at the dip level" is the retry
+    // signal — a c-cv current tapering below the setpoint is normal and
+    // must not trigger resends.
     const verifyMs = Math.min(4000, probe.holdS * 1000);
     this.probeRestoreTimer = setTimeout(() => {
       this.probeRestoreTimer = null;
-      if (!this.canTwiddle()) return;
+      if (!this.canAdjust(step)) return;
       const currentA = this.session.getReading().current;
-      if (Math.abs(currentA - setpointA) <= Math.max(0.5, setpointA * 0.1)) return; // took
+      if (Math.abs(currentA - probe.lowA) > Math.max(0.5, probe.lowA * 0.1)) return; // moved off the dip — took
       logger.warn(
         `IR probe: restore didn't take (I=${currentA.toFixed(1)}A, want ${setpointA}A) — retrying (${attempt + 1}/${PROBE_RESTORE_MAX_ATTEMPTS})`
       );

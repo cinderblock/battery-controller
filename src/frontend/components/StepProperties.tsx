@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useRef } from 'react';
-import type { SequenceStep, SequenceVariable, StepPath } from '../lib/sequence-types.ts';
+import type { SequenceStep, SequenceVariable, StepCCV, StepDCC, StepPath } from '../lib/sequence-types.ts';
 import {
   defaultProbe,
   estimateDurationH,
@@ -196,6 +196,71 @@ function TimeRow({ label, minutes, onChange }: { label: string; minutes: number;
 }
 
 // ── C-rate toggle ─────────────���────────────────────────────────────
+
+/** IR probe toggle + fields, shared by d-cc and c-cv steps. */
+function ProbeControls({
+  step,
+  path,
+  capacityAh,
+  onUpdate,
+  note,
+}: {
+  step: StepDCC | StepCCV;
+  path: StepPath;
+  capacityAh: number;
+  onUpdate: (path: StepPath, step: SequenceStep) => void;
+  /** Extra caveat appended to the toggle label (e.g. CC-phase-only for charge) */
+  note?: string;
+}) {
+  return (
+    <>
+      <label className="sp-exclude">
+        <input
+          type="checkbox"
+          checked={!!step.probe}
+          onChange={e => onUpdate(path, { ...step, probe: e.target.checked ? defaultProbe() : undefined })}
+        />
+        <span>IR probe: periodically dip the current to measure internal resistance{note ? ` — ${note}` : ''}</span>
+      </label>
+      {step.probe && (
+        <>
+          <ParamRow
+            label="Probe every"
+            value={step.probe.periodS / 60}
+            unit="min"
+            step={1}
+            min={1}
+            max={120}
+            onChange={v => onUpdate(path, { ...step, probe: { ...step.probe!, periodS: v * 60 } })}
+          />
+          <ParamRow
+            label="Dip to"
+            value={step.probe.lowA}
+            unit="A"
+            step={1}
+            min={1}
+            max={40}
+            onChange={v => onUpdate(path, { ...step, probe: { ...step.probe!, lowA: v } })}
+          />
+          <ParamRow
+            label="Hold"
+            value={step.probe.holdS}
+            unit="s"
+            step={1}
+            min={6}
+            max={30}
+            onChange={v => onUpdate(path, { ...step, probe: { ...step.probe!, holdS: v } })}
+          />
+          {resolveCurrentA(step, capacityAh) - step.probe.lowA < 5 && (
+            <div className="sp-hint sp-hint-warn">
+              Needs a ≥5 A drop from the step current — probe will not run at these settings
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+}
 
 /**
  * Ah ceiling implied by the step's time limit (amps × hours) — makes a
@@ -388,50 +453,7 @@ export function StepProperties({
                 onChange={v => onUpdate(path, { ...step, backoff: { minA: v } })}
               />
             )}
-            <label className="sp-exclude">
-              <input
-                type="checkbox"
-                checked={!!step.probe}
-                onChange={e => onUpdate(path, { ...step, probe: e.target.checked ? defaultProbe() : undefined })}
-              />
-              <span>IR probe: periodically dip the current to measure internal resistance</span>
-            </label>
-            {step.probe && (
-              <>
-                <ParamRow
-                  label="Probe every"
-                  value={step.probe.periodS / 60}
-                  unit="min"
-                  step={1}
-                  min={1}
-                  max={120}
-                  onChange={v => onUpdate(path, { ...step, probe: { ...step.probe!, periodS: v * 60 } })}
-                />
-                <ParamRow
-                  label="Dip to"
-                  value={step.probe.lowA}
-                  unit="A"
-                  step={1}
-                  min={1}
-                  max={40}
-                  onChange={v => onUpdate(path, { ...step, probe: { ...step.probe!, lowA: v } })}
-                />
-                <ParamRow
-                  label="Hold"
-                  value={step.probe.holdS}
-                  unit="s"
-                  step={1}
-                  min={6}
-                  max={30}
-                  onChange={v => onUpdate(path, { ...step, probe: { ...step.probe!, holdS: v } })}
-                />
-                {resolveCurrentA(step, capacityAh) - step.probe.lowA < 5 && (
-                  <div className="sp-hint sp-hint-warn">
-                    Needs a ≥5 A drop from the step current — probe will not run at these settings
-                  </div>
-                )}
-              </>
-            )}
+            <ProbeControls step={step} path={path} capacityAh={capacityAh} onUpdate={onUpdate} />
           </>
         )}
 
@@ -520,6 +542,7 @@ export function StepProperties({
               amps={fieldValue('currentA', step.currentA) * (step.useCRate ? capacityAh : 1)}
               maxTimeMin={step.maxTimeMin}
             />
+            <ProbeControls step={step} path={path} capacityAh={capacityAh} onUpdate={onUpdate} note="CC phase only" />
           </>
         )}
 

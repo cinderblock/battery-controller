@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { CycleRunner, type StepDCC, sanitizeProbe } from './cycle-runner.ts';
+import { CycleRunner, type StepCCV, type StepDCC, sanitizeProbe } from './cycle-runner.ts';
 import type { DeviceSession } from './device-session.ts';
 import type { TestRecorder } from './test-recorder.ts';
 
@@ -51,8 +51,12 @@ describe('sanitizeProbe', () => {
 
 interface StubSession {
   mode: string;
+  /** Device state byte (0x0a d-cc run, 0x0c c-cv CC phase, 0x16 c-cv CV phase) */
+  stateByte: number;
   /** adjustDCC calls observed (the probe's dips and restores) */
   continues: { currentA: number; cutoffV: number; maxTimeMin: number }[];
+  /** adjustCCV calls observed */
+  ccvAdjusts: { currentA: number; targetV: number; cutoffCurrentA: number }[];
   /** Device-reported current — adjusts apply here unless dropped */
   deviceCurrent: number;
   /** Number of upcoming adjust frames the "device" silently drops */
@@ -63,22 +67,31 @@ interface StubSession {
 function stubSession(initialMode = 'd-cc'): StubSession {
   const stub: StubSession = {
     mode: initialMode,
+    stateByte: initialMode === 'c-cv' ? 0x0c : 0x0a,
     continues: [],
+    ccvAdjusts: [],
     deviceCurrent: 40,
     dropNext: 0,
     session: null as unknown as DeviceSession,
   };
+  const apply = (currentA: number) => {
+    if (stub.dropNext > 0) {
+      stub.dropNext--;
+    } else {
+      stub.deviceCurrent = currentA;
+    }
+  };
   stub.session = {
     getMode: () => stub.mode,
     getPendingCommand: () => null,
-    getReading: () => ({ current: stub.deviceCurrent }),
+    getReading: () => ({ current: stub.deviceCurrent, stateByte: stub.stateByte }),
     adjustDCC: async (currentA: number, cutoffV: number, maxTimeMin: number) => {
       stub.continues.push({ currentA, cutoffV, maxTimeMin });
-      if (stub.dropNext > 0) {
-        stub.dropNext--;
-      } else {
-        stub.deviceCurrent = currentA;
-      }
+      apply(currentA);
+    },
+    adjustCCV: async (currentA: number, targetV: number, cutoffCurrentA: number) => {
+      stub.ccvAdjusts.push({ currentA, targetV, cutoffCurrentA });
+      apply(currentA);
     },
   } as unknown as DeviceSession;
   return stub;
@@ -181,5 +194,63 @@ describe('fireProbe', () => {
     // dip + exactly PROBE_RESTORE_MAX_ATTEMPTS restore attempts
     expect(stub.continues.map(c => c.currentA)).toEqual([10, 40, 40, 40]);
     expect(stub.deviceCurrent).toBe(10); // stuck — next probe period recovers
+  });
+});
+
+// ── Charge (c-cv) probing — CC phase only ───────────────────────────
+
+const PROBE_STEP_CCV: StepCCV = { type: 'c-cv', currentA: 20, targetV: 3.7, cutoffCurrentA: 2, maxTimeMin: 600 };
+const FAST_PROBE_CCV = { periodS: 60, lowA: 5, holdS: 0.02 };
+
+describe('fireProbe on c-cv', () => {
+  test('dips and restores via adjustCCV during the CC phase', async () => {
+    const stub = stubSession('c-cv');
+    stub.deviceCurrent = 20;
+    const runner = probeRunner(stub);
+
+    await (runner as any).fireProbe(PROBE_STEP_CCV, FAST_PROBE_CCV, 20);
+    await settle(60);
+
+    expect(stub.ccvAdjusts).toEqual([
+      { currentA: 5, targetV: 3.7, cutoffCurrentA: 2 },
+      { currentA: 20, targetV: 3.7, cutoffCurrentA: 2 },
+    ]);
+    expect(stub.continues).toEqual([]); // never the d-cc frame layout
+  });
+
+  test('never dips during the CV phase (device owns the current)', async () => {
+    const stub = stubSession('c-cv');
+    stub.deviceCurrent = 20;
+    stub.stateByte = 0x16; // CV / phase 2
+    const runner = probeRunner(stub);
+
+    await (runner as any).fireProbe(PROBE_STEP_CCV, FAST_PROBE_CCV, 20);
+    await settle(60);
+
+    expect(stub.ccvAdjusts).toEqual([]);
+  });
+
+  test('never dips when the current has tapered too close to lowA', async () => {
+    const stub = stubSession('c-cv');
+    stub.deviceCurrent = 7; // < lowA + 5A estimator threshold
+    const runner = probeRunner(stub);
+
+    await (runner as any).fireProbe(PROBE_STEP_CCV, FAST_PROBE_CCV, 20);
+    await settle(60);
+
+    expect(stub.ccvAdjusts).toEqual([]);
+  });
+
+  test('restore still fires when the charger slips into CV mid-dip', async () => {
+    // Leaving the dip's current LIMIT in place would cap the whole CV tail
+    const stub = stubSession('c-cv');
+    stub.deviceCurrent = 20;
+    const runner = probeRunner(stub);
+
+    await (runner as any).fireProbe(PROBE_STEP_CCV, FAST_PROBE_CCV, 20);
+    stub.stateByte = 0x16; // phase flips during the hold
+    await settle(60);
+
+    expect(stub.ccvAdjusts.map(c => c.currentA)).toEqual([5, 20]);
   });
 });

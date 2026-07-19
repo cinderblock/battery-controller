@@ -640,6 +640,23 @@ export class DeviceSession {
   }
 
   /**
+   * Adjust C-CV setpoints MID-CHARGE via CMD 0x07 with the C-CV payload
+   * layout. Confirmed on real hardware (2026-07-16, CC phase): current
+   * follows within ~1 frame, capacity accumulator keeps counting. Like the
+   * C-CV frames, there is no time field — the limit stays host-enforced.
+   * Only meaningful while the charger is in its CC phase (state 0x0C);
+   * during CV regulation the device owns the current.
+   */
+  async adjustCCV(currentA: number, targetV: number, cutoffCurrentA: number, maxTimeMin: number = 0): Promise<void> {
+    const [iHi, iLo] = encodeBase240(currentA, EbcDivisors.current);
+    const [vHi, vLo] = encodeBase240(targetV, EbcDivisors.setpointVoltage);
+    const [cHi, cLo] = encodeBase240(cutoffCurrentA, EbcDivisors.cutoffCurrent);
+    this.armTimeLimit(maxTimeMin, false);
+    await this.sendPayload([0x07, iHi, iLo, vHi, vLo, cHi, cLo]);
+    logger.info(`Sent C-CV adjust (0x07): ${currentA}A, target ${targetV}V, cutoff ${cutoffCurrentA}A`);
+  }
+
+  /**
    * Start D-CP discharge (constant power)
    * @param powerW   Power in watts (raw, no divisor)
    * @param cutoffV  Under-voltage cutoff in volts

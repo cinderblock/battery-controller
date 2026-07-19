@@ -80,6 +80,8 @@ export interface StepCCV {
   excludeFromCount?: boolean;
   /** Fields bound to sequence variables (field name → variable key) */
   bind?: FieldBindings;
+  /** Periodic IR probe — fires only during the CC phase (the CV taper owns the current) */
+  probe?: IrProbeConfig;
 }
 
 export interface StepWait {
