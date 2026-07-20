@@ -68,24 +68,25 @@ spans charge+discharge. That's fine for ranking; note it in the UI ("discharge r
 
 ## Plan / steps (phased)
 
-### Phase 0 — Scaffold ← current
+### Phase 0 — Scaffold ✓ (commit 527bc09)
 
-- [ ] `src/frontend/views/HealthView.tsx` — new view; back link + nav; fetch
-      `/api/capacity/all` and `/api/cell-groups`. Empty-state when no data.
-- [ ] `App.tsx`: route `/health` → `HealthView`.
-- [ ] ChartView bottom bar: `<a href="/health" className="btn btn-link">Health</a>`.
-- [ ] `lib/health-format.ts`: lift `healthColor`, `trendArrow`, `formatIr`, `formatAh`;
-      refactor LegendPanel to import them (no behavior change).
-- [ ] Styles: `.health-*` section in `main.css`.
+- [x] `src/frontend/views/HealthView.tsx` — new view; back link + nav; fetch
+      `/api/capacity/all` and `/api/cells`. Empty-state when no data.
+- [x] `App.tsx`: route `/health` → `HealthView`.
+- [x] ChartView bottom bar: `<a href="/health" className="btn btn-link">Health</a>`.
+- [x] `lib/health-format.ts`: lift `healthColor`, `trendArrow`, `formatIr`, `formatAh`,
+      `formatPct`; refactored LegendPanel to import them (no behavior change).
+- [x] Styles: `.health-*` section in `main.css`.
 
-### Phase 1 — Rank & cull table
+### Phase 1 — Rank & cull table (rank done; cull pending open Q1)
 
-- [ ] Sortable cell table: name, latest Ah, health%, latest IR, median IR, trend,
-      #runs, capacity@rate buckets (e.g. ~10 A / ~20 A / ~40 A columns from `runs`).
-      Sort via chip buttons (capacity / health / IR / name), asc/desc toggle.
-- [ ] Health bar per row (reuse fleet-cell-bar visual).
+- [x] Sortable cell table: name, latest Ah, health%, latest IR, trend, #runs, and
+      capacity@rate chips (median Ah per ~5 A discharge bucket). Sort chips (capacity /
+      health / resistance / trend / name) with asc/desc toggle; default capacity high→low.
+- [x] Health bar per row.
+- [x] Untested cells listed in a separate section (from `/api/cells`).
 - [ ] Retire/cull affordance: mark a cell retired (soft flag), row dims + moves to a
-      "Retired" section; unretire. (Backend flag — open question 1.)
+      "Retired" section; unretire. (Backend flag — **open question 1**.)
 - [ ] Row → link/expand to that cell's detail (Phase 4).
 
 ### Phase 2 — Pack matching
@@ -108,7 +109,7 @@ spans charge+discharge. That's fine for ranking; note it in the UI ("discharge r
 
 - [ ] Per-cell expand/panel: capacity-over-cycles + IR-over-cycles mini charts (sparkline
       or small uPlot), the run list, trend numbers, notes (editable via `PATCH
-    /api/cells/:id`), retire toggle.
+  /api/cells/:id`), retire toggle.
 
 ## Open questions for the user
 
@@ -132,3 +133,8 @@ spans charge+discharge. That's fine for ranking; note it in the UI ("discharge r
 - 2026-07-20: Surveyed frontend (router, views, chart stack, styling) and backend
   (SQLite schema, capacity-estimation stats, endpoints). Confirmed the analytics backend
   already exists. User chose: all four capabilities, new top-level view. Wrote this plan.
+- 2026-07-20: Shipped Phase 0 + the rank half of Phase 1 (commit 527bc09). Builds,
+  bundles, lints/typechecks clean (my files). NOT YET rendered against real data — no
+  local dev DB (lives on coulomb); needs a live check on the Pi or a seeded DB. Next:
+  resolve open Q1 (cull model) + Q2 (charge-rate wording), then Phase 2 best-match
+  suggester → Phase 3 curve overlay → Phase 4 degradation detail.
