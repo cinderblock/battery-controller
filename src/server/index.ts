@@ -671,7 +671,7 @@ async function main() {
     }
     if (cellByIdMatch && method === 'PATCH') {
       const cellId = parseInt(cellByIdMatch[1], 10);
-      const body = await parseBody<{ label?: string | null; notes?: string | null }>(req);
+      const body = await parseBody<{ label?: string | null; notes?: string | null; retired?: boolean }>(req);
       const cell = updateCell(cellId, body ?? {});
       if (!cell) return errorResponse('Cell not found', 404);
       return jsonResponse(cell);

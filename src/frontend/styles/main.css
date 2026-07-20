@@ -3392,18 +3392,56 @@ body {
   color: var(--error);
 }
 
-.health-sort {
+.health-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 16px;
+}
+
+.health-sort,
+.health-pack {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 10px 16px;
 }
 
 .health-sort-label {
   font-size: 12px;
   color: var(--text-dim);
   margin-right: 2px;
+}
+
+.health-step {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.health-step:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.health-pack-n {
+  min-width: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.health-pack-go {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .health-table {
@@ -3415,18 +3453,22 @@ body {
 
 .health-row {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px 16px;
+  flex-direction: column;
   background: var(--bg);
-  cursor: pointer;
 }
 
 .health-row-selected {
   background: var(--surface);
 }
 
-.health-row > input {
+.health-row-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+}
+
+.health-row-head > input {
   margin-top: 3px;
   width: 18px;
   height: 18px;
@@ -3436,13 +3478,27 @@ body {
 .health-row-body {
   flex: 1;
   min-width: 0;
-}
-
-.health-row-top {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
   gap: 10px;
+  border: none;
+  background: none;
+  color: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.health-row-caret {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin-right: 2px;
+}
+
+.health-row-sub {
+  padding: 0 16px 12px 44px;
 }
 
 .health-row-name {
@@ -3563,6 +3619,11 @@ body {
   margin-bottom: 6px;
 }
 
+.health-match-compare {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .health-match-clear {
   margin-left: auto;
   background: none;
@@ -3593,4 +3654,173 @@ body {
   font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+/* Per-cell degradation detail */
+.health-detail {
+  padding: 0 16px 14px 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.health-detail-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.health-detail-stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.health-detail-stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+
+.health-detail-stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.health-sparkline {
+  width: 220px;
+  max-width: 100%;
+  height: 40px;
+}
+
+.health-detail-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.health-detail-run {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.health-detail-run-idx {
+  min-width: 28px;
+}
+
+.health-detail-run-cap {
+  color: var(--text);
+  margin-left: auto;
+}
+
+.health-detail-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.health-detail-notes textarea {
+  width: 100%;
+  min-height: 48px;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.health-detail-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Retired section */
+.health-retired {
+  padding: 16px;
+  opacity: 0.6;
+}
+
+.health-retired h4 {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.health-retired-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.health-retired-name {
+  font-weight: 600;
+}
+
+.health-retired-cap,
+.health-retired-ir {
+  color: var(--text-dim);
+}
+
+.health-retired-row .btn-link {
+  margin-left: auto;
+}
+
+/* Compare-curves panel (inside the docked match bar) */
+.health-compare {
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.health-compare-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.health-compare-head .btn-link {
+  margin-left: auto;
+}
+
+.health-compare-msg {
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 8px 0;
+}
+
+.health-compare-chart {
+  height: 280px;
+}
+
+.health-compare-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.health-compare-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.health-compare-swatch {
+  width: 12px;
+  height: 3px;
+  border-radius: 2px;
 }

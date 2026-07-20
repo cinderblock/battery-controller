@@ -262,6 +262,8 @@ export interface Cell {
   cell_group_id: number | null;
   created_at: string;
   updated_at: string;
+  /** Soft-retire timestamp (ISO-8601); null = active. Retiring keeps run history. */
+  retired_at: string | null;
   /** Most recent DC internal-resistance estimate (mΩ), null until a run yields one */
   latest_ir_mohm?: number | null;
 }

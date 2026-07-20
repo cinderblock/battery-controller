@@ -259,6 +259,14 @@ function runMigrations(db: Database): void {
         ALTER TABLE test_runs ADD COLUMN heat_mwh REAL;
       `,
     },
+    {
+      version: 8,
+      sql: `
+        -- Soft-retire a cell that isn't worth keeping in a pack. NULL = active;
+        -- an ISO-8601 timestamp = retired. Retiring keeps all run history.
+        ALTER TABLE cells ADD COLUMN retired_at TEXT;
+      `,
+    },
   ];
 
   for (const migration of migrations) {
@@ -282,6 +290,8 @@ export interface Cell {
   cell_group_id: number | null;
   created_at: string;
   updated_at: string;
+  /** Soft-retire timestamp (ISO-8601); null = active cell. Retiring keeps history. */
+  retired_at: string | null;
   /** Most recent run's IR estimate (mΩ), when the cell has one — see getCells() */
   latest_ir_mohm?: number | null;
 }
@@ -359,7 +369,10 @@ export function getCellByBarcode(barcode: string): Cell | null {
   return getDb().query<Cell, [string]>('SELECT * FROM cells WHERE barcode = ?').get(barcode) ?? null;
 }
 
-export function updateCell(id: number, updates: { label?: string | null; notes?: string | null }): Cell | null {
+export function updateCell(
+  id: number,
+  updates: { label?: string | null; notes?: string | null; retired?: boolean }
+): Cell | null {
   const db = getDb();
   const sets: string[] = [];
   const vals: (string | number | null)[] = [];
@@ -371,6 +384,10 @@ export function updateCell(id: number, updates: { label?: string | null; notes?:
   if (updates.notes !== undefined) {
     sets.push('notes = ?');
     vals.push(updates.notes);
+  }
+  if (updates.retired !== undefined) {
+    // Set a timestamp when retiring, clear it when un-retiring.
+    sets.push(`retired_at = ${updates.retired ? SQL_NOW_UTC : 'NULL'}`);
   }
   if (sets.length === 0) return getCellById(id);
 
