@@ -87,6 +87,21 @@ interface RateCapacity {
   runs: number;
 }
 
+function shortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+/**
+ * First→last tested date range from a run list (runs are date-ascending).
+ * Collapses to a single date when all runs land on the same day.
+ */
+function testedRange(runs: RunCapacitySummary[]): string | null {
+  if (runs.length === 0) return null;
+  const first = shortDate(runs[0].date);
+  const last = shortDate(runs[runs.length - 1].date);
+  return first === last ? first : `${first} – ${last}`;
+}
+
 /** Median capacity at each ~rate, highest rate first. */
 function capacityByRate(runs: RunCapacitySummary[]): RateCapacity[] {
   const byRate = new Map<number, number[]>();
@@ -428,6 +443,7 @@ function CellRow({
   onSaveNotes: (notes: string) => Promise<void>;
 }) {
   const rates = capacityByRate(cell.runs);
+  const dates = testedRange(cell.runs);
   const barPct = cell.healthPct != null ? Math.min(100, cell.healthPct) : 0;
   const hasBar = cell.healthPct != null && cell.nominalAh > 0;
   const hasSub = rates.length > 0 || hasBar;
@@ -447,7 +463,9 @@ function CellRow({
           )}
           <span className="health-row-ir">{formatIr(cell.latestIrMohm)}</span>
           {cell.trendAhPerCycle != null && <span className="health-row-trend">{trendArrow(cell.trendAhPerCycle)}</span>}
-          <span className="health-row-runs">{cell.runCount} runs</span>
+          <span className="health-row-runs">
+            {cell.runCount} runs{dates ? ` · ${dates}` : ''}
+          </span>
         </button>
       </div>
 
