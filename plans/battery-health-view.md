@@ -78,47 +78,47 @@ spans charge+discharge. That's fine for ranking; note it in the UI ("discharge r
       `formatPct`; refactored LegendPanel to import them (no behavior change).
 - [x] Styles: `.health-*` section in `main.css`.
 
-### Phase 1 — Rank & cull table (rank done; cull pending open Q1)
+### Phase 1 — Rank & cull table ✓ (commit 23df117)
 
 - [x] Sortable cell table: name, latest Ah, health%, latest IR, trend, #runs, and
       capacity@rate chips (median Ah per ~5 A discharge bucket). Sort chips (capacity /
       health / resistance / trend / name) with asc/desc toggle; default capacity high→low.
 - [x] Health bar per row.
 - [x] Untested cells listed in a separate section (from `/api/cells`).
-- [ ] Retire/cull affordance: mark a cell retired (soft flag), row dims + moves to a
-      "Retired" section; unretire. (Backend flag — **open question 1**.)
-- [ ] Row → link/expand to that cell's detail (Phase 4).
+- [x] Retire/cull: soft-retire flag; retired cells drop to a dimmed "Retired" section with
+      a Restore button. Backend = migration v8 + PATCH `retired`.
+- [x] Row expands to its detail (Phase 4).
 
-### Phase 2 — Pack matching
+### Phase 2 — Pack matching ✓ (commit 23df117)
 
-- [ ] Multi-select cells (checkbox per row). Selected-set panel shows: count, capacity
-      spread (min/max/Δ/σ, and % spread), IR spread, mean capacity, total pack Ah (series
-      pack = weakest cell × N; note that).
-- [ ] "Best match" helper: given a target pack size N, suggest the N cells with the
-      tightest capacity cluster (simple sliding window over capacity-sorted cells).
-- [ ] Match-quality indicator (green/amber/red by capacity spread threshold).
+- [x] Multi-select cells (checkbox per row). Docked match bar shows: count, capacity
+      spread (min/max/Δ + % spread, color-coded), IR range, mean capacity, series pack Ah
+      (weakest × N).
+- [x] "Best match" helper: pack-size stepper + "Pick tightest" → sliding window over
+      capacity-sorted active cells selects the tightest cluster.
+- [x] Match-quality color (green <2% / amber <5% / red spread).
 
-### Phase 3 — Compare curves
+### Phase 3 — Compare curves ✓ (commit 23df117)
 
-- [ ] For selected cells, fetch their latest (or a chosen) discharge run and overlay.
-- [ ] Reuse `CapacityChart` (V vs SoC%) as primary — best for shape/sag comparison —
-      with a toggle to time-domain `Chart`. Color by cell.
-- [ ] Lazy-load run data only for selected cells (per-cell fetch, small pool).
+- [x] "Compare curves" button in the match bar; fetches each selected cell's latest
+      discharge run (`/api/runs/:id` + `?compact=1`), converts to capacity domain, overlays
+      voltage-only in a `CapacityChart` with one distinct color per cell + a legend.
+- [ ] Future: time-domain toggle; pick which run per cell (currently always the latest).
 
-### Phase 4 — Degradation detail
+### Phase 4 — Degradation detail ✓ (commit 23df117)
 
-- [ ] Per-cell expand/panel: capacity-over-cycles + IR-over-cycles mini charts (sparkline
-      or small uPlot), the run list, trend numbers, notes (editable via `PATCH
-  /api/cells/:id`), retire toggle.
+- [x] Per-cell expand: median/range/trend-per-cycle/median-IR stats, a capacity-over-cycles
+      SVG sparkline, the run list (date / rate / capacity), an editable notes field
+      (`PATCH /api/cells/:id`), and a Retire button.
+- [ ] Future: IR-over-cycles trace (needs per-run IR history endpoint or reuse ir-samples).
 
-## Open questions for the user
+## Resolved questions
 
-1. **Culling model.** Recommend a soft `retired_at`/`status` flag on `cells` (migration
-   v8) so retiring keeps history and just hides/greys the cell — vs. reusing the existing
-   hard delete. Recommend soft flag. (Proceeding with soft flag unless told otherwise.)
-2. **"Charge rate" wording.** The metric we have per run is the **discharge** rate
-   (`setpoint_current_a` on d-cc runs). Assuming "capacity @ different charge rates" means
-   discharge C-rates (10/20/40 A). Confirm if charge-rate capacity is also wanted.
+1. **Culling model** → soft-retire flag (user chose). Implemented as `cells.retired_at`
+   (migration v8) + PATCH `retired`. History preserved.
+2. **"Charge rate" wording** → treated as **discharge** C-rate (`setpoint_current_a` on
+   d-cc runs); rate chips bucket by ~5 A. Charge-rate capacity not built (not the metric we
+   store per completed-capacity run). Revisit if charge-rate breakdown is wanted.
 
 ## Things not to do
 
@@ -133,8 +133,10 @@ spans charge+discharge. That's fine for ranking; note it in the UI ("discharge r
 - 2026-07-20: Surveyed frontend (router, views, chart stack, styling) and backend
   (SQLite schema, capacity-estimation stats, endpoints). Confirmed the analytics backend
   already exists. User chose: all four capabilities, new top-level view. Wrote this plan.
-- 2026-07-20: Shipped Phase 0 + the rank half of Phase 1 (commit 527bc09). Builds,
-  bundles, lints/typechecks clean (my files). NOT YET rendered against real data — no
-  local dev DB (lives on coulomb); needs a live check on the Pi or a seeded DB. Next:
-  resolve open Q1 (cull model) + Q2 (charge-rate wording), then Phase 2 best-match
-  suggester → Phase 3 curve overlay → Phase 4 degradation detail.
+- 2026-07-20: Shipped all four phases (commits 527bc09, 23df117). User chose soft-retire
+  and "keep building". Backend path verified against a temp DB (migration v1→v8 applies,
+  `getAllCellStats` shape correct, retire round-trip sets/clears `retired_at`). Builds,
+  bundles, lints/typechecks clean (my files). STILL NOT rendered against live data — no
+  local dev DB (lives on coulomb). To verify: run against a copy of the live DB or deploy
+  to the Pi (respect the "no restart during a cycle" rule). Follow-ups noted per phase
+  (time-domain compare toggle, per-run selection, IR-over-cycles trace).
