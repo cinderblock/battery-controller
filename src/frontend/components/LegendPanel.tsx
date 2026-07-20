@@ -10,6 +10,7 @@
 import type { CellCapacityStats, GroupFleetSummary } from '../api-client.ts';
 import type { ChartRun, MetricKey } from '../lib/chart-data.ts';
 import { formatElapsed, getRunColor } from '../lib/chart-data.ts';
+import { healthColor, trendArrow } from '../lib/health-format.ts';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -35,21 +36,6 @@ const ALL_METRICS: { key: MetricKey; label: string; color: string }[] = [
   { key: 'capacity', label: 'Capacity', color: '#ba68c8' },
   { key: 'temperature', label: 'Temperature', color: '#f44336' },
 ];
-
-// ── Helpers ────────────────────────────────────────────────────────
-
-function healthColor(pct: number): string {
-  if (pct >= 90) return '#4caf50';
-  if (pct >= 75) return '#ff9800';
-  return '#f44336';
-}
-
-function trendArrow(trend: number | null): string {
-  if (trend === null) return '';
-  if (trend > 0.1) return '\u2197'; // ↗ improving
-  if (trend < -0.1) return '\u2198'; // ↘ degrading
-  return '\u2192'; // → stable
-}
 
 // ── Fleet summary subcomponent ─────────────────────────────────────
 

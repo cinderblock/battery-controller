@@ -901,6 +901,10 @@ export function ChartView() {
             </button>
           )}
 
+          <a href="/health" className="btn btn-link">
+            Health
+          </a>
+
           <a href="/sequences" className="btn btn-link">
             Sequences
           </a>
