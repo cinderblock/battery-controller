@@ -1235,7 +1235,8 @@ async function main() {
 
     routes: {
       '/': homepage,
-      '/sequences': homepage, // SPA: same HTML, client-side routing
+      '/health': homepage, // SPA: same HTML, client-side routing
+      '/sequences': homepage,
       '/temperature': homepage,
     },
 
