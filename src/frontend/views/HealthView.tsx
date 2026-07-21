@@ -25,13 +25,14 @@ import { formatAh, formatIr, formatPct, healthColor, trendArrow } from '../lib/h
 
 // ── Sorting ────────────────────────────────────────────────────────
 
-type SortKey = 'capacity' | 'health' | 'ir' | 'trend' | 'name';
+type SortKey = 'capacity' | 'health' | 'ir' | 'trend' | 'date' | 'name';
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'capacity', label: 'Capacity' },
   { key: 'health', label: 'Health' },
   { key: 'ir', label: 'Resistance' },
   { key: 'trend', label: 'Trend' },
+  { key: 'date', label: 'Date' },
   { key: 'name', label: 'Name' },
 ];
 
@@ -50,6 +51,9 @@ function sortValue(c: CellCapacityStats, key: SortKey): number | string | null {
       return c.latestIrMohm;
     case 'trend':
       return c.trendAhPerCycle;
+    case 'date':
+      // Most-recent tested date (runs are date-ascending); null sorts last.
+      return c.runs.length ? new Date(c.runs[c.runs.length - 1].date).getTime() : null;
     case 'name':
       return cellName(c).toLowerCase();
   }
