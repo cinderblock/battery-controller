@@ -3499,6 +3499,9 @@ body {
 
 .health-row-sub {
   padding: 0 16px 12px 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
 .health-row-name {
@@ -3534,44 +3537,40 @@ body {
   margin-left: auto;
 }
 
-.health-row-rates {
+/* One health bar per discharge rate, so the rate-dependence is visible at a
+   glance and aligns across rows for cross-cell comparison. */
+.health-rate-bar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.health-rate-chip {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 5px;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  align-items: center;
+  gap: 8px;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
-.health-rate-a {
+.health-rate-bar-label {
+  min-width: 34px;
+  text-align: right;
   color: var(--discharge-color);
   font-weight: 600;
 }
 
-.health-rate-ah {
-  color: var(--text-dim);
-}
-
-.health-row-bar {
-  height: 4px;
-  border-radius: 2px;
+.health-rate-bar-track {
+  flex: 1;
+  max-width: 240px;
+  height: 8px;
+  border-radius: 4px;
   background: var(--surface-2);
-  margin-top: 8px;
   overflow: hidden;
 }
 
-.health-row-bar-fill {
+.health-rate-bar-fill {
   height: 100%;
-  border-radius: 2px;
+  border-radius: 4px;
+}
+
+.health-rate-bar-val {
+  color: var(--text-dim);
+  white-space: nowrap;
 }
 
 .health-untested {

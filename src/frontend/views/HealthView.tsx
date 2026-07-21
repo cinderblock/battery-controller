@@ -448,9 +448,6 @@ function CellRow({
 }) {
   const rates = capacityByRate(cell.runs);
   const dates = testedRange(cell.runs);
-  const barPct = cell.healthPct != null ? Math.min(100, cell.healthPct) : 0;
-  const hasBar = cell.healthPct != null && cell.nominalAh > 0;
-  const hasSub = rates.length > 0 || hasBar;
 
   return (
     <div className={`health-row ${selected ? 'health-row-selected' : ''}`}>
@@ -473,27 +470,25 @@ function CellRow({
         </button>
       </div>
 
-      {hasSub && (
+      {rates.length > 0 && (
         <div className="health-row-sub">
-          {rates.length > 0 && (
-            <div className="health-row-rates">
-              {rates.map(r => (
-                <span key={r.rateA} className="health-rate-chip">
-                  <span className="health-rate-a">{r.rateA} A</span>
-                  <span className="health-rate-ah">{r.ah.toFixed(1)} Ah</span>
+          {rates.map(r => {
+            const pct = cell.nominalAh > 0 ? (r.ah / cell.nominalAh) * 100 : 0;
+            return (
+              <div key={r.rateA} className="health-rate-bar">
+                <span className="health-rate-bar-label">{r.rateA} A</span>
+                <div className="health-rate-bar-track">
+                  <div
+                    className="health-rate-bar-fill"
+                    style={{ width: `${Math.min(100, pct)}%`, backgroundColor: healthColor(pct) }}
+                  />
+                </div>
+                <span className="health-rate-bar-val">
+                  {r.ah.toFixed(1)} Ah · {Math.round(pct)}%
                 </span>
-              ))}
-            </div>
-          )}
-
-          {hasBar && cell.healthPct != null && (
-            <div className="health-row-bar">
-              <div
-                className="health-row-bar-fill"
-                style={{ width: `${barPct}%`, backgroundColor: healthColor(cell.healthPct) }}
-              />
-            </div>
-          )}
+              </div>
+            );
+          })}
         </div>
       )}
 
