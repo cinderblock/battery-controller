@@ -1074,6 +1074,7 @@ export class CycleRunner {
       } else {
         // Device is idle, non-wait step — advance to next step
         this.status = 'running';
+        this.advancePending = false; // clear any stale advance flag from crash
         this.execIndex++;
         if (this.execIndex < this.execPlan.length) {
           logger.info(`Cycle resuming from step ${this.execIndex + 1}/${this.execPlan.length}`);
