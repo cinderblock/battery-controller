@@ -336,6 +336,16 @@ export class CycleRunner {
   private probeTimer: Timer | null = null;
   private probeRestoreTimer: Timer | null = null;
 
+  // Step-start confirmation watchdog: verifies the device actually enters the
+  // step's running mode after a start command, and re-sends if it doesn't.
+  // Guards against a lost/ignored start frame silently hanging the whole
+  // sequence (device stays idle, runner waits forever for a completion that
+  // can never come).
+  private startConfirmTimer: Timer | null = null;
+  private startAttempt = 0;
+  private readonly START_CONFIRM_MS = 8_000;
+  private readonly START_MAX_ATTEMPTS = 3;
+
   // Cached per-step metadata (updated as steps complete)
   private stepCapacities: (number | null)[] = [];
   private stepDurations: (number | null)[] = [];
@@ -389,6 +399,7 @@ export class CycleRunner {
     this.unsubSession?.();
     this.clearWaitTimer();
     this.clearProbeTimers();
+    this.clearStartConfirm();
   }
 
   /** Subscribe to cycle state changes */
@@ -512,6 +523,7 @@ export class CycleRunner {
 
     this.clearWaitTimer();
     this.clearProbeTimers();
+    this.clearStartConfirm();
     // Without this, the next manual run inherits this program's cycle
     // context (run #168 was mislabeled start_reason='cycle' this way)
     this.recorder.clearCycleContext();
@@ -564,6 +576,25 @@ export class CycleRunner {
     if (this.status === 'running' && this.session.isRunning()) {
       logger.info(`Cycle step ${this.execIndex + 1} ending early (user request) — sending stop`);
       await this.session.stop('step_ended_early');
+      return;
+    }
+
+    // Stuck or errored: the runner thinks a step is active but the device is
+    // idle (a start command never took, or the cycle errored). Rather than
+    // dead-ending "End Step" with the "no step is running" error the user hit,
+    // let them force-advance to the next step. Guard the brief 2 s settle
+    // window (advancePending) where a natural completion is already advancing.
+    if ((this.status === 'running' || this.status === 'error') && !this.advancePending) {
+      logger.warn(
+        `Cycle step ${this.execIndex + 1}: End Step requested with device idle ` +
+          `(status=${this.status}) — force-advancing to the next step`
+      );
+      this.clearStartConfirm();
+      this.recorder.clearCycleContext();
+      this.execIndex++;
+      this.status = 'running';
+      this.emit();
+      await this.executeCurrentStep();
       return;
     }
 
@@ -641,9 +672,22 @@ export class CycleRunner {
     });
   }
 
+  /**
+   * Handle an unexpected throw from a fire-and-forget executeCurrentStep().
+   * These calls run from timer callbacks (wait completion, resume, backoff),
+   * so an unhandled rejection would silently stall the sequence — surface it
+   * as an error state instead.
+   */
+  private onExecuteError(e: unknown): void {
+    logger.error('Cycle step execution failed unexpectedly:', e);
+    this.status = 'error';
+    this.emit();
+  }
+
   private async executeCurrentStep(cellId: number | null = null): Promise<void> {
-    // Never let a previous step's probe timers fire into this one
+    // Never let a previous step's probe / start-confirm timers fire into this one
     this.clearProbeTimers();
+    this.clearStartConfirm();
 
     if (this.execIndex >= this.execPlan.length) {
       this.completeProgram();
@@ -682,7 +726,7 @@ export class CycleRunner {
         this.execIndex++;
         this.status = 'running';
         this.emit();
-        this.executeCurrentStep(cellId);
+        this.executeCurrentStep(cellId).catch(e => this.onExecuteError(e));
       }, step.durationS * 1000);
       return;
     }
@@ -693,8 +737,28 @@ export class CycleRunner {
 
     logger.info(`Cycle step ${this.execIndex + 1}: ${step.type} (cycle ${cycleNum})`);
 
-    // Max-time enforcement happens inside DeviceSession (host-side watchdog,
-    // restart-safe) — the start commands below just carry the limit through.
+    // A start command the device never acts on (lost/ignored frame, or a
+    // transient serial error on send) must not hang the sequence — the
+    // start-confirm watchdog re-sends if the device never enters the running
+    // mode. So swallow a send error here and let the watchdog drive recovery.
+    this.startAttempt = 0;
+    try {
+      await this.sendStartCommand(step);
+    } catch (e) {
+      logger.error(`Cycle step ${this.execIndex + 1}: start command send failed — confirm watchdog will retry`, e);
+    }
+
+    this.armStartConfirm(step);
+    this.armProbe(step);
+  }
+
+  /**
+   * Send the mode-appropriate start command for a running step, carrying the
+   * step's setpoints into the recorder. Max-time enforcement happens inside
+   * DeviceSession (host-side watchdog, restart-safe) — these frames just carry
+   * the limit through. Split out so the start-confirm watchdog can re-send.
+   */
+  private async sendStartCommand(step: StepDCC | StepDCP | StepCCV): Promise<void> {
     switch (step.type) {
       case 'd-cc': {
         const actualCurrentA = this.resolveCurrentA(step);
@@ -726,8 +790,64 @@ export class CycleRunner {
         break;
       }
     }
+  }
 
-    this.armProbe(step);
+  // ── Step-start confirmation watchdog ──────────────────────────
+
+  /**
+   * Arm a watchdog that verifies the device actually entered the step's
+   * running mode after a start command, re-sending if it didn't. Without this,
+   * a start frame the device never acts on leaves the runner waiting forever
+   * for a completion that can't come — the sequence silently stalls mid-run
+   * (the "stuck on step N, System Idle, End Step does nothing" failure).
+   */
+  private armStartConfirm(step: StepDCC | StepDCP | StepCCV): void {
+    this.clearStartConfirm();
+    this.startConfirmTimer = setTimeout(() => void this.checkStartConfirm(step), this.START_CONFIRM_MS);
+  }
+
+  private clearStartConfirm(): void {
+    if (this.startConfirmTimer) {
+      clearTimeout(this.startConfirmTimer);
+      this.startConfirmTimer = null;
+    }
+  }
+
+  /** Re-send the start command if the device hasn't entered the running mode. */
+  private async checkStartConfirm(step: StepDCC | StepDCP | StepCCV): Promise<void> {
+    this.startConfirmTimer = null;
+    // Step already advancing/ended, or the cycle was stopped — nothing to confirm.
+    if (this.status !== 'running' || this.advancePending) return;
+    // Device is in the expected running mode — the start took. (A step that
+    // already ran to completion is caught by the advancePending guard above.)
+    if (this.session.getMode() === step.type) {
+      this.startAttempt = 0;
+      return;
+    }
+
+    this.startAttempt++;
+    if (this.startAttempt >= this.START_MAX_ATTEMPTS) {
+      // Leave the DB program 'running' (current_step points here) so a service
+      // restart re-attempts this step via resume, but surface the error live.
+      logger.error(
+        `Cycle step ${this.execIndex + 1}: device did not enter ${step.type} after ` +
+          `${this.startAttempt} attempts — marking cycle errored`
+      );
+      this.status = 'error';
+      this.emit();
+      return;
+    }
+
+    logger.warn(
+      `Cycle step ${this.execIndex + 1}: device not in ${step.type} yet ` +
+        `(attempt ${this.startAttempt}/${this.START_MAX_ATTEMPTS}) — re-sending start`
+    );
+    try {
+      await this.sendStartCommand(step);
+    } catch (e) {
+      logger.error(`Cycle step ${this.execIndex + 1}: start re-send failed`, e);
+    }
+    this.armStartConfirm(step);
   }
 
   private onSessionEvent(event: SessionEvent): void {
@@ -742,6 +862,7 @@ export class CycleRunner {
       if (currentStep.type !== 'wait' && !this.advancePending) {
         this.advancePending = true;
         this.clearProbeTimers(); // step is over — no dip/restore may fire into the gap
+        this.clearStartConfirm(); // the step ran; no need to confirm its start
 
         // Capture final capacity and duration from device before advancing
         const reading = this.session.getReading();
@@ -777,7 +898,7 @@ export class CycleRunner {
     this.recorder.clearCycleContext();
     this.execIndex++;
     this.emit();
-    this.executeCurrentStep();
+    this.executeCurrentStep().catch(e => this.onExecuteError(e));
   }
 
   /**
@@ -815,7 +936,7 @@ export class CycleRunner {
         `(run #${run?.id}, ${run?.duration_s?.toFixed(1)}s, ${run?.final_capacity_mah ?? 0} mAh) — retrying at ${nextA}A`
     );
     this.emit();
-    this.executeCurrentStep();
+    this.executeCurrentStep().catch(e => this.onExecuteError(e));
     return true;
   }
 
@@ -1051,7 +1172,7 @@ export class CycleRunner {
               this.execIndex++;
               this.status = 'running';
               this.emit();
-              this.executeCurrentStep();
+              this.executeCurrentStep().catch(e => this.onExecuteError(e));
             }, cappedRemainingS * 1000);
           } else {
             // Wait already elapsed — advance to next step
@@ -1060,7 +1181,7 @@ export class CycleRunner {
             this.status = 'running';
             this.execIndex++;
             if (this.execIndex < this.execPlan.length) {
-              setTimeout(() => this.executeCurrentStep(), 3000);
+              setTimeout(() => this.executeCurrentStep().catch(e => this.onExecuteError(e)), 3000);
             } else {
               this.completeProgram();
             }
@@ -1069,18 +1190,33 @@ export class CycleRunner {
           // No wait run found — restart the full wait
           logger.info(`Cycle resuming wait step ${this.execIndex + 1} (no prior run found, restarting)`);
           this.status = 'running';
-          setTimeout(() => this.executeCurrentStep(), 3000);
+          setTimeout(() => this.executeCurrentStep().catch(e => this.onExecuteError(e)), 3000);
         }
       } else {
-        // Device is idle, non-wait step — advance to next step
+        // Device is idle on a non-wait step. If this step already produced a
+        // finalized run it completed → advance. If it has NO run it never
+        // actually executed (a start frame lost/ignored, or the service
+        // restarted mid-start) → RE-RUN it rather than silently skipping it.
+        // Skipping is exactly what stranded program #31: the step-5 charge was
+        // skipped, so the cell sat discharged and later discharges ran on empty.
         this.status = 'running';
         this.advancePending = false; // clear any stale advance flag from crash
-        this.execIndex++;
-        if (this.execIndex < this.execPlan.length) {
-          logger.info(`Cycle resuming from step ${this.execIndex + 1}/${this.execPlan.length}`);
-          setTimeout(() => this.executeCurrentStep(), 3000);
+        const hasRun = this.stepRunIds[this.execIndex] != null;
+        if (!hasRun) {
+          logger.warn(
+            `Cycle resume: step ${this.execIndex + 1}/${this.execPlan.length} ` +
+              `(${this.execPlan[this.execIndex].step.type}) has no recorded run — ` +
+              `it never executed; re-running it instead of skipping`
+          );
+          setTimeout(() => this.executeCurrentStep().catch(e => this.onExecuteError(e)), 3000);
         } else {
-          this.completeProgram();
+          this.execIndex++;
+          if (this.execIndex < this.execPlan.length) {
+            logger.info(`Cycle resuming from step ${this.execIndex + 1}/${this.execPlan.length}`);
+            setTimeout(() => this.executeCurrentStep().catch(e => this.onExecuteError(e)), 3000);
+          } else {
+            this.completeProgram();
+          }
         }
       }
       this.emit();
@@ -1112,7 +1248,9 @@ export class CycleRunner {
     this.stepDetails = [];
     this.stepRunIds = [];
     this.stepExpectedS = [];
+    this.startAttempt = 0;
     this.clearWaitTimer();
     this.clearProbeTimers();
+    this.clearStartConfirm();
   }
 }
