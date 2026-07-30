@@ -140,32 +140,10 @@ export function ChartView() {
     loadCells();
   }, [loadCells]);
 
-  // ── Auto-detect cell insertion ────────────────────────────────
-  // When the device is idle and voltage jumps from near-zero to cell range,
-  // a new cell was probably inserted → auto-open the start modal.
-  // We use null to mean "no real reading yet" — only start detecting after
-  // two consecutive real readings, so page reload doesn't trigger it.
-  const prevVoltageRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    // Only track voltages from real device readings, not the default-zero
-    // snapshot that arrives before the device responds.
-    if (!state.reading || !state.deviceResponsive) return;
-
-    const voltage = state.reading.voltage;
-    const isIdle = state.mode === 'idle';
-    const prev = prevVoltageRef.current;
-
-    prevVoltageRef.current = voltage;
-
-    // Need a prior real reading to detect a transition
-    if (prev === null) return;
-
-    // Detect voltage transition: low → cell range, while idle
-    if (isIdle && prev < 1.5 && voltage > 2.0 && !startModalOpen) {
-      setStartModalOpen(true);
-    }
-  }, [state.reading?.voltage, state.mode, state.deviceResponsive, startModalOpen]);
+  // Note: there is deliberately no auto-open of the start modal on cell
+  // insertion. It was driven by the SSE device state, which every connected
+  // browser sees identically, so clipping on a cell popped the scan wizard in
+  // every open tab at once. Starting a run is an explicit "New Run" click.
 
   // ── Load cell groups ──────────────────────────────────────────
   useEffect(() => {
