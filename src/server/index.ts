@@ -14,6 +14,7 @@ import { logger } from '../utils/logger.ts';
 import { shutdown } from '../utils/shutdown.ts';
 import { cameraAvailable, cameraRunning, getFrame, startCamera, stopCamera } from './camera.ts';
 import { getAllCellStats, getCellCapacityStats, getGroupFleetSummary } from './capacity-estimation.ts';
+import { CellPresenceTracker } from './cell-presence.ts';
 import { CycleRunner } from './cycle-runner.ts';
 import {
   closeDb,
@@ -244,6 +245,7 @@ async function main() {
   const recorder = new TestRecorder(session);
   const settingsLock = new SettingsLock();
   const cycleRunner = new CycleRunner(session, recorder);
+  const cellPresence = new CellPresenceTracker();
 
   session.start();
   cycleRunner.start(); // Restore cycle context before recorder (so recovered runs get linked)
@@ -294,9 +296,13 @@ async function main() {
   session.on((event: SessionEvent) => {
     switch (event.type) {
       case 'reading':
+        cellPresence.update(event.data.voltage);
         broadcast('reading', event.data);
         break;
       case 'stateChange':
+        // A run starting means the cell is in use, however it was identified —
+        // covers "Skip — no barcode", the API, and cycle steps alike.
+        if (event.to !== 'idle') cellPresence.claim(null);
         broadcast('state', {
           mode: event.to,
           previousMode: event.from,
@@ -334,6 +340,11 @@ async function main() {
   // ── Wire lock state → SSE broadcasts ──────────────────────────
   settingsLock.onLockChange(locked => {
     broadcast('lockState', { locked });
+  });
+
+  // ── Wire cell presence → SSE broadcasts ───────────────────────
+  cellPresence.on(state => {
+    broadcast('cellPresence', state);
   });
 
   // ── Wire cycle state → SSE broadcasts ─────────────────────────
@@ -483,6 +494,7 @@ async function main() {
               deviceResponsive: session.isDeviceResponsive(),
               locked: settingsLock.isLocked(),
               cycleState: cycleRunner.getState(),
+              cellPresence: cellPresence.getState(),
               bridgeActive: activeBridge !== null || bridgeEnabling,
               temperature: {
                 channels: tempManager.getChannels(),
@@ -628,6 +640,19 @@ async function main() {
       });
     }
 
+    // ── Cell presence (scan prompt) ───────────────────────────
+    if (pathname === '/api/cell-presence' && method === 'GET') {
+      return jsonResponse(cellPresence.getState());
+    }
+
+    // Identifying the connected cell on any browser clears the scan prompt on
+    // all of them. Barcode is optional — see CellPresenceTracker.claim().
+    if (pathname === '/api/cell-presence/claim' && method === 'POST') {
+      const body = await parseBody<{ barcode?: string | null }>(req);
+      cellPresence.claim(body?.barcode?.trim() || null);
+      return jsonResponse(cellPresence.getState());
+    }
+
     // ── Cell management ───────────────────────────────────────
     if (pathname === '/api/cells/recent' && method === 'GET') {
       return jsonResponse(getRecentCells());
@@ -649,6 +674,7 @@ async function main() {
       if (!body?.barcode) return errorResponse('Missing barcode');
       const cell = upsertCell(body.barcode, body.label);
       recorder.setCellId(cell.id);
+      cellPresence.claim(cell.barcode);
       return jsonResponse({ ok: true, cell });
     }
 

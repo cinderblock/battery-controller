@@ -13,6 +13,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { estimateIrSamples, type IrPoint, type IrSample } from '../../shared/ir-estimate.ts';
 import type {
+  CellPresenceState,
   CycleState,
   DecodedReading,
   DeviceInfo,
@@ -111,6 +112,12 @@ export interface SessionState {
   locked: boolean;
   bridgeActive: boolean;
   cycleState: CycleState | null;
+  /**
+   * Server-tracked "is a cell connected that nobody has identified yet".
+   * Held server-side so every browser agrees, and so a claim from one browser
+   * clears the scan prompt on all of them.
+   */
+  cellPresence: CellPresenceState | null;
   livePoints: LivePoint[];
   /** Live temperature samples accumulated during the active test */
   liveTempPoints: LiveTempPoint[];
@@ -141,6 +148,7 @@ const INITIAL_STATE: SessionState = {
   locked: false,
   bridgeActive: false,
   cycleState: null,
+  cellPresence: null,
   livePoints: [],
   liveTempPoints: [],
   liveIrSamples: [],
@@ -159,6 +167,17 @@ export interface SessionContextValue {
   endStep: () => Promise<void>;
   continueTest: (params: ContinueTestParams) => Promise<void>;
   scanCell: (barcode: string, label?: string) => Promise<void>;
+  /**
+   * Tell the server which cell is connected, clearing the scan prompt on every
+   * browser. Pass null when starting without a barcode.
+   */
+  claimCell: (barcode: string | null) => Promise<void>;
+  /**
+   * Whether *this* browser is the one that claimed the given insertion. Lets
+   * the auto-close skip the browser where the user just scanned, which should
+   * carry on into the configure step rather than have the wizard vanish.
+   */
+  didClaimInsertion: (insertionId: number) => boolean;
   enableBridge: () => Promise<void>;
   disableBridge: () => Promise<void>;
 }
@@ -268,6 +287,7 @@ export function useDeviceSessionManager(): SessionContextValue {
         locked: data.locked,
         bridgeActive: data.bridgeActive ?? false,
         cycleState: data.cycleState ?? null,
+        cellPresence: data.cellPresence ?? null,
         livePoints: [],
         liveTempPoints: [],
         liveIrSamples: [],
@@ -432,6 +452,16 @@ export function useDeviceSessionManager(): SessionContextValue {
       setState(s => ({ ...s, cycleState: data }));
     });
 
+    es.addEventListener('cellPresence', e => {
+      let data: any;
+      try {
+        data = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      setState(s => ({ ...s, cellPresence: data }));
+    });
+
     es.addEventListener('temperature', e => {
       let data: any;
       try {
@@ -546,6 +576,21 @@ export function useDeviceSessionManager(): SessionContextValue {
     await apiPost('/api/cells/scan', { barcode, label });
   }, []);
 
+  // Insertion this browser claimed, so the auto-close can leave it alone
+  const claimedInsertionRef = useRef<number | null>(null);
+
+  const claimCell = useCallback(async (barcode: string | null) => {
+    claimedInsertionRef.current = stateRef.current.cellPresence?.insertionId ?? null;
+    try {
+      await apiPost('/api/cell-presence/claim', { barcode });
+    } catch {
+      // Best-effort: the prompt clearing everywhere is a convenience, and the
+      // run itself will claim the insertion server-side when it starts.
+    }
+  }, []);
+
+  const didClaimInsertion = useCallback((insertionId: number) => claimedInsertionRef.current === insertionId, []);
+
   const enableBridge = useCallback(async () => {
     await apiPost('/api/bridge/start', {});
   }, []);
@@ -561,6 +606,8 @@ export function useDeviceSessionManager(): SessionContextValue {
     endStep,
     continueTest,
     scanCell,
+    claimCell,
+    didClaimInsertion,
     enableBridge,
     disableBridge,
   };

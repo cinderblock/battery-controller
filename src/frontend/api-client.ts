@@ -135,6 +135,21 @@ export interface StepDetail {
   timedOut: boolean;
 }
 
+/**
+ * Server's view of whether a cell is connected and whether anyone has said
+ * which cell it is. Mirrors `CellPresenceState` in `src/server/cell-presence.ts`.
+ */
+export interface CellPresenceState {
+  /** Monotonic id for the current insertion. 0 before any cell is seen. */
+  insertionId: number;
+  /** Whether a cell is currently connected */
+  present: boolean;
+  /** Serial claimed for this insertion, if one was given */
+  barcode: string | null;
+  /** True once this insertion has been identified, or a run was started on it */
+  claimed: boolean;
+}
+
 export interface CycleState {
   status: CycleStatus;
   programId: number | null;

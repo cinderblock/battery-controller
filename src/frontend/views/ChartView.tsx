@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { decideCellPrompt } from '../../shared/cell-prompt.ts';
 import type { IrSample } from '../../shared/ir-estimate.ts';
 import { api, type Cell, type CellGroup, type GroupFleetSummary, type TestRun } from '../api-client.ts';
 import { CameraView } from '../components/CameraView.tsx';
@@ -35,10 +36,13 @@ import {
 } from '../lib/chart-data.ts';
 import { getDefaultReferenceCurves } from '../lib/lfp-reference-curves.ts';
 
+/** Insertion id whose scan prompt the user dismissed in this tab */
+const DISMISSED_INSERTION_KEY = 'dismissedCellInsertion';
+
 // ── Component ──────────────────────────────────────────────────────
 
 export function ChartView() {
-  const { state, stopTest, endStep, enableBridge, disableBridge } = useSession();
+  const { state, stopTest, endStep, enableBridge, disableBridge, didClaimInsertion } = useSession();
   const isTestActive = state.mode === 'd-cc' || state.mode === 'd-cp' || state.mode === 'c-cv';
   const [bridgeLoading, setBridgeLoading] = useState(false);
 
@@ -140,10 +144,52 @@ export function ChartView() {
     loadCells();
   }, [loadCells]);
 
-  // Note: there is deliberately no auto-open of the start modal on cell
-  // insertion. It was driven by the SSE device state, which every connected
-  // browser sees identically, so clipping on a cell popped the scan wizard in
-  // every open tab at once. Starting a run is an explicit "New Run" click.
+  // ── Scan prompt for an unidentified cell ──────────────────────
+  // The server decides whether a connected cell still needs identifying (see
+  // src/server/cell-presence.ts); a client-side voltage-edge detector can't,
+  // because every browser sees the same stream and none of them knows whether
+  // another already handled it. Consequences of getting the state from the
+  // server: a browser opened long after the cell went on still gets prompted,
+  // and a scan on any browser clears the prompt on all of them.
+  const presence = state.cellPresence;
+  /** True when this browser opened the wizard as a prompt, not by user click */
+  const [promptOpened, setPromptOpened] = useState(false);
+  /** Insertion the user dismissed here; sessionStorage so it survives reloads */
+  const [dismissedInsertion, setDismissedInsertion] = useState<number | null>(() => {
+    const raw = sessionStorage.getItem(DISMISSED_INSERTION_KEY);
+    return raw === null ? null : Number(raw);
+  });
+
+  // Rules live in decideCellPrompt() — pure, and covered by cell-prompt.test.ts
+  useEffect(() => {
+    const action = decideCellPrompt({
+      presence,
+      modalOpen: startModalOpen,
+      promptOpened,
+      dismissedInsertion,
+      claimedHere: presence ? didClaimInsertion(presence.insertionId) : false,
+    });
+    if (action === 'open') {
+      setStartModalOpen(true);
+      setPromptOpened(true);
+    } else if (action === 'close') {
+      setStartModalOpen(false);
+      setPromptOpened(false);
+    }
+  }, [presence, startModalOpen, promptOpened, dismissedInsertion, didClaimInsertion]);
+
+  const handleStartModalClose = useCallback(() => {
+    setStartModalOpen(false);
+    setPromptOpened(false);
+    // Closing the wizard while the cell is still unidentified has to suppress
+    // the prompt, whether the wizard was opened by the prompt or by hand —
+    // otherwise the effect above reopens it immediately and the modal appears
+    // impossible to close. Keyed by insertion, so the next cell prompts again.
+    if (presence?.present && !presence.claimed) {
+      setDismissedInsertion(presence.insertionId);
+      sessionStorage.setItem(DISMISSED_INSERTION_KEY, String(presence.insertionId));
+    }
+  }, [presence]);
 
   // ── Load cell groups ──────────────────────────────────────────
   useEffect(() => {
@@ -912,9 +958,10 @@ export function ChartView() {
 
         <StartModal
           open={startModalOpen}
-          onClose={() => setStartModalOpen(false)}
+          onClose={handleStartModalClose}
           cellGroups={cellGroups}
           selectedGroupId={selectedGroupId}
+          newCellPrompt={promptOpened}
         />
 
         <CellSelectModal

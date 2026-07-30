@@ -20,6 +20,8 @@ interface StartModalProps {
   onClose: () => void;
   cellGroups: CellGroup[];
   selectedGroupId: number | null;
+  /** Opened by the "cell connected but unidentified" prompt rather than by click */
+  newCellPrompt?: boolean;
 }
 
 type TestMode = 'd-cc' | 'd-cp' | 'c-cv';
@@ -116,8 +118,8 @@ function SequencePreview({ stepsJson }: { stepsJson: string }) {
 
 // ── Component ──────────────────────────────────────────────────────
 
-export function StartModal({ open, onClose, cellGroups, selectedGroupId }: StartModalProps) {
-  const { startTest } = useSession();
+export function StartModal({ open, onClose, cellGroups, selectedGroupId, newCellPrompt }: StartModalProps) {
+  const { startTest, claimCell } = useSession();
 
   // Wizard step
   const [wizardStep, setWizardStep] = useState<WizardStep>('scan');
@@ -202,22 +204,27 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
   }, [selectedSeqVariables]);
 
   // ── Look up cell info when barcode changes ───────────────────
-  const lookupCell = useCallback(async (bc: string) => {
-    if (!bc.trim()) {
-      setCellInfo(null);
-      setCellNotes('');
-      return;
-    }
-    try {
-      // Upsert cell to get/create it
-      const cell = await apiPost<Cell>('/api/cells', { barcode: bc.trim() });
-      setCellInfo(cell);
-      setCellNotes(cell.notes ?? '');
-      setNotesDirty(false);
-    } catch {
-      setCellInfo(null);
-    }
-  }, []);
+  const lookupCell = useCallback(
+    async (bc: string) => {
+      if (!bc.trim()) {
+        setCellInfo(null);
+        setCellNotes('');
+        return;
+      }
+      try {
+        // Upsert cell to get/create it
+        const cell = await apiPost<Cell>('/api/cells', { barcode: bc.trim() });
+        setCellInfo(cell);
+        setCellNotes(cell.notes ?? '');
+        setNotesDirty(false);
+        // The connected cell now has a name — clear the scan prompt everywhere
+        claimCell(cell.barcode);
+      } catch {
+        setCellInfo(null);
+      }
+    },
+    [claimCell]
+  );
 
   // ── Handlers ─────────────────────────────────────────────────
 
@@ -243,8 +250,10 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
     setCellInfo(lastCell);
     setCellNotes(lastCell.notes ?? '');
     setNotesDirty(false);
+    // Skips lookupCell, so claim here too
+    claimCell(lastCell.barcode);
     setWizardStep('configure');
-  }, [lastCell]);
+  }, [lastCell, claimCell]);
 
   const handleManualBarcodeSubmit = useCallback(() => {
     if (barcode.trim()) {
@@ -365,11 +374,15 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId }: Start
       <div className="modal-overlay wizard-overlay" onClick={onClose}>
         <div className="wizard-panel wizard-scan" onClick={e => e.stopPropagation()}>
           <div className="wizard-scan-header">
-            <h2>Scan Cell</h2>
+            <h2>{newCellPrompt ? 'New Cell Detected' : 'Scan Cell'}</h2>
             <button className="scanner-close" onClick={onClose}>
               &times;
             </button>
           </div>
+
+          {newCellPrompt && (
+            <p className="wizard-scan-prompt">A cell was connected. Scan or enter its serial number.</p>
+          )}
 
           <div className="wizard-scan-camera">
             <BarcodeScanner onScan={handleScan} onClose={onClose} />

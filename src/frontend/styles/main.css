@@ -1074,6 +1074,18 @@ body {
   margin: 0;
 }
 
+/* Shown when the wizard was opened by the unidentified-cell prompt rather
+   than by clicking New Run — explains why the modal appeared on its own. */
+.wizard-scan-prompt {
+  margin: 0;
+  padding: 8px 16px;
+  font-size: 14px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
 .wizard-scan-camera {
   flex: 1;
   min-height: 0;
