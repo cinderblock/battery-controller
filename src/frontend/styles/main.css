@@ -884,6 +884,30 @@ body {
   text-decoration: none;
 }
 
+/* Source link — sits in the bottom-right corner, deliberately quiet */
+.github-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+  color: var(--text-dim);
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+.github-link:hover,
+.github-link:focus-visible {
+  opacity: 1;
+  color: var(--text);
+}
+/* Screen-reader text for the icon-only link */
+.github-link-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 /* ── Modal ──────────────────────────────────────────────────────── */
 
 .modal-overlay {

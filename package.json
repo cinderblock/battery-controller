@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "main": "server.js",
+  "repository": "github:cinderblock/battery-controller",
   "scripts": {
     "start": "bun --watch src/run/deploy.ts",
     "build": "bun run src/run/build.ts",
