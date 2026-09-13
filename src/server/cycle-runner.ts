@@ -14,6 +14,7 @@ import { MIN_STEP_A } from '../shared/ir-estimate.ts';
 import { type FieldBindings, resolveSteps, type SequenceVariable } from '../shared/sequence-vars.ts';
 import { logger } from '../utils/logger.ts';
 import {
+  abortStaleCyclePrograms,
   type CycleProgram,
   createCycleProgram,
   getActiveCycleProgram,
@@ -376,6 +377,10 @@ export class CycleRunner {
     // know the actual device state (isRunning). Without this, mode defaults
     // to 'idle' and we'd incorrectly skip/re-schedule steps.
     const active = getActiveCycleProgram();
+    // Only the newest program can be the live one; older leftovers marked
+    // 'running' would otherwise be resumed on the next restart instead of it.
+    const stale = abortStaleCyclePrograms(active?.id ?? null);
+    if (stale > 0) logger.warn(`Aborted ${stale} stale cycle program(s) still marked running from earlier sessions`);
     if (active) {
       logger.info(`Found active cycle program #${active.id} from previous session. Waiting for device state...`);
 
@@ -509,6 +514,13 @@ export class CycleRunner {
 
     // Compute total cycles from loop steps
     this.totalCycles = this.computeTotalCycles(migratedSteps);
+
+    // A program whose step failed to start is left 'running' in the DB so a
+    // restart can retry it — but starting a new sequence supersedes that.
+    // Close it out now, or a later restart would resume the wrong program.
+    const stale = abortStaleCyclePrograms(null);
+    if (stale > 0)
+      logger.warn(`Aborted ${stale} earlier cycle program(s) still marked running before starting "${name}"`);
 
     // Create DB record, baking in the capacity so resume can't drift
     const program = createCycleProgram(cellId, name, JSON.stringify(migratedSteps), this.capacityAh);

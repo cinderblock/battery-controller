@@ -972,8 +972,39 @@ export function updateCycleProgram(
   getDb().run(`UPDATE cycle_programs SET ${sets.join(', ')} WHERE id = ?`, vals);
 }
 
+/**
+ * The program to resume after a restart: the NEWEST one still marked running.
+ * A step that fails to start leaves its program 'running' in the DB (so a
+ * restart can retry it) while the runner goes to an in-memory 'error' state;
+ * the next sequence then starts on top of it. Without the ordering, a restart
+ * resumed the oldest such leftover (#32 on 2026-08-13) instead of the live one.
+ */
 export function getActiveCycleProgram(): CycleProgram | null {
-  return getDb().query<CycleProgram, []>("SELECT * FROM cycle_programs WHERE status = 'running' LIMIT 1").get() ?? null;
+  return (
+    getDb()
+      .query<CycleProgram, []>("SELECT * FROM cycle_programs WHERE status = 'running' ORDER BY id DESC LIMIT 1")
+      .get() ?? null
+  );
+}
+
+/**
+ * Mark every 'running' / 'pending' program other than `keepId` as aborted.
+ * The runner is a single instance, so at most one program can really be
+ * running; anything else in that state is a leftover from an errored step or
+ * a crash between create and start. Returns how many were cleaned up.
+ */
+export function abortStaleCyclePrograms(keepId: number | null): number {
+  const db = getDb();
+  const now = new Date().toISOString();
+  if (keepId === null) {
+    return db.run(`UPDATE cycle_programs SET status = 'aborted', ended_at = ? WHERE status IN ('running', 'pending')`, [
+      now,
+    ]).changes;
+  }
+  return db.run(
+    `UPDATE cycle_programs SET status = 'aborted', ended_at = ? WHERE status IN ('running', 'pending') AND id != ?`,
+    [now, keepId]
+  ).changes;
 }
 
 export function getCycleProgram(id: number): CycleProgram | null {
