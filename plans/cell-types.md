@@ -117,9 +117,58 @@ set settings safely".
        deploy, Bun `Response` typings) — none in changed lines. Biome: new files
        clean; remaining errors in StartModal/SequenceEditor are pre-existing a11y
        on untouched lines. Frontend bundles (`bun build src/frontend/index.html`).
-8. [ ] **← CURRENT:** Commit — only my files. `bun run lint` (`biome --write`)
+8. [x] Committed as `208d301` (cell types) and `eaf3278` (resume newest
+       program). Only my files staged; `bun run lint` (`biome --write`) had
        reformatted ~25 unrelated files (`src/ocr/*`, `src/proxy/*`, `scripts/*`,
-       …); those are NOT staged and were left in the tree untouched.
+       …) which were left in the tree untouched and unstaged.
+9. [x] Deployed to coulomb and verified — see the Deploy section.
+
+## Deploy (2026-09-13, mid-charge)
+
+State when asked: run #287 (c-cv, cell 16 `070801-F02752`, program #40
+"Standard Capacity Test" step 1/3, ~25 min into a ~3 h charge, ~1 point/s).
+The EBC runs the charge on its own; the server only records, so a restart
+costs only the points during the restart window (~5–10 s of a 3 h step).
+`markIncompleteRuns` stamps the open run `service_restart`, DeviceSession sees
+the device mid-test, `reopenRun` clears that stamp and recording continues on
+the **same** run row with elapsed reconstructed from the last point + wall gap.
+
+**Blocker found and fixed before deploying** (commit "Cycle runner: resume the
+newest running program"): six programs were marked `running` (#32–36 stale,
+#40 live) and `getActiveCycleProgram()` returned the *oldest*. The Aug 13 boot
+log proves it resumed #32. A restart would have resumed #32 instead of #40 and
+derailed the sequence after the charge. Now newest wins and the rest are
+aborted at startup.
+
+Pre-deploy safety: `VACUUM INTO` snapshot at
+`/home/pi/battery-pre-v9-20260913-121830.db` (109 MB, `quick_check` ok,
+schema 8). `.backup` was abandoned — it restarts every time the app writes a
+data point and never finishes on a live DB. Migration v9 was dry-run against a
+copy of that snapshot with the verbatim SQL: 14/14 cells → TS-LFP200AHA, 0
+untyped, schema 9, `cycle_programs.capacity_ah` added.
+
+**Deployed 2026-09-13 19:34:54Z during the 30-min wait step** (user's call —
+the charge was minutes from its 2 A cutoff, so waiting cost nothing). A
+background poll on `/api/cycle/status` fired at 19:34:10Z when the runner
+reported `waiting` at step 2; `DEPLOY_HOST=192.168.2.9 bun start --once` took
+16 s end to end (`.env.local` says `coulomb`, which only resolves on the office
+LAN — override it when off-site).
+
+Verified from the journal and DB afterwards:
+- `Running migration v9...` → schema 9; 14/14 cells typed, 0 untyped.
+- `Aborted 5 stale cycle program(s)` (#32–36); #40 is the only `running` row.
+- `Cycle resuming wait step 2 with 1744s remaining (elapsed=56s)`;
+  `waitEndTime` identical to the pre-restart value to the second.
+- Charge run #287 closed normally: 17.73 Ah, 2754 s, 1379 points. Zero loss.
+- `/cell-types` → HTTP 200.
+
+So the resume-inside-a-wait path now has live history too, and it worked.
+
+Seen on the live controller afterwards: a `TS-LFP90AHA` type (id 3, created
+earlier today via the old `+` form, so no voltages) with one sequence already
+pointing at it, plus the old `asdf`. Both show as *incomplete* on the new page
+until edited. With three types present, a newly scanned 90 Ah cell will be
+untyped and the Start wizard will ask.
 
 ## Findings / gotchas
 
