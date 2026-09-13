@@ -55,7 +55,12 @@ export function closeDb(): void {
 
 // ── Migrations ──────────────────────────────────────────────────────
 
-function runMigrations(db: Database): void {
+/**
+ * Apply pending migrations. `upTo` lets a test build a database at an older
+ * schema version, seed legacy-shaped rows, then migrate forward and check
+ * what the migration did to them.
+ */
+export function runMigrations(db: Database, upTo = Number.POSITIVE_INFINITY): void {
   db.exec(`CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY
   )`);
@@ -267,10 +272,38 @@ function runMigrations(db: Database): void {
         ALTER TABLE cells ADD COLUMN retired_at TEXT;
       `,
     },
+    {
+      version: 9,
+      sql: `
+        -- A cell's nominal capacity and chemistry now come from its cell type
+        -- (cell_groups) only. The per-cell columns had a DEFAULT of
+        -- 200000 / 'LiFePO4' that every cell silently inherited, so C-rate
+        -- steps ran against 200 Ah no matter what was on the clips.
+        --
+        -- Move the existing capacity fact into a type assignment where that is
+        -- unambiguous: an untyped cell whose stored capacity matches exactly
+        -- one type gets that type. Anything else stays untyped and the UI
+        -- prompts for it. Then clear the per-cell columns so nothing can keep
+        -- reading them. The columns themselves stay — dropping them means a
+        -- table rebuild under foreign keys on a production DB.
+        UPDATE cells SET cell_group_id = (
+          SELECT g.id FROM cell_groups g WHERE g.nominal_capacity_mah = cells.nominal_capacity_mah
+        )
+        WHERE cell_group_id IS NULL
+          AND nominal_capacity_mah IS NOT NULL
+          AND (SELECT COUNT(*) FROM cell_groups g WHERE g.nominal_capacity_mah = cells.nominal_capacity_mah) = 1;
+        UPDATE cells SET nominal_capacity_mah = NULL, chemistry = NULL;
+
+        -- The capacity a sequence was started with, in Ah, so C-rate steps
+        -- keep the same amps across a service restart even if the cell is
+        -- re-typed mid-run. NULL for programs that predate this column.
+        ALTER TABLE cycle_programs ADD COLUMN capacity_ah REAL;
+      `,
+    },
   ];
 
   for (const migration of migrations) {
-    if (migration.version > currentVersion) {
+    if (migration.version > currentVersion && migration.version <= upTo) {
       logger.info(`Running migration v${migration.version}...`);
       db.exec(migration.sql);
       db.exec(`INSERT INTO schema_version (version) VALUES (${migration.version})`);
@@ -284,8 +317,13 @@ export interface Cell {
   id: number;
   barcode: string;
   label: string | null;
-  nominal_capacity_mah: number;
-  chemistry: string;
+  /**
+   * Legacy — always NULL since migration v9. Capacity and chemistry live on
+   * the cell's type (`cell_group_id` → cell_groups); use resolveCellCapacityAh().
+   */
+  nominal_capacity_mah: number | null;
+  /** Legacy — always NULL since migration v9; see nominal_capacity_mah. */
+  chemistry: string | null;
   notes: string | null;
   cell_group_id: number | null;
   created_at: string;
@@ -308,8 +346,30 @@ export function upsertCell(barcode: string, label?: string | null): Cell {
     return existing;
   }
 
-  const result = db.run('INSERT INTO cells (barcode, label) VALUES (?, ?)', [barcode, label ?? null]);
+  // Explicit NULLs: the columns still carry the pre-v9 DEFAULT 200000 /
+  // 'LiFePO4', which must not leak back in. A brand-new cell gets a type only
+  // when there is exactly one to choose from — otherwise the choice is the
+  // user's, and the start wizard asks before any C-rate step can run.
+  const groups = getCellGroups();
+  const groupId = groups.length === 1 ? groups[0].id : null;
+  const result = db.run(
+    'INSERT INTO cells (barcode, label, nominal_capacity_mah, chemistry, cell_group_id) VALUES (?, ?, NULL, NULL, ?)',
+    [barcode, label ?? null, groupId]
+  );
   return db.query<Cell, [number]>('SELECT * FROM cells WHERE id = ?').get(result.lastInsertRowid as number)!;
+}
+
+/**
+ * Nominal capacity in Ah for C-rate resolution, from the cell's type.
+ * null when the cell is missing or has no type — callers must refuse rather
+ * than fall back; a wrong capacity here is a wrong current on the clips.
+ */
+export function resolveCellCapacityAh(cellId: number | null): number | null {
+  if (cellId === null) return null;
+  const cell = getCellById(cellId);
+  if (!cell?.cell_group_id) return null;
+  const group = getCellGroup(cell.cell_group_id);
+  return group ? group.nominal_capacity_mah / 1000 : null;
 }
 
 export function getCells(): Cell[] {
@@ -874,15 +934,23 @@ export interface CycleProgram {
   current_cycle: number;
   started_at: string | null;
   ended_at: string | null;
+  /** Capacity (Ah) the program was started with, for C-rate steps; null = none needed or pre-v9 */
+  capacity_ah: number | null;
   created_at: string;
 }
 
-export function createCycleProgram(cellId: number | null, name: string | null, stepsJson: string): CycleProgram {
+export function createCycleProgram(
+  cellId: number | null,
+  name: string | null,
+  stepsJson: string,
+  capacityAh: number | null = null
+): CycleProgram {
   const db = getDb();
-  const result = db.run('INSERT INTO cycle_programs (cell_id, name, steps_json) VALUES (?, ?, ?)', [
+  const result = db.run('INSERT INTO cycle_programs (cell_id, name, steps_json, capacity_ah) VALUES (?, ?, ?, ?)', [
     cellId,
     name,
     stepsJson,
+    capacityAh,
   ]);
   return db
     .query<CycleProgram, [number]>('SELECT * FROM cycle_programs WHERE id = ?')
@@ -957,6 +1025,65 @@ export function getCellGroups(): CellGroup[] {
   return getDb().query<CellGroup, []>('SELECT * FROM cell_groups ORDER BY name').all();
 }
 
+/** How many cells and saved sequences point at a type — what blocks deleting it. */
+export interface CellGroupUsage {
+  cell_count: number;
+  sequence_count: number;
+}
+
+export type CellGroupWithUsage = CellGroup & CellGroupUsage;
+
+export function getCellGroupsWithUsage(): CellGroupWithUsage[] {
+  return getDb()
+    .query<CellGroupWithUsage, []>(
+      `SELECT g.*,
+         (SELECT COUNT(*) FROM cells c WHERE c.cell_group_id = g.id) AS cell_count,
+         (SELECT COUNT(*) FROM sequences s WHERE s.cell_group_id = g.id) AS sequence_count
+       FROM cell_groups g ORDER BY g.name`
+    )
+    .all();
+}
+
+export function getCellGroupUsage(id: number): CellGroupUsage {
+  const db = getDb();
+  const cells = db.query<{ n: number }, [number]>('SELECT COUNT(*) AS n FROM cells WHERE cell_group_id = ?').get(id);
+  const seqs = db.query<{ n: number }, [number]>('SELECT COUNT(*) AS n FROM sequences WHERE cell_group_id = ?').get(id);
+  return { cell_count: cells?.n ?? 0, sequence_count: seqs?.n ?? 0 };
+}
+
+/** Fields a type is created from / edited with. Validated upstream via validateCellType(). */
+export interface CellGroupFields {
+  name: string;
+  nominalCapacityMah: number;
+  chemistry: string;
+  chargeVoltageV: number;
+  dischargeCutoffV: number;
+  chargeCutoffCurrentA: number;
+}
+
+export function updateCellGroup(id: number, f: CellGroupFields): CellGroup | null {
+  getDb().run(
+    `UPDATE cell_groups
+       SET name = ?, nominal_capacity_mah = ?, chemistry = ?,
+           charge_voltage_v = ?, discharge_cutoff_v = ?, charge_cutoff_current_a = ?
+     WHERE id = ?`,
+    [f.name, f.nominalCapacityMah, f.chemistry, f.chargeVoltageV, f.dischargeCutoffV, f.chargeCutoffCurrentA, id]
+  );
+  return getCellGroup(id);
+}
+
+/**
+ * Delete a type. Refused while any cell or sequence still points at it — the
+ * caller reassigns those first. There is deliberately no force option: a
+ * cell silently losing its type is how it ends up run at the wrong current.
+ */
+export function deleteCellGroup(id: number): { deleted: boolean; usage: CellGroupUsage } {
+  const usage = getCellGroupUsage(id);
+  if (usage.cell_count > 0 || usage.sequence_count > 0) return { deleted: false, usage };
+  getDb().run('DELETE FROM cell_groups WHERE id = ?', [id]);
+  return { deleted: true, usage };
+}
+
 export function getCellGroup(id: number): CellGroup | null {
   return getDb().query<CellGroup, [number]>('SELECT * FROM cell_groups WHERE id = ?').get(id) ?? null;
 }
@@ -1012,26 +1139,12 @@ export function ensureDefaultCellGroup(): CellGroup {
   return db.query<CellGroup, [number]>('SELECT * FROM cell_groups WHERE id = ?').get(result.lastInsertRowid as number)!;
 }
 
-export function createCellGroup(
-  name: string,
-  nominalCapacityMah: number,
-  chemistry: string,
-  chargeVoltageV?: number | null,
-  dischargeCutoffV?: number | null,
-  chargeCutoffCurrentA?: number | null
-): CellGroup {
+export function createCellGroup(f: CellGroupFields): CellGroup {
   const db = getDb();
   const result = db.run(
     `INSERT INTO cell_groups (name, nominal_capacity_mah, chemistry, charge_voltage_v, discharge_cutoff_v, charge_cutoff_current_a)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [
-      name,
-      nominalCapacityMah,
-      chemistry,
-      chargeVoltageV ?? null,
-      dischargeCutoffV ?? null,
-      chargeCutoffCurrentA ?? null,
-    ]
+    [f.name, f.nominalCapacityMah, f.chemistry, f.chargeVoltageV, f.dischargeCutoffV, f.chargeCutoffCurrentA]
   );
   return db.query<CellGroup, [number]>('SELECT * FROM cell_groups WHERE id = ?').get(result.lastInsertRowid as number)!;
 }

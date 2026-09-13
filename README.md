@@ -177,6 +177,7 @@ graph TD
 - Raw byte-level protocol debugging (for reverse engineering unknown protocols)
 - State synchronization between physical device and application
 - Web-based user interface for monitoring and control
+- Cell types (`/cell-types`): nominal capacity and per-cell charge/cutoff limits, validated per chemistry. A cell's type is what C-rate steps multiply by; a cell with no type can't start a C-rate test
 - Automated deployment to Raspberry Pi
 
 ### Protocol Status

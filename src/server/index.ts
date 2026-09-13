@@ -10,6 +10,7 @@
 import homepage from '../frontend/index.html';
 import { decodeBase240, decodeTxFrame, isInfoPacket, parseFrame } from '../protocol/codec.ts';
 import { EbcDivisors } from '../protocol/constants.ts';
+import { type CellTypeInput, hasErrors, validateCellType } from '../shared/cell-types.ts';
 import { logger } from '../utils/logger.ts';
 import { shutdown } from '../utils/shutdown.ts';
 import { cameraAvailable, cameraRunning, getFrame, startCamera, stopCamera } from './camera.ts';
@@ -21,12 +22,15 @@ import {
   createCellGroup,
   createSequence,
   deleteCell,
+  deleteCellGroup,
   deleteSequence,
   downsampleTempReadings,
   ensureDefaultCellGroup,
   getCellByBarcode,
   getCellById,
-  getCellGroups,
+  getCellGroup,
+  getCellGroupsWithUsage,
+  getCellGroupUsage,
   getCells,
   getCellsInGroup,
   getCompactDataForRun,
@@ -49,10 +53,12 @@ import {
   initDb,
   markIncompleteRuns,
   parseUtcTimestamp,
+  resolveCellCapacityAh,
   setCellGroup,
   setRunExcludeFromCapacity,
   setSetting,
   updateCell,
+  updateCellGroup,
   updateSequence,
   upsertCell,
 } from './db.ts';
@@ -535,6 +541,8 @@ async function main() {
         maxTimeMin?: number;
         cellId?: number;
         barcode?: string;
+        /** When true, currentA is a C multiplier; the server converts to amps from the cell's type */
+        useCRate?: boolean;
       }>(req);
       if (!body?.mode) return errorResponse('Missing mode');
 
@@ -543,12 +551,30 @@ async function main() {
       }
 
       // Associate cell if provided
+      let cellId: number | null = null;
       if (body.barcode) {
-        const cell = upsertCell(body.barcode);
-        recorder.setCellId(cell.id);
+        cellId = upsertCell(body.barcode).id;
       } else if (body.cellId) {
-        recorder.setCellId(body.cellId);
+        cellId = body.cellId;
       }
+
+      // C-rate is resolved here, against the cell's type, never in the
+      // browser: the client can't know the capacity better than the server,
+      // and a stale or wrong multiplier is a wrong current on the clips.
+      if (body.useCRate && (body.mode === 'd-cc' || body.mode === 'c-cv')) {
+        const capacityAh = resolveCellCapacityAh(cellId);
+        if (capacityAh === null) {
+          return errorResponse(
+            cellId === null
+              ? 'C-rate needs a scanned cell with a cell type'
+              : 'This cell has no cell type, so its capacity is unknown — assign one first',
+            409
+          );
+        }
+        if (typeof body.currentA !== 'number') return errorResponse('C-rate mode requires currentA (as C)');
+        body.currentA = body.currentA * capacityAh;
+      }
+      recorder.setCellId(cellId);
 
       // Record setpoints
       const setpoints: TestSetpoints = {
@@ -802,32 +828,87 @@ async function main() {
       });
     }
 
-    // ── Cell groups ───────────────────────────────────────────
+    // ── Cell groups (cell types in the UI) ─────────────────────
     if (pathname === '/api/cell-groups' && method === 'GET') {
-      return jsonResponse(getCellGroups());
+      return jsonResponse(getCellGroupsWithUsage());
     }
 
-    if (pathname === '/api/cell-groups' && method === 'POST') {
-      const body = await parseBody<{
-        name: string;
-        nominalCapacityMah: number;
-        chemistry: string;
-        chargeVoltageV?: number | null;
-        dischargeCutoffV?: number | null;
-        chargeCutoffCurrentA?: number | null;
-      }>(req);
-      if (!body?.name || !body?.nominalCapacityMah || !body?.chemistry) {
-        return errorResponse('Missing name, nominalCapacityMah, or chemistry');
+    /**
+     * Shared by create and edit: the same chemistry-aware rules the form
+     * shows. Errors refuse the write; warnings are echoed back so the UI can
+     * show them next to the saved row. Returns the trimmed, typed fields.
+     */
+    const parseCellTypeBody = async (): Promise<
+      { ok: true; fields: CellTypeInput; warnings: string[] } | { ok: false; response: Response }
+    > => {
+      const body = await parseBody<Partial<CellTypeInput>>(req);
+      const fields: CellTypeInput = {
+        name: typeof body?.name === 'string' ? body.name.trim() : '',
+        chemistry: typeof body?.chemistry === 'string' ? body.chemistry : '',
+        nominalCapacityMah: Number(body?.nominalCapacityMah),
+        chargeVoltageV: Number(body?.chargeVoltageV),
+        dischargeCutoffV: Number(body?.dischargeCutoffV),
+        chargeCutoffCurrentA: Number(body?.chargeCutoffCurrentA),
+      };
+      const issues = validateCellType(fields);
+      if (hasErrors(issues)) {
+        const errors = issues.filter(i => i.severity === 'error');
+        return {
+          ok: false,
+          response: new Response(JSON.stringify({ error: errors.map(i => i.message).join('; '), issues }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        };
       }
-      const group = createCellGroup(
-        body.name,
-        body.nominalCapacityMah,
-        body.chemistry,
-        body.chargeVoltageV,
-        body.dischargeCutoffV,
-        body.chargeCutoffCurrentA
-      );
-      return jsonResponse(group, 201);
+      return { ok: true, fields, warnings: issues.map(i => i.message) };
+    };
+
+    if (pathname === '/api/cell-groups' && method === 'POST') {
+      const locked = requireUnlocked();
+      if (locked) return locked;
+      const parsed = await parseCellTypeBody();
+      if (!parsed.ok) return parsed.response;
+      try {
+        const group = createCellGroup(parsed.fields);
+        return jsonResponse({ ...group, cell_count: 0, sequence_count: 0, warnings: parsed.warnings }, 201);
+      } catch (e) {
+        // UNIQUE(name)
+        return errorResponse(`A cell type named "${parsed.fields.name}" already exists`, 409);
+      }
+    }
+
+    // /api/cell-groups/:id
+    const groupByIdMatch = pathname.match(/^\/api\/cell-groups\/(\d+)$/);
+    if (groupByIdMatch && method === 'PATCH') {
+      const locked = requireUnlocked();
+      if (locked) return locked;
+      const groupId = parseInt(groupByIdMatch[1], 10);
+      const parsed = await parseCellTypeBody();
+      if (!parsed.ok) return parsed.response;
+      try {
+        const group = updateCellGroup(groupId, parsed.fields);
+        if (!group) return errorResponse('Cell type not found', 404);
+        return jsonResponse({ ...group, ...getCellGroupUsage(groupId), warnings: parsed.warnings });
+      } catch (e) {
+        return errorResponse(`A cell type named "${parsed.fields.name}" already exists`, 409);
+      }
+    }
+    if (groupByIdMatch && method === 'DELETE') {
+      const locked = requireUnlocked();
+      if (locked) return locked;
+      const groupId = parseInt(groupByIdMatch[1], 10);
+      if (!getCellGroup(groupId)) return errorResponse('Cell type not found', 404);
+      const result = deleteCellGroup(groupId);
+      if (!result.deleted) {
+        const { cell_count, sequence_count } = result.usage;
+        const parts = [
+          cell_count > 0 && `${cell_count} cell${cell_count === 1 ? '' : 's'}`,
+          sequence_count > 0 && `${sequence_count} sequence${sequence_count === 1 ? '' : 's'}`,
+        ].filter(Boolean);
+        return errorResponse(`Still in use by ${parts.join(' and ')} — reassign them first`, 409);
+      }
+      return jsonResponse({ ok: true });
     }
 
     // /api/cell-groups/:id/cells
@@ -1264,6 +1345,7 @@ async function main() {
       '/health': homepage, // SPA: same HTML, client-side routing
       '/sequences': homepage,
       '/temperature': homepage,
+      '/cell-types': homepage,
     },
 
     async fetch(req, server) {

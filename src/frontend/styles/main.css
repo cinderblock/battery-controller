@@ -3360,6 +3360,248 @@ body {
   min-width: 14px;
 }
 
+/* ── Cell Types page ────────────────────────────────────────────── */
+
+.ct-page {
+  overflow-y: auto;
+  height: 100%;
+}
+
+.ct-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.ct-section-head h2 {
+  margin: 0;
+}
+
+.ct-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+}
+
+.ct-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ct-row .ct-field {
+  flex: 1 1 140px;
+}
+
+.ct-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ct-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.ct-input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+  padding: 7px 9px;
+  width: 100%;
+}
+.ct-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.ct-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ct-chips .filter-chip {
+  font-size: 12px;
+  padding: 5px 10px;
+}
+
+.ct-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.ct-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ct-issue {
+  font-size: 12px;
+}
+.ct-issue-error {
+  color: var(--error);
+}
+.ct-issue-warning {
+  color: var(--warning);
+}
+
+.ct-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.ct-error {
+  color: var(--error);
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+.ct-form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ct-type-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ct-type-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.ct-type-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ct-type-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.ct-chem-chip {
+  cursor: default;
+}
+
+.ct-badge-incomplete {
+  font-size: 11px;
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  border-radius: 10px;
+  padding: 1px 7px;
+}
+
+.ct-type-specs {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.ct-type-specs b {
+  color: var(--text);
+  font-family: var(--mono, monospace);
+  font-weight: 600;
+}
+
+.ct-type-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.ct-type-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
+.ct-type-actions .btn-link:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ct-danger {
+  color: var(--error);
+}
+
+.ct-needs-type {
+  color: var(--warning);
+}
+
+.ct-cell-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.ct-cell-row:last-child {
+  border-bottom: none;
+}
+.ct-cell-untyped {
+  border-left: 3px solid var(--warning);
+  padding-left: 8px;
+}
+
+.ct-cell-name {
+  font-weight: 600;
+  min-width: 120px;
+}
+
+.ct-cell-barcode {
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* Cell type chips inside the start wizard */
+.wizard-cell-type {
+  margin-top: 4px;
+}
+.wizard-cell-untyped {
+  color: var(--warning);
+}
+.wizard-type-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.wizard-type-link {
+  color: var(--accent);
+  font-size: 12px;
+}
+.form-hint-warn {
+  color: var(--warning);
+}
+
+.seq-manage-types {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
 /* ── Battery Health view ────────────────────────────────────────── */
 
 .health-view {

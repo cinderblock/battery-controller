@@ -933,6 +933,10 @@ export function ChartView() {
             Sequences
           </a>
 
+          <a href="/cell-types" className="btn btn-link">
+            Cell Types
+          </a>
+
           <button
             className={`btn ${state.bridgeActive ? 'btn-bridge-active' : 'btn-link'}`}
             onClick={toggleBridge}
@@ -960,7 +964,6 @@ export function ChartView() {
           open={startModalOpen}
           onClose={handleStartModalClose}
           cellGroups={cellGroups}
-          selectedGroupId={selectedGroupId}
           newCellPrompt={promptOpened}
         />
 

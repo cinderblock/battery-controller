@@ -184,7 +184,9 @@ export interface SessionContextValue {
 
 export interface StartTestParams {
   mode: 'd-cc' | 'd-cp' | 'c-cv';
+  /** Amps — or, when useCRate is set, a C multiplier the server resolves against the cell's type */
   currentA?: number;
+  useCRate?: boolean;
   voltageV?: number;
   powerW?: number;
   cutoffV?: number;

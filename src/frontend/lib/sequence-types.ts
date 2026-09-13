@@ -459,16 +459,39 @@ export function flattenForTimeline(steps: SequenceStep[]): { step: ExecutableSte
 
 // ── Defaults ───────────────────────────────────────────────────────
 
-export function defaultDCC(): StepDCC {
-  return { type: 'd-cc', currentA: 40, cutoffV: 2.5, maxTimeMin: 600, backoff: { minA: 10 } };
+/**
+ * The cell type's limits, when one is selected. Voltage / cutoff defaults
+ * come from here so a new step for a non-LFP type starts from that type's
+ * numbers; the bare numbers below are the TS-LFP200AHA fallbacks.
+ */
+export interface CellLimits {
+  charge_voltage_v: number | null;
+  discharge_cutoff_v: number | null;
+  charge_cutoff_current_a: number | null;
 }
 
-export function defaultDCP(): StepDCP {
-  return { type: 'd-cp', powerW: 100, cutoffV: 2.5, maxTimeMin: 600 };
+export function defaultDCC(limits?: CellLimits | null): StepDCC {
+  return {
+    type: 'd-cc',
+    currentA: 40,
+    cutoffV: limits?.discharge_cutoff_v ?? 2.5,
+    maxTimeMin: 600,
+    backoff: { minA: 10 },
+  };
 }
 
-export function defaultCCV(): StepCCV {
-  return { type: 'c-cv', currentA: 40, targetV: 3.65, cutoffCurrentA: 2.0, maxTimeMin: 600 };
+export function defaultDCP(limits?: CellLimits | null): StepDCP {
+  return { type: 'd-cp', powerW: 100, cutoffV: limits?.discharge_cutoff_v ?? 2.5, maxTimeMin: 600 };
+}
+
+export function defaultCCV(limits?: CellLimits | null): StepCCV {
+  return {
+    type: 'c-cv',
+    currentA: 40,
+    targetV: limits?.charge_voltage_v ?? 3.65,
+    cutoffCurrentA: limits?.charge_cutoff_current_a ?? 2.0,
+    maxTimeMin: 600,
+  };
 }
 
 export function defaultWait(): StepWait {

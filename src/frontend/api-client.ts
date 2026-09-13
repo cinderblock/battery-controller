@@ -271,9 +271,12 @@ export interface Cell {
   id: number;
   barcode: string;
   label: string | null;
-  nominal_capacity_mah: number;
-  chemistry: string;
+  /** Legacy, always null — capacity and chemistry come from the cell's type (cell_group_id) */
+  nominal_capacity_mah: number | null;
+  /** Legacy, always null — see nominal_capacity_mah */
+  chemistry: string | null;
   notes: string | null;
+  /** The cell's type. null = untyped: C-rate tests refuse to start until one is assigned */
   cell_group_id: number | null;
   created_at: string;
   updated_at: string;
@@ -283,15 +286,20 @@ export interface Cell {
   latest_ir_mohm?: number | null;
 }
 
+/** A cell type ("cell group" in the DB/API): nominal capacity + per-cell voltage limits. */
 export interface CellGroup {
   id: number;
   name: string;
   nominal_capacity_mah: number;
   chemistry: string;
+  /** Nullable only for rows created before voltages were required; the UI flags those as incomplete */
   charge_voltage_v: number | null;
   discharge_cutoff_v: number | null;
   charge_cutoff_current_a: number | null;
   created_at: string;
+  /** How many cells / saved sequences reference this type (from GET /api/cell-groups) */
+  cell_count?: number;
+  sequence_count?: number;
 }
 
 export interface TestRun {

@@ -10,13 +10,13 @@
  */
 
 import {
-  type Cell,
   getAllCompletedDischargeRuns,
   getCellById,
   getCellGroup,
   getCellsInGroup,
   getCompletedDischargeRuns,
   getIrHistoryForCell,
+  resolveCellCapacityAh,
   type TestRun,
 } from './db.ts';
 
@@ -189,7 +189,8 @@ export function getCellCapacityStats(cellId: number): CellCapacityStats | null {
   if (!cell) return null;
 
   const runs = getCompletedDischargeRuns(cellId);
-  const nominalAh = cell.nominal_capacity_mah / 1000;
+  // 0 = no cell type, so health % is unknowable; every consumer guards on > 0
+  const nominalAh = resolveCellCapacityAh(cellId) ?? 0;
 
   const runSummaries = runs.map(runToSummary);
   const capacities = runSummaries.map(r => r.capacityAh);

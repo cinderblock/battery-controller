@@ -18,10 +18,10 @@ import {
   createCycleProgram,
   getActiveCycleProgram,
   getCellById,
-  getCellGroup,
   getCycleStepRun,
   getRunsForCycleProgram,
   parseUtcTimestamp,
+  resolveCellCapacityAh,
   setRunExcludeFromCapacity,
   updateCycleProgram,
 } from './db.ts';
@@ -151,14 +151,21 @@ export function sanitizeProbe(probe: IrProbeConfig | undefined, setpointA: numbe
 }
 
 /** Short parameter summary for a step, for timeline labels */
-function stepParamLabel(step: StepDCC | StepDCP | StepCCV | StepWait): string {
+/** "0.5C→100A" for a C-rate step, plain "40A" otherwise. */
+function currentLabel(step: StepDCC | StepCCV, capacityAh: number | null): string {
+  if (!step.useCRate) return `${step.currentA}A`;
+  const amps = capacityAh === null ? '?' : (step.currentA * capacityAh).toFixed(1);
+  return `${step.currentA}C→${amps}A`;
+}
+
+function stepParamLabel(step: StepDCC | StepDCP | StepCCV | StepWait, capacityAh: number | null): string {
   switch (step.type) {
     case 'd-cc':
-      return `${step.currentA}A ${step.cutoffV}V`;
+      return `${currentLabel(step, capacityAh)} ${step.cutoffV}V`;
     case 'd-cp':
       return `${step.powerW}W ${step.cutoffV}V`;
     case 'c-cv':
-      return `${step.currentA}A ${step.targetV}V ${step.cutoffCurrentA}A`;
+      return `${currentLabel(step, capacityAh)} ${step.targetV}V ${step.cutoffCurrentA}A`;
     case 'wait': {
       const s = step.durationS;
       if (s >= 3600) {
@@ -319,8 +326,10 @@ export class CycleRunner {
   private execIndex = 0;
   private totalCycles = 1;
 
-  // Cell capacity for C-rate resolution
-  private capacityAh = 200; // default
+  // Cell capacity for C-rate resolution — from the cell's type, baked into the
+  // program at start. null means "unknown", and a C-rate step must never run
+  // against unknown: startSequence refuses up front, resolveCurrentA guards.
+  private capacityAh: number | null = null;
 
   // Display name (label or barcode) of the cell under test
   private cellName: string | null = null;
@@ -424,7 +433,7 @@ export class CycleRunner {
       stepCapacities: this.stepCapacities,
       stepDurations: this.stepDurations,
       stepExpectedS: this.stepExpectedS,
-      stepLabels: this.execPlan.map(e => stepParamLabel(e.step)),
+      stepLabels: this.execPlan.map(e => stepParamLabel(e.step, this.capacityAh)),
       stepDetails: this.stepDetails,
       stepRunIds: this.stepRunIds,
     };
@@ -473,25 +482,36 @@ export class CycleRunner {
     // timeline endpoint never need to know about variables
     const migratedSteps = resolveSteps(migrateV1Steps(steps), variables);
 
-    // Look up cell capacity for C-rate resolution
+    // Flatten loops into a linear execution plan
+    const execPlan = this.flattenSteps(migratedSteps);
+    if (execPlan.length === 0) {
+      throw new Error('Sequence has no executable steps');
+    }
+
+    // Look up cell capacity for C-rate resolution. Refuse — before anything
+    // is written or pointed at the device — if a C-rate step has nothing to
+    // multiply by. There is no fallback capacity on purpose.
     this.resolveCapacity(cellId);
+    if (CycleRunner.needsCapacity(execPlan) && this.capacityAh === null) {
+      this.cellName = null;
+      throw new Error(
+        cellId === null
+          ? 'This sequence has C-rate steps, so it needs a scanned cell with a cell type'
+          : `This sequence has C-rate steps, but ${this.cellName ?? 'the cell'} has no cell type — assign one first`
+      );
+    }
+    this.execPlan = execPlan;
 
     // Point the recorder at this cell — otherwise runs are created with a
     // stale pendingCellId from a previous scan/program (runs 109-110 were
     // attributed to the prior cell this way)
     this.recorder.setCellId(cellId);
 
-    // Flatten loops into a linear execution plan
-    this.execPlan = this.flattenSteps(migratedSteps);
-    if (this.execPlan.length === 0) {
-      throw new Error('Sequence has no executable steps');
-    }
-
     // Compute total cycles from loop steps
     this.totalCycles = this.computeTotalCycles(migratedSteps);
 
-    // Create DB record
-    const program = createCycleProgram(cellId, name, JSON.stringify(migratedSteps));
+    // Create DB record, baking in the capacity so resume can't drift
+    const program = createCycleProgram(cellId, name, JSON.stringify(migratedSteps), this.capacityAh);
     updateCycleProgram(program.id, {
       status: 'running',
       started_at: new Date().toISOString(),
@@ -603,28 +623,34 @@ export class CycleRunner {
 
   // ── Internal ─────────────────────────────────────────────────
 
-  /** Resolve cell capacity for C-rate steps and cache the cell's display name */
-  private resolveCapacity(cellId: number | null): void {
+  /**
+   * Cache the cell's display name and its type's capacity for C-rate steps.
+   * `bakedAh` (from a resumed program) wins over a fresh lookup so a cell
+   * re-typed mid-run keeps the amps it started with.
+   */
+  private resolveCapacity(cellId: number | null, bakedAh: number | null = null): void {
     this.cellName = null;
     if (cellId) {
       const cell = getCellById(cellId);
-      if (cell) {
-        this.cellName = cell.label || cell.barcode;
-        // Use cell's own capacity, or look up from cell group
-        if (cell.nominal_capacity_mah) {
-          this.capacityAh = cell.nominal_capacity_mah / 1000;
-        } else if (cell.cell_group_id) {
-          const group = getCellGroup(cell.cell_group_id);
-          if (group) this.capacityAh = group.nominal_capacity_mah / 1000;
-        }
-      }
+      if (cell) this.cellName = cell.label || cell.barcode;
     }
-    logger.info(`C-rate resolution capacity: ${this.capacityAh} Ah (cell: ${this.cellName ?? 'none'})`);
+    this.capacityAh = bakedAh ?? resolveCellCapacityAh(cellId);
+    logger.info(`C-rate resolution capacity: ${this.capacityAh ?? 'unknown'} Ah (cell: ${this.cellName ?? 'none'})`);
+  }
+
+  /** Does any step in the plan need a capacity to turn C into amps? */
+  private static needsCapacity(plan: { step: StepDCC | StepDCP | StepCCV | StepWait }[]): boolean {
+    return plan.some(e => (e.step.type === 'd-cc' || e.step.type === 'c-cv') && e.step.useCRate);
   }
 
   /** Resolve a step's currentA to actual amps, handling C-rate */
   private resolveCurrentA(step: StepDCC | StepCCV): number {
-    return step.useCRate ? step.currentA * this.capacityAh : step.currentA;
+    if (!step.useCRate) return step.currentA;
+    if (this.capacityAh === null) {
+      // startSequence refuses before we get here; this is the backstop.
+      throw new Error('Cannot run a C-rate step: the cell has no type, so its capacity is unknown');
+    }
+    return step.currentA * this.capacityAh;
   }
 
   /** Compute max loop count for display */
@@ -1102,8 +1128,9 @@ export class CycleRunner {
       this.programName = program.name;
       this.execIndex = program.current_step;
 
-      // Resolve capacity for C-rate steps
-      this.resolveCapacity(program.cell_id);
+      // Restore the capacity the program started with (pre-v9 programs have
+      // none baked in; fall through to the cell's current type)
+      this.resolveCapacity(program.cell_id, program.capacity_ah);
 
       this.totalCycles = this.computeTotalCycles(steps);
 

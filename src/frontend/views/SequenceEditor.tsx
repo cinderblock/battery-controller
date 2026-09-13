@@ -15,7 +15,7 @@
  * - Step palette (add new steps)
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, apiPost, type CellGroup, type Sequence } from '../api-client.ts';
 import { SequenceTimeline } from '../components/SequenceTimeline.tsx';
 import { StepPalette } from '../components/StepPalette.tsx';
@@ -54,13 +54,6 @@ export function SequenceEditor() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // ── Cell group creation ──────────────────────────────────────
-  const [showNewGroup, setShowNewGroup] = useState(false);
-  const [newGroupName, setNewGroupName] = useState('');
-  const [newGroupCapacity, setNewGroupCapacity] = useState('200');
-  const [newGroupChemistry, setNewGroupChemistry] = useState('LiFePO4');
-  const newGroupNameRef = useRef<HTMLInputElement>(null);
 
   const selectedGroup = cellGroups.find(g => g.id === selectedGroupId) ?? cellGroups[0];
   const capacityAh = selectedGroup ? selectedGroup.nominal_capacity_mah / 1000 : 200;
@@ -290,36 +283,6 @@ export function SequenceEditor() {
     }
   }, [name, steps, variables, editingId, selectedGroupId]);
 
-  // ── Create cell group ────────────────────────────────────────
-  const handleCreateGroup = useCallback(async () => {
-    const trimmed = newGroupName.trim();
-    if (!trimmed) {
-      setError('Enter a cell group name');
-      return;
-    }
-    const capAh = parseFloat(newGroupCapacity);
-    if (!capAh || capAh <= 0) {
-      setError('Enter a valid capacity');
-      return;
-    }
-    setError(null);
-    try {
-      const group = await apiPost<CellGroup>('/api/cell-groups', {
-        name: trimmed,
-        nominalCapacityMah: Math.round(capAh * 1000),
-        chemistry: newGroupChemistry,
-      });
-      setCellGroups(prev => [...prev, group]);
-      setSelectedGroupId(group.id);
-      setShowNewGroup(false);
-      setNewGroupName('');
-      setNewGroupCapacity('200');
-      setNewGroupChemistry('LiFePO4');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to create cell group');
-    }
-  }, [newGroupName, newGroupCapacity, newGroupChemistry]);
-
   // ── Delete sequence ──────────────────────────────────────────
   const handleDeleteSequence = useCallback(
     async (seqId: number) => {
@@ -385,56 +348,11 @@ export function SequenceEditor() {
               </option>
             ))}
           </select>
-          <button
-            className="btn btn-add-group"
-            onClick={() => {
-              setShowNewGroup(v => !v);
-              setTimeout(() => newGroupNameRef.current?.focus(), 50);
-            }}
-          >
-            +
-          </button>
+          {/* Types are created and edited on their own page, with the full set of limits */}
+          <a href="/cell-types" className="btn btn-link seq-manage-types">
+            {cellGroups.length === 0 ? '+ Add cell type' : 'Manage types'}
+          </a>
         </div>
-        {showNewGroup && (
-          <div className="new-group-form">
-            <input
-              ref={newGroupNameRef}
-              className="new-group-input"
-              value={newGroupName}
-              onChange={e => setNewGroupName(e.target.value)}
-              placeholder="Name (e.g. EVE LF280K)"
-              onKeyDown={e => e.key === 'Enter' && handleCreateGroup()}
-            />
-            <input
-              className="new-group-input new-group-capacity"
-              type="number"
-              value={newGroupCapacity}
-              onChange={e => setNewGroupCapacity(e.target.value)}
-              placeholder="Ah"
-              min="0.1"
-              step="0.1"
-              onKeyDown={e => e.key === 'Enter' && handleCreateGroup()}
-            />
-            <span className="new-group-unit">Ah</span>
-            <select
-              className="new-group-input new-group-chem"
-              value={newGroupChemistry}
-              onChange={e => setNewGroupChemistry(e.target.value)}
-            >
-              <option value="LiFePO4">LiFePO4</option>
-              <option value="Li-ion">Li-ion</option>
-              <option value="LiPo">LiPo</option>
-              <option value="NiMH">NiMH</option>
-              <option value="Lead-acid">Lead-acid</option>
-            </select>
-            <button className="btn btn-confirm-group" onClick={handleCreateGroup}>
-              Add
-            </button>
-            <button className="btn btn-cancel-group" onClick={() => setShowNewGroup(false)}>
-              Cancel
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Presets + saved sequences */}
@@ -557,7 +475,7 @@ export function SequenceEditor() {
       {error && <div className="seq-error">{error}</div>}
 
       {/* Step palette (add new steps) */}
-      <StepPalette onAdd={addStep} />
+      <StepPalette onAdd={addStep} limits={selectedGroup ?? null} />
     </div>
   );
 }

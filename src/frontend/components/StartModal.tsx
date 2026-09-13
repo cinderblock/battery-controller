@@ -19,7 +19,6 @@ interface StartModalProps {
   open: boolean;
   onClose: () => void;
   cellGroups: CellGroup[];
-  selectedGroupId: number | null;
   /** Opened by the "cell connected but unidentified" prompt rather than by click */
   newCellPrompt?: boolean;
 }
@@ -37,20 +36,41 @@ type ConfigTab = 'sequence' | 'manual';
 
 // ── Defaults per mode ──────────────────────────────────────────────
 
-const DEFAULTS: Record<
-  TestMode,
-  {
-    currentA: number;
-    voltageV: number;
-    powerW: number;
-    cutoffV: number;
-    cutoffCurrentA: number;
-  }
-> = {
+interface ModeDefaults {
+  currentA: number;
+  voltageV: number;
+  powerW: number;
+  cutoffV: number;
+  cutoffCurrentA: number;
+}
+
+// Fallbacks for a cell with no type (TS-LFP200AHA numbers). With a type, its
+// own limits win — see defaultsFor().
+const DEFAULTS: Record<TestMode, ModeDefaults> = {
   'd-cc': { currentA: 40.0, voltageV: 0, powerW: 0, cutoffV: 2.5, cutoffCurrentA: 0 },
   'd-cp': { currentA: 0, voltageV: 0, powerW: 100, cutoffV: 2.5, cutoffCurrentA: 0 },
   'c-cv': { currentA: 40.0, voltageV: 3.65, powerW: 0, cutoffV: 0, cutoffCurrentA: 2.0 },
 };
+
+/** Mode defaults seeded from the cell's type, so a Li-ion cell doesn't start from LFP voltages. */
+function defaultsFor(mode: TestMode, type: CellGroup | null): ModeDefaults {
+  const d = { ...DEFAULTS[mode] };
+  if (!type) return d;
+  if (mode !== 'c-cv' && type.discharge_cutoff_v != null) d.cutoffV = type.discharge_cutoff_v;
+  if (mode === 'c-cv') {
+    if (type.charge_voltage_v != null) d.voltageV = type.charge_voltage_v;
+    if (type.charge_cutoff_current_a != null) d.cutoffCurrentA = type.charge_cutoff_current_a;
+  }
+  return d;
+}
+
+/** Does a saved sequence contain any C-rate step (including inside loops)? */
+function sequenceNeedsCapacity(steps: SequenceStep[]): boolean {
+  return steps.some(s => {
+    if (s.type === 'loop') return sequenceNeedsCapacity(s.children);
+    return (s.type === 'd-cc' || s.type === 'c-cv') && !!s.useCRate;
+  });
+}
 
 // ── Step colors for sequence preview ──────────────────────────────
 
@@ -118,7 +138,7 @@ function SequencePreview({ stepsJson }: { stepsJson: string }) {
 
 // ── Component ──────────────────────────────────────────────────────
 
-export function StartModal({ open, onClose, cellGroups, selectedGroupId, newCellPrompt }: StartModalProps) {
+export function StartModal({ open, onClose, cellGroups, newCellPrompt }: StartModalProps) {
   const { startTest, claimCell } = useSession();
 
   // Wizard step
@@ -152,8 +172,40 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId, newCell
   // Sequence variable overrides for this launch (variable key → value string)
   const [seqVarValues, setSeqVarValues] = useState<Record<string, string>>({});
 
-  const selectedGroup = cellGroups.find(g => g.id === selectedGroupId) ?? cellGroups[0];
-  const capacityAh = selectedGroup ? selectedGroup.nominal_capacity_mah / 1000 : 200;
+  // The scanned cell's own type — never a page-level selection. null = untyped,
+  // and C-rate (manual or in a sequence) refuses to start until one is assigned.
+  const cellType = useMemo(
+    () => (cellInfo?.cell_group_id != null ? (cellGroups.find(g => g.id === cellInfo.cell_group_id) ?? null) : null),
+    [cellInfo, cellGroups]
+  );
+  const capacityAh = cellType ? cellType.nominal_capacity_mah / 1000 : null;
+  const [assigningType, setAssigningType] = useState(false);
+
+  const assignType = useCallback(
+    async (groupId: number) => {
+      if (!cellInfo) return;
+      setAssigningType(true);
+      setError(null);
+      try {
+        await api(`/api/cells/${cellInfo.id}/group`, { method: 'PUT', body: JSON.stringify({ groupId }) });
+        setCellInfo({ ...cellInfo, cell_group_id: groupId });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to assign cell type');
+      } finally {
+        setAssigningType(false);
+      }
+    },
+    [cellInfo]
+  );
+
+  // Re-seed the manual form's voltages from the cell's type once it is known
+  useEffect(() => {
+    const d = defaultsFor(mode, cellType);
+    setVoltageV(d.voltageV);
+    setCutoffV(d.cutoffV);
+    setCutoffCurrentA(d.cutoffCurrentA);
+    // Only when the type changes — mode changes go through handleModeChange
+  }, [cellType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Reset state when modal opens/closes ──────────────────────
   useEffect(() => {
@@ -261,16 +313,19 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId, newCell
     }
   }, [barcode, lookupCell]);
 
-  const handleModeChange = useCallback((newMode: TestMode) => {
-    setMode(newMode);
-    const d = DEFAULTS[newMode];
-    setCurrentA(d.currentA);
-    setVoltageV(d.voltageV);
-    setPowerW(d.powerW);
-    setCutoffV(d.cutoffV);
-    setCutoffCurrentA(d.cutoffCurrentA);
-    setError(null);
-  }, []);
+  const handleModeChange = useCallback(
+    (newMode: TestMode) => {
+      setMode(newMode);
+      const d = defaultsFor(newMode, cellType);
+      setCurrentA(d.currentA);
+      setVoltageV(d.voltageV);
+      setPowerW(d.powerW);
+      setCutoffV(d.cutoffV);
+      setCutoffCurrentA(d.cutoffCurrentA);
+      setError(null);
+    },
+    [cellType]
+  );
 
   const saveNotesIfDirty = useCallback(async () => {
     if (cellInfo && notesDirty) {
@@ -302,6 +357,17 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId, newCell
         }
 
         const doc = parseSequenceDoc<SequenceStep>(seq.steps_json);
+        // The server refuses this too; catching it here gives a pointed message
+        // next to the chips that fix it instead of a generic start failure.
+        if (sequenceNeedsCapacity(doc.steps) && capacityAh === null) {
+          setError(
+            barcode.trim()
+              ? 'This sequence has C-rate steps — assign the cell a type first'
+              : 'This sequence has C-rate steps, so it needs a scanned cell with a type'
+          );
+          setSubmitting(false);
+          return;
+        }
         let cellId: number | undefined;
         if (barcode.trim()) {
           const cell = await apiPost<{ id: number }>('/api/cells', { barcode: barcode.trim() });
@@ -317,14 +383,21 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId, newCell
         await apiPost('/api/cycle/start', { name: seq.name, steps: doc.steps, cellId, variables });
         onClose();
       } else {
-        const actualCurrentA = useCRate ? currentA * capacityAh : currentA;
+        if (useCRate && capacityAh === null) {
+          setError(barcode.trim() ? 'Assign the cell a type to use C-rate' : 'C-rate needs a scanned cell with a type');
+          setSubmitting(false);
+          return;
+        }
+        // C-rate is sent as the multiplier; the server converts it against the
+        // cell's type so the amps on the clips never depend on browser state.
         const params: StartTestParams = { mode };
 
         if (barcode.trim()) params.barcode = barcode.trim();
 
         switch (mode) {
           case 'd-cc':
-            params.currentA = actualCurrentA;
+            params.currentA = currentA;
+            params.useCRate = useCRate;
             params.cutoffV = cutoffV;
             break;
           case 'd-cp':
@@ -332,7 +405,8 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId, newCell
             params.cutoffV = cutoffV;
             break;
           case 'c-cv':
-            params.currentA = actualCurrentA;
+            params.currentA = currentA;
+            params.useCRate = useCRate;
             params.voltageV = voltageV;
             params.cutoffCurrentA = cutoffCurrentA;
             break;
@@ -441,10 +515,32 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId, newCell
           {barcode && (
             <div className="wizard-cell-info">
               <div className="wizard-cell-barcode">{barcode}</div>
-              {selectedGroup && (
-                <span className="wizard-cell-group">
-                  {selectedGroup.name} ({capacityAh} Ah)
-                </span>
+              {cellInfo && (
+                <div className="wizard-cell-type">
+                  <span className={`wizard-cell-group${cellType ? '' : ' wizard-cell-untyped'}`}>
+                    {cellType ? `${cellType.name} · ${capacityAh} Ah` : 'No cell type — tap one:'}
+                  </span>
+                  {(cellGroups.length > 1 || !cellType) && (
+                    <div className="wizard-type-chips">
+                      {cellGroups.map(g => (
+                        <button
+                          key={g.id}
+                          type="button"
+                          className={`filter-chip${cellType?.id === g.id ? ' active' : ''}`}
+                          disabled={assigningType}
+                          onClick={() => cellType?.id !== g.id && assignType(g.id)}
+                        >
+                          {g.name} · {g.nominal_capacity_mah / 1000} Ah
+                        </button>
+                      ))}
+                      {cellGroups.length === 0 && (
+                        <a href="/cell-types" className="wizard-type-link">
+                          Add a cell type
+                        </a>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
               <textarea
                 className="wizard-cell-notes"
@@ -557,7 +653,13 @@ export function StartModal({ open, onClose, cellGroups, selectedGroupId, newCell
                       step={0.01}
                       min={0}
                     />
-                    {useCRate && <span className="form-hint">{(currentA * capacityAh).toFixed(2)} A</span>}
+                    {useCRate && (
+                      <span className={`form-hint${capacityAh === null ? ' form-hint-warn' : ''}`}>
+                        {capacityAh === null
+                          ? 'needs a cell type'
+                          : `${(currentA * capacityAh).toFixed(2)} A (${capacityAh} Ah × ${currentA})`}
+                      </span>
+                    )}
                   </div>
                 )}
                 {mode === 'd-cp' && (
