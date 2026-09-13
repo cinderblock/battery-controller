@@ -164,6 +164,15 @@ Verified from the journal and DB afterwards:
 
 So the resume-inside-a-wait path now has live history too, and it worked.
 
+**Second deploy 2026-09-13 20:17Z (GitHub corner link, `bb1d34e`), mid-discharge
+by the user's choice.** Measured restart gap from the journal: last packet on
+the old process 13:18:08, first on the new 13:18:12 → **4 s = 2 samples** at
+the 2 s cadence, on the same reopened run (#289, 407 points at reopen). The
+deploy log's "complete" line lands ~30 s *before* the actual restart — measure
+from the journal, not the deploy output. Same 4 s gap was measured for the
+first deploy. **Published:** `git push origin master` fast-forwarded
+`ebfeb97..bb1d34e` (131 commits — the remote had only the pre-web-app history).
+
 Seen on the live controller afterwards: a `TS-LFP90AHA` type (id 3, created
 earlier today via the old `+` form, so no voltages) with one sequence already
 pointing at it, plus the old `asdf`. Both show as *incomplete* on the new page
