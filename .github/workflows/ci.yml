@@ -21,6 +21,15 @@ jobs:
         with:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
+      # ghostcom (the Windows virtual COM port driver) is `bun link`ed from a
+      # local checkout (link:ghostcom). Only the Windows proxy tools import it;
+      # tests and build don't, so link an empty placeholder for the install.
+      - name: Link placeholder ghostcom
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir ghostcom
+          echo '{ "name": "ghostcom", "version": "0.0.0", "private": true }' > ghostcom/package.json
+          cd ghostcom && bun link
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run build
