@@ -221,6 +221,8 @@ bun run build
 bun run start
 ```
 
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `bun test` and `bun run build` on every push and pull request.
+
 ## Documentation
 
 See [layout.md](./layout.md) for detailed project structure and architecture documentation.
